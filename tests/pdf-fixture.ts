@@ -146,8 +146,9 @@ export function smbcGiroDepositPdf() {
   ]);
 }
 
-/** BRImo financial report: five pages, zero-filled sides, bilingual headers and the printed summary only on page five. */
-export function brimoPdf(opts: { debit?: string; credit?: string; opening?: string; closing?: string; totalDebit?: string; totalCredit?: string; holder?: string | null } = {}): Buffer {
+/** BRImo financial report: five pages, zero-filled sides, bilingual headers and the printed summary only on page five.
+ * `summarySplit` ends page five with the summary labels and prints the values atop a sixth page, under its title. */
+export function brimoPdf(opts: { debit?: string; credit?: string; opening?: string; closing?: string; totalDebit?: string; totalCredit?: string; holder?: string | null; summarySplit?: boolean } = {}): Buffer {
   const rows: [string, string, string, string, string][] = [
     ["01/01/26 09:35:08", "Transfer Ke Andi via BRImo", opts.debit ?? "5,000,000.00", opts.credit ?? "0.00", "52,400,000.00"],
     ["01/01/26 12:58:17", "Transfer Dari Sari via BRImo", "0.00", "185,000.00", "52,585,000.00"],
@@ -156,11 +157,28 @@ export function brimoPdf(opts: { debit?: string; credit?: string; opening?: stri
     ["20/01/26 14:00:00", "Transfer Ke Pemasok via BRImo", "113,530,678.00", "0.00", "37,400,000.00"],
     ["31/01/26 10:00:00", "Transfer Dari Pelanggan via BRImo", "0.00", "10,000,000.00", "47,400,000.00"],
   ];
+  const pageCount = opts.summarySplit ? 6 : 5;
+  const title = (page: number): [number, string][][] => [
+    [[30, "LAPORAN TRANSAKSI FINANSIAL"]],
+    [[30, "STATEMENT OF FINANCIAL TRANSACTION"]],
+    [[30, `Halaman ${page + 1} dari ${pageCount}`]], [[30, `Page ${page + 1} of ${pageCount}`]],
+  ];
+  const labels: [number, string][][] = [
+    [[30, "Saldo Awal"], [160, "Total Transaksi Debet"], [310, "Total Transaksi Kredit"], [460, "Saldo Akhir"]],
+    [[30, "Opening Balance"], [160, "Total Debit Transaction"], [310, "Total Credit Transaction"], [460, "Closing Balance"]],
+  ];
+  const values: [number, string][][] = [
+    [[30, opts.opening ?? "57,400,000.00"], [160, opts.totalDebit ?? "120,000,000.00"], [310, opts.totalCredit ?? "110,000,000.00"], [460, opts.closing ?? "47,400,000.00"]],
+    [[30, "Terbilang / In Words"]], [[30, "EMPAT PULUH TUJUH JUTA EMPAT RATUS RIBU RUPIAH"]],
+  ];
+  const footer: [number, string][][] = [
+    [[30, "ABC1234_synthetic_e-"], [350, "Created By BRIMO"]],
+    [[30, "StatementBRImo_12345_Jan2026_67890"]],
+    [[30, "02/02/2026 10:00:00"]], [[30, "2026010100000001"]],
+  ];
   const pages = [[0, 1], [2], [3], [4], [5]].map((indices, page) => {
     const header: [number, string][][] = [
-      [[30, "LAPORAN TRANSAKSI FINANSIAL"]],
-      [[30, "STATEMENT OF FINANCIAL TRANSACTION"]],
-      [[30, `Halaman ${page + 1} dari 5`]], [[30, `Page ${page + 1} of 5`]],
+      ...title(page),
       [[30, "Tanggal Laporan"], [170, ":"], [190, "02/02/26"]],
       [[30, "Kepada Yth. / To :"], [190, "Statement Date"]],
       [[30, opts.holder === null ? "" : opts.holder ?? "BUDI CONTOH"], [300, "Periode Transaksi"], [400, ":"], [420, "01/01/26 - 31/01/26"]],
@@ -183,22 +201,15 @@ export function brimoPdf(opts: { debit?: string; credit?: string; opening?: stri
       if (i === 2) { texts.push({ x: 130, y, text: "BRImo", size: 6 }); y -= 12; }
     }
     if (page === 4) {
-      texts.push(...table(y, [
-        [[30, "Saldo Awal"], [160, "Total Transaksi Debet"], [310, "Total Transaksi Kredit"], [460, "Saldo Akhir"]],
-        [[30, "Opening Balance"], [160, "Total Debit Transaction"], [310, "Total Credit Transaction"], [460, "Closing Balance"]],
-        [[30, opts.opening ?? "57,400,000.00"], [160, opts.totalDebit ?? "120,000,000.00"], [310, opts.totalCredit ?? "110,000,000.00"], [460, opts.closing ?? "47,400,000.00"]],
-        [[30, "Terbilang / In Words"]], [[30, "EMPAT PULUH TUJUH JUTA EMPAT RATUS RIBU RUPIAH"]],
-      ]));
-      y -= 60;
+      const summary = opts.summarySplit ? labels : [...labels, ...values];
+      texts.push(...table(y, summary));
+      y -= summary.length * 12;
     }
     // Close to the last row: footer text and its date must never become description or transactions.
-    texts.push(...table(y, [
-      [[30, "ABC1234_synthetic_e-"], [350, "Created By BRIMO"]],
-      [[30, "StatementBRImo_12345_Jan2026_67890"]],
-      [[30, "02/02/2026 10:00:00"]], [[30, "2026010100000001"]],
-    ]));
+    texts.push(...table(y, footer));
     return texts;
   });
+  if (opts.summarySplit) pages.push(table(800, [...title(5), ...values, ...footer]));
   return makePdf(pages);
 }
 

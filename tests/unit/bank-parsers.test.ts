@@ -392,6 +392,32 @@ describe("two-column zero sides and BRImo financial reports", () => {
   it.each([{ opening: "58,40x,000.00" }, { closing: "47,40x,000.00" }, { totalDebit: "120,00x,000.00" }, { totalCredit: "110,00x,000.00" }, { opening: "unreadable", closing: "unreadable", totalDebit: "unreadable", totalCredit: "unreadable" }])("refuses malformed printed summary evidence %j", async (opts) => {
     await expect(parseStatement("brimo.pdf", brimoPdf(opts))).rejects.toThrow(SourceAmountError);
   });
+  it("reads BRImo summary values printed atop the next page when the labels end a page", async () => {
+    const st = await parseStatement("brimo.pdf", brimoPdf({ summarySplit: true }));
+    expect(st.format).toBe("BRI");
+    expect(st.rows).toHaveLength(6);
+    expect(st.openingBalance).toBe(57_400_000n);
+    expect(st.closingBalance).toBe(47_400_000n);
+    expect(st.provenance).toMatchObject({ opening: "PRINTED", closing: "PRINTED" });
+    expect(checkContinuity(st).ok).toBe(true);
+  });
+  it.each([{ opening: "58,40x,000.00" }, { closing: "unreadable" }])("still refuses malformed summary values across a page break %j", async (opts) => {
+    await expect(parseStatement("brimo.pdf", brimoPdf({ ...opts, summarySplit: true }))).rejects.toThrow(SourceAmountError);
+  });
+  it("refuses BRImo summary labels with no values on the same or the next page", async () => {
+    const pdf = makePdf([table(800, [
+      [[30, "LAPORAN TRANSAKSI FINANSIAL"]],
+      [[30, "Nama Produk"], [170, ": Britama-IDR"]],
+      [[30, "Periode Transaksi"], [170, ": 01/01/26 - 31/01/26"]],
+      [[20, "Tanggal Transaksi"], [130, "Uraian Transaksi"], [330, "Teller"], [380, "Debet"], [450, "Kredit"], [530, "Saldo"]],
+      [[20, "01/01/26 09:35:08"], [130, "Transfer Ke Andi via BRImo"], [330, "8888018"], [375, "5,000,000.00"], [445, "0.00"], [520, "52,400,000.00"]],
+      [[30, "Saldo Awal"], [160, "Total Transaksi Debet"], [310, "Total Transaksi Kredit"], [460, "Saldo Akhir"]],
+      [[30, "Opening Balance"], [160, "Total Debit Transaction"], [310, "Total Credit Transaction"], [460, "Closing Balance"]],
+      [[30, "ABC1234_synthetic_e-"], [350, "Created By BRIMO"]],
+      [[30, "2026010100000001"]],
+    ])]);
+    await expect(parseStatement("brimo.pdf", pdf)).rejects.toThrow(/ringkasan BRImo tidak lengkap/);
+  });
   it("preserves independently printed opening evidence when it contradicts the first movement", async () => {
     const st = await parseStatement("brimo.pdf", brimoPdf({ opening: "58,400,000.00" }));
     expect(st.openingBalance).toBe(58_400_000n);

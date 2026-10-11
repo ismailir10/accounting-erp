@@ -472,6 +472,25 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
   let closing: bigint | null = null;
   let lineNo = 0;
   let footerPage: number | null = null;
+  let summaryValuesAt = -1;
+  const brimoFooter = (line: Line) => line.cells.some((cell) => /^created by brimo$/i.test(cell.text)) && !parseDate(line.cells[0]?.text.split(/\s+/)[0] ?? "", period, order);
+  // The summary values follow their labels or, when the labels end a page, open the next page under its repeated title.
+  // Only the English label row, that page's footer and the next page's title lines may sit in between.
+  const brimoSummaryValues = (labelsAt: number): number => {
+    const labels = lines[labelsAt];
+    let footer = false;
+    for (let at = labelsAt + 1; at < lines.length; at++) {
+      const line = lines[at];
+      if (line.page > labels.page + 1) break;
+      if (line.page === labels.page && (footer || (footer = brimoFooter(line)))) continue;
+      if (line.cells.every((cell) => NUMBER.test(cell.text.trim()))) return at;
+      const between = line.page === labels.page
+        ? at === labelsAt + 1 && line.cells.some((cell) => /^opening balance$/i.test(cell.text))
+        : !headerColumns(line) && !parseDate(line.cells[0]?.text.split(/\s+/)[0] ?? "", period, order);
+      if (!between) break;
+    }
+    return -1;
+  };
   // Description text printed just above a row's amount line (SMBC centres a two-line description on it): held for that row.
   let lead: string[] = [];
   // BCA prints a row's counterparty below it, and across a page break under the repeated header (UC-B1g): the row a new page continues.
@@ -493,15 +512,15 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
       continue;
     }
     const text = lineText(line);
-    if (brimo && line.cells.some((cell) => /^created by brimo$/i.test(cell.text)) && !parseDate(line.cells[0]?.text.split(/\s+/)[0] ?? "", period, order)) footerPage = line.page;
+    if (index === summaryValuesAt) { current = null; continue; }
+    if (brimo && brimoFooter(line)) footerPage = line.page;
     if (footerPage === line.page) { current = null; continue; }
     // BRImo prints opening and closing in a horizontal summary only on the last page.
     // Read their own cells, independently of the running balances in the transaction table.
     if (brimo && line.cells.some((cell) => /^saldo awal$/i.test(cell.text)) && line.cells.some((cell) => /^saldo akhir$/i.test(cell.text))) {
-      const next = lines[index + 1];
-      const bilingual = next?.cells.some((cell) => /^opening balance$/i.test(cell.text));
-      const values = lines[index + (bilingual ? 2 : 1)];
-      if (!values || values.page !== line.page || values.cells.length !== line.cells.length) {
+      summaryValuesAt = brimoSummaryValues(index);
+      const values = lines[summaryValuesAt];
+      if (!values || values.cells.length !== line.cells.length) {
         throw new SourceAmountError("Nominal ringkasan BRImo tidak lengkap. Periksa Saldo Awal, total Debet/Kredit, dan Saldo Akhir pada file.");
       }
       const first = line.cells.findIndex((cell) => /^saldo awal$/i.test(cell.text));
