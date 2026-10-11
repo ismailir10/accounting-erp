@@ -16,7 +16,7 @@ import { simpleGuess } from "@/lib/classify/fallback";
 import { matchTransfers } from "@/lib/classify/transfer";
 import { AUTO_POST_CONFIDENCE, type Classification } from "@/lib/classify/types";
 import { aiScope, suggestWithAi } from "@/lib/ai/classify";
-import { demoteUnbacked, tradeBacking } from "@/lib/ai/unbacked";
+import { accountLookup, demoteUnbacked, tradeBacking } from "@/lib/ai/unbacked";
 import type { AiProvider } from "@/lib/ai/provider";
 import { postBankTransaction } from "@/lib/ledger/bank";
 import { defaultTaxMonth } from "@/lib/tax/masa";
@@ -277,11 +277,11 @@ export async function importStatement(
   });
   // An AI receivable/payable with nothing on the books to settle is demoted below the bulk accept (lib/ai/unbacked.ts).
   const backingAt = ai.suggestions.size ? await tradeBacking(db, entity.id) : () => ({ receivable: true, payable: true });
-  const fsLineOf = (code: string) => accounts.find((a) => a.code === code)?.fsLine;
+  const accountOf = accountLookup(accounts.filter(isClassifiable));
   for (const it of items) {
     if (result.has(it.id)) continue;
     const suggested = ai.suggestions.get(`${it.merchantKey}|${it.direction}`);
-    result.set(it.id, suggested ? demoteUnbacked(suggested, it.direction, fsLineOf, backingAt(it.date)) : simpleGuess(it.direction, entity.kind, isGenericKey(it.merchantKey)));
+    result.set(it.id, suggested ? demoteUnbacked(suggested, it.direction, entity.kind, accountOf, backingAt(it.date)) : simpleGuess(it.direction, entity.kind, isGenericKey(it.merchantKey)));
   }
 
   // ---- write: import + transactions + journals, all-or-nothing ----

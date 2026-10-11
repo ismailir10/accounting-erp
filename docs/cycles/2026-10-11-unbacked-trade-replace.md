@@ -92,14 +92,18 @@ Accounting-invariant text (rule 14) changes · production data write by the T4 d
 no dependency, no real AI call, no auth/PII change).
 
 ## Tasks
-- [ ] T1 Replace rule in `lib/ai/unbacked.ts` (`demoteUnbacked` gets the entity kind and chart codes; reuses `simpleGuess`'s account) and the two
+- [x] T1 Replace rule in `lib/ai/unbacked.ts` (`demoteUnbacked` gets the entity kind and chart codes; reuses `simpleGuess`'s account) and the two
       callers in `lib/import/pipeline.ts` and `lib/ai/retry.ts` — accept: unit tests for the rule pass; typecheck clean (deps: none, reuse: `simpleGuess`)
-- [ ] T2 DB tests: Belifi-like fixture, group *serupa* bulk accept, date-aware backing, *Minta saran AI* path; update old assertions — accept: `npm test` green (deps: T1, reuse: `tests/helpers.ts`, `lib/review.ts` writer)
+- [x] T2 DB tests: Belifi-like fixture, group *serupa* bulk accept, date-aware backing, *Minta saran AI* path; update old assertions — accept: `npm test` green (deps: T1, reuse: `tests/helpers.ts`, `lib/review.ts` writer)
 - [ ] T3 `accounting-rules` rule 14 sentence updated — accept: states replace-not-keep, links `lib/ai/unbacked.ts` (deps: T1)
 - [ ] T4 Data migration for existing Review rows — accept: a db test applies it to a seeded old-style row (deps: T1)
 - [ ] T5 Gates and verify-local: `npm run lint && npm run typecheck && npm test`, `npm run build && npm run demo:reset && npm run verify:books` (ALL PASS), local browser walk of Review — accept: `Verified locally — <sha>` recorded (deps: T1–T3)
 
 ## Implementation
+- Plan: T1–T5 sequential, all inline (one small slice in `lib/ai`, each task needs the previous one's signature; a worker would need the whole plan as context). Reviews done by the driver on the diff.
+
+- T1: `lib/ai/unbacked.ts` (`demoteUnbacked(c, direction, kind, accountOf, backing)`: replaces with `simpleGuess`'s account, rewrites the reason, clears the tax tag, caps at 0.55; `accountLookup` helper; falls back to the old demotion when the chart lacks the account), callers `lib/import/pipeline.ts` and `lib/ai/retry.ts`. Test: `tests/unit/ai-unbacked.test.ts`.
+- T2: `tests/db/ai-unbacked.test.ts` — old assertions now 4100 / 6190, date-aware case (later receipt keeps 1130), Belifi-like fixture (3 + 1 customer receipts, 1 supplier payment, no invoices) with `acceptSimilar` booking the group to 4100 and 1130 untouched.
 
 ## Verification
 
