@@ -301,7 +301,9 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
 14. **Only deterministic methods (TRANSFER/RULE/MEMORY, confidence ≥ 0.9) auto-post.** AI and heuristic results
     post to **1999** with `NEEDS_REVIEW` and a prefilled suggestion. Reviewer accept → reclass + Memory upsert.
     An AI suggestion of a trade receivable for money in (or a trade payable for money out) while the entity's books hold none to settle
-    is kept but demoted to 0.55 with the reason said (`lib/ai/unbacked.ts`, import and *Minta saran AI*): never bulk-accepted, and an unchanged accept is a *tebakan*.
+    **by the row's date** is replaced by the simple guess's account (4100 / 6190; 4910 / 3300 for a person, `lib/classify/fallback.ts`) at 0.55, still
+    method AI, with a reason naming the original account and why (`lib/ai/unbacked.ts`, import and *Minta saran AI*); it never posts, is never
+    bulk-accepted (< 0.8), and an unchanged accept is a *tebakan*. A chart without the fallback account keeps the AI's account, demoted.
     A merchant key that names no counterparty (only channel/transfer/loan/cash words, refs and digits — `isGenericKey`,
     `lib/import/normalize.ts`: "BI FAST OUTGOING", "PINJAMAN LOAN", a bare "TRSF E-BANKING DB <ref>") covers unrelated payments:
     it is never written to or read from Memory, never made a rule, never grouped as *serupa*. An accepted line can be moved later
