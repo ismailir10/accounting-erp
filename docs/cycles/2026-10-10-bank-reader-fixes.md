@@ -129,17 +129,17 @@ Today this reads correctly except bank (`GENERIC`), rekening (`null`) and period
 `Periode: 1 - 31 Januari 2026` line should make it `DECLARED`).
 
 ## Acceptance criteria
-- [ ] Synthetic BRImo statement reads: `format: "BRI"`, rekening, IDR, declared period, printed opening/closing,
+- [x] Synthetic BRImo statement reads: `format: "BRI"`, rekening, IDR, declared period, printed opening/closing,
       every row with the right direction; running balance continuous. A BRImo row with **both** sides non-zero still
       refuses with the existing message.
-- [ ] Synthetic Mandiri e-Statement (password) reads with `format: "MANDIRI"`; nothing else changes.
-- [ ] Synthetic BNI wondr (password) reads with `format: "BNI"`, `accountNumber` from the header, declared period.
-- [ ] `holder` is set for the five layouts listed in Decision 4 and undefined elsewhere; never taken from rows.
-- [ ] Every existing layout and mutation test still passes (`tests/unit/bank-*.test.ts`,
+- [x] Synthetic Mandiri e-Statement (password) reads with `format: "MANDIRI"`; nothing else changes.
+- [x] Synthetic BNI wondr (password) reads with `format: "BNI"`, `accountNumber` from the header, declared period.
+- [x] `holder` is set for the five layouts listed in Decision 4 and undefined elsewhere; never taken from rows.
+- [x] Every existing layout and mutation test still passes (`tests/unit/bank-*.test.ts`,
       `statement-mutations.test.ts`, `pdf.test.ts`); no transaction-text bank detection anywhere.
-- [ ] `lib/banks.ts` format lists mention the three layouts (so "Lihat 25 bank" stays honest).
-- [ ] Full gate green (`AGENTS.md` § Repo profile → Full gate), including `verify:books` ALL PASS.
-- [ ] Ship Notes say: "real-file check pending — run `scripts/check-real-statements.ts` locally" (see Tasks).
+- [x] `lib/banks.ts` format lists mention the three layouts (so "Lihat 25 bank" stays honest).
+- [x] Full gate green (`AGENTS.md` § Repo profile → Full gate), including `verify:books` ALL PASS.
+- [x] Ship Notes say: "real-file check pending — run `scripts/check-real-statements.ts` locally" (see Tasks).
 
 ## Test seams
 - Unit: `tests/unit/bank-layouts.test.ts` / `bank-parsers.test.ts` with the three synthetic layouts above, plus
@@ -165,16 +165,35 @@ None: no schema, no dependency, no AI, no app code. Accounting invariants unchan
 kept).
 
 ## Tasks
-- [ ] T1 Zero side = empty in two-column amount tables; BRImo layout (synthetic fixture, header fields, footer lines
+- [x] T1 Zero side = empty in two-column amount tables; BRImo layout (synthetic fixture, header fields, footer lines
       ignored, last-page summary) — accept: BRImo tests + zero-side cases green, all bank tests green.
-- [ ] T2 Mandiri e-Statement + BNI wondr detection; BNI rekening from header; BNI declared period — accept: synthetic
+- [x] T2 Mandiri e-Statement + BNI wondr detection; BNI rekening from header; BNI declared period — accept: synthetic
       fixtures read as wanted; bank-detect tests green.
-- [ ] T3 `holder` for BCA, BRImo, Mandiri, BNI wondr, SMBC — accept: unit tests per layout; undefined elsewhere.
-- [ ] T4 `scripts/check-real-statements.ts` + `lib/banks.ts` format list + full gate + draft PR — accept: full gate
+- [x] T3 `holder` for BCA, BRImo, Mandiri, BNI wondr, SMBC — accept: unit tests per layout; undefined elsewhere.
+- [x] T4 `scripts/check-real-statements.ts` + `lib/banks.ts` format list + full gate + draft PR — accept: full gate
       green, PR open with the "real-file check pending" note.
+- [x] T5 Review follow-up after the maintainer's real-file run (PR #143 comment): BRImo summary values printed atop
+      the next page when the labels end a page; checker tries `--password` only on locked files; checker reports a
+      running-balance break as `continuity`, so `error` means "would be refused" — accept: synthetic split fixture and
+      checker tests fail before, pass after; full gate green.
 
 ## Implementation
+- T1 `8bbbdc5` — a zero side is an empty side; BRImo layout (bilingual teller column, page footers, last-page summary
+  read from its own cells as independent evidence).
+- T2 `55de470` — Mandiri e-Statement and BNI wondr header detection; wondr rekening from the right-hand product cell;
+  BRImo two-digit-year and wondr shared-month declared periods.
+- T3 `4946cdf` — optional `holder` from labelled fields or each layout's known header cell (BCA, BRImo, Mandiri, BNI
+  wondr, SMBC per section); never from rows.
+- T4 `5222d86` — `scripts/check-real-statements.ts`, format listings in `lib/banks.ts` (count stays 25).
+- T5 — the summary scan accepts only the English label row, that page's footer and the next page's title lines between
+  labels and values; anything else, or a malformed/missing value, still refuses. The checker reads each file without a
+  password first and retries with `--password` only on `PdfPasswordError("needed")`; `continuity` is `"ok"` or the
+  continuity note, and the exit code is nonzero only when `error` is set.
 
 ## Verification
+- T1–T4: full gate and local walk recorded in PR #143 (head `5222d86`).
+- Maintainer real-file run (13 statements, results only): BRImo, BNI wondr ×2, Mandiri ×2, BCA ×5 and SMBC ×3 read;
+  one BRImo file refused (summary split across a page break) — fixed in T5.
 
 ## Ship Notes
+real-file check pending — run `scripts/check-real-statements.ts` locally on the BRImo file with the split summary.
