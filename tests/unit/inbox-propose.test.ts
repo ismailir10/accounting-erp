@@ -137,6 +137,13 @@ describe("Klien baru from files: the proposal", () => {
     expect(p.readable).toBe(true);
   });
 
+  it("a ledger label that is also a bank holder is one entity, with the label as its short name (review of #151)", () => {
+    const gl = { sheet: "GL", mode: "LEDGER" as const, rows: 10, periodStart: "2026-01-01", periodEnd: "2026-06-30", entities: ["Belifi", "SKP"] };
+    const p = proposeClient([bank("belifi.csv", section("BCA", "7655563814", "BELIFI PT")), { fileName: "gl.xlsx", kind: "LEDGER", status: "CHECKED", message: null, sections: [gl] }]);
+    expect(p.entities.map((e) => [e.name, e.shortName, e.banks.length])).toEqual([["PT Belifi", "Belifi", 1], ["SKP", "SKP", 0]]);
+    expect(p.entities[0].labelled).toBe(true);
+  });
+
   it("a Neraca without an entity column names the company its title names, not the client (Goers)", () => {
     const neraca = { sheet: "31-05-2026", mode: "NERACA" as const, rows: 23, periodStart: "2026-05-31", periodEnd: "2026-05-31" };
     const p = proposeClient([

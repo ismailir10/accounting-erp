@@ -32,7 +32,8 @@ export default async function LedgerImportPage({ params, searchParams }: { param
   if (!imp) notFound();
   const [sources, balances, accounts, ai] = await Promise.all([
     importSourceAccounts(prisma, imp.id),
-    importBalances(prisma, imp.id),
+    // A Neraca's balances are balances; a ledger's net movement is not (cash paid out in a month is no "saldo kredit"), so only Neraca files get the hint.
+    imp.mode === "NERACA" ? importBalances(prisma, imp.id) : Promise.resolve(new Map<string, bigint>()),
     prisma.account.findMany({ where: { clientId: client.id, isBank: false, isSuspense: false, isClearing: false }, orderBy: { code: "asc" } }),
     resolveAiConfig(prisma),
   ]);
@@ -149,6 +150,7 @@ export default async function LedgerImportPage({ params, searchParams }: { param
               mappedBy: s.mappedBy,
               typeHint: s.typeHint,
               balance: balances.get(`${s.entityId}|${s.code}`)?.toString() ?? null,
+              currency: s.entity.functionalCurrency,
             }))}
           />
         </CardContent>

@@ -44,6 +44,8 @@ export type ProposedEntity = {
   kind: ProposedKind;
   /** No holder named it: its name follows the client name the user types. */
   fromClientName?: boolean;
+  /** A ledger's entity label is its short name (the rows are matched by it), kept when the name is edited. */
+  labelled?: boolean;
   banks: ProposedAccount[];
 };
 export type ClientProposal = {
@@ -225,7 +227,12 @@ export function proposeClient(files: PreviewFile[]): ClientProposal {
   // A ledger's entity column names the companies exactly (its labels are the short names Unggah matches rows by); without one, the
   // company a report's title names — unless a bank holder already is that company.
   if (labels.size) {
-    for (const label of labels.values()) entities.push({ key: `label:${label.toLowerCase()}`, name: label, shortName: label, kind: "PT", banks: [] });
+    for (const label of labels.values()) {
+      // A label that is a bank holder's company too (same words, legal form ignored) is that entity: its short name becomes the label.
+      const holder = entities.find((e) => e.key === normalName(label));
+      if (holder) Object.assign(holder, { shortName: label, labelled: true });
+      else entities.push({ key: `label:${label.toLowerCase()}`, name: label, shortName: label, kind: "PT", labelled: true, banks: [] });
+    }
   } else {
     for (const [key, title] of titled) {
       if (groups.some((g) => g.key === key)) continue;

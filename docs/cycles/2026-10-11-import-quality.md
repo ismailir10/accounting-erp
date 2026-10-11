@@ -54,13 +54,20 @@ is a load-bearing transient account (accounting-rules 9, 15a, 22); mapped lines 
   name is edited.
 - **T3** `stageLedger` (lib/inbox/process.ts): when `stageImport` answers CHOOSE_SHEET, every candidate sheet is staged as its own draft
   (the file hash includes the sheet name, so none can double a posted sheet); the item is DRAFT on the first, its message lists the
-  sheets and the refused ones with why. A Neraca sheet in a multi-company client says it needs one company (the inbox can't choose).
+  sheets and the refused ones with why. A Neraca sheet is held back while ledger sheets of the same file are drafted (a draft's checks
+  against the books — opening bridge, rows before an opening — are made at staging, so posting both would count the same money twice);
+  the next drop of the file stages it once they are booked. `liveOutcome` reads every ledger import of the file's evidence version: the
+  line is BOOKED only when all sheets are posted, and follows the sheets still to book (also when the first one was discarded).
   No schema change: the other drafts show in *Buku besar & neraca yang diimpor*.
 - **T4** UNKNOWN_ENTITY message names the short name to add; the ledger page's next step links to Pengaturan klien when every open
   block is that; Unggah's setup banner says files are being booked while any line is CHECKED/PROCESSING.
 - **T5** `ProposedAccount.gaps` from the statements' period dates (`missingMonths`), shown under the rekening in `text-review`.
 - **T7** `importBalances` sums the staged plan's lines per `entityId|code`; the mapping table compares that to the chosen account's
-  `normalBalance` (`againstNature`, lib/ledger-import/nature.ts) and hints; not shown when the existing type-side hint already is.
+  `normalBalance` (`againstNature`, lib/ledger-import/nature.ts) and hints, in the entity's currency; Neraca files only (a ledger's net
+  movement is not a balance); not shown when the existing type-side hint already is.
+- **Review of #151** (Codex and an independent Opus read): a ledger label that is also a bank holder is one entity (its short name becomes
+  the label); the multi-sheet line follows every sheet; Neraca held back behind ledger sheets; hint in the entity's currency and only
+  for Neraca.
 - Decided not to do: **1999 as a mapping target** (accounting-rules 9, 15a, 22: a permanent close blocker with no correction
   proposal); **a guard on re-pointing a posted source account** (deliberate, recorded in Riwayat per ADR 0013); a bulk "terima semua
   selisih" (a draft with several unbalanced journals is rare; each says its amount); the AR/AP suggestion (own cycle, cloud session).

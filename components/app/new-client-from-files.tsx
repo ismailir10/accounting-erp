@@ -57,7 +57,13 @@ export function reconcile(p: ClientProposal, prev: CardState | null): CardState 
   const used = new Set(Object.values(owner));
   const proposed = new Set(p.entities.map((e) => e.key));
   const entities = (prev?.entities ?? []).filter((x) => proposed.has(x.key) || used.has(x.key) || x.touched || x.removed || !x.fromProposal);
-  for (const e of p.entities) if (!entities.some((x) => x.key === e.key)) entities.push({ key: e.key, name: e.name, kind: e.kind, fromClientName: e.fromClientName, fromProposal: true, ...(e.key.startsWith("label:") ? { shortName: e.shortName } : {}) });
+  for (const e of p.entities) {
+    const known = entities.find((x) => x.key === e.key);
+    if (known) {
+      // A ledger read later names an entity the statements already proposed: its label becomes the short name.
+      if (e.labelled) known.shortName = e.shortName;
+    } else entities.push({ key: e.key, name: e.name, kind: e.kind, fromClientName: e.fromClientName, fromProposal: true, ...(e.labelled ? { shortName: e.shortName } : {}) });
+  }
   return { entities, owner, moved };
 }
 

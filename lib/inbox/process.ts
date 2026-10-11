@@ -113,13 +113,23 @@ async function stageLedger(db: Db, row: UploadItem, data: Buffer, input: Process
     const staged = await stageImport(db, base);
     if (staged.status === "STAGED") return { status: "DRAFT", message: LEDGER_DRAFT, ledgerImportId: staged.importId };
     // Several tables: each sheet is its own draft (a sheet's hash includes its name, so none can double a posted one). A sheet that
-    // can't stage says why on the line; the others still do.
+    // can't stage says why on the line; the others still do. A draft's checks against the books (an opening bridge, rows before an
+    // opening) are made when it is staged, so a Neraca is held back while ledger sheets of this file are drafted, and staged by the
+    // next drop of the file once they are booked — else posting both would count the same money twice.
     const drafts: { sheet: string; importId: string }[] = [];
     const refused: string[] = [];
-    for (const c of staged.candidates) {
+    let ledgerDrafts = 0;
+    for (const c of [...staged.candidates].sort((a, b) => Number(a.mode === "NERACA") - Number(b.mode === "NERACA"))) {
+      if (c.mode === "NERACA" && ledgerDrafts) {
+        refused.push(`${c.sheet}: neraca dibukukan sesudah buku besarnya, agar saldo awalnya dijembatani dengan benar. Unggah file ini lagi setelah drafnya dicatat.`);
+        continue;
+      }
       try {
         const one = await stageImport(db, { ...base, sheet: c.sheet });
-        if (one.status === "STAGED") drafts.push({ sheet: c.sheet, importId: one.importId });
+        if (one.status === "STAGED") {
+          drafts.push({ sheet: c.sheet, importId: one.importId });
+          if (c.mode === "LEDGER") ledgerDrafts++;
+        }
       } catch (e) {
         refused.push(`${c.sheet}: ${sheetRefusal(e, c.mode)}`);
       }

@@ -67,11 +67,11 @@ test("a multi-entity workbook proposes a company per entity and stages a draft p
   await expect(card.getByLabel("Nama perusahaan").nth(0)).toHaveValue("HOLDX");
   await card.getByRole("button", { name: "Buat klien & impor" }).click();
 
-  // No "Gagal": two ledger sheets staged as drafts, the Neraca of a group says which company it needs.
+  // No "Gagal": two ledger sheets staged as drafts; the Neraca waits until they are booked (its opening bridge is checked then).
   await expect(page.getByRole("heading", { name: "Unggah", exact: true })).toBeVisible();
   const list = page.getByTestId("inbox-list");
   await expect(list).toContainText("2 draf buku besar siap dipetakan: 10_HC_GL, 20_OPCO_GL.", { timeout: 60_000 });
-  await expect(list).toContainText("04_HC_NERACA: neraca untuk satu perusahaan");
+  await expect(list).toContainText("04_HC_NERACA: neraca dibukukan sesudah buku besarnya");
   await expect(list).not.toContainText("Gagal");
 
   // Both drafts are listed with their sheets; the first opens with every entity matched to its company.
@@ -80,15 +80,12 @@ test("a multi-entity workbook proposes a company per entity and stages a draft p
   await expect(page.getByText("20_OPCO_GL").first()).toBeVisible();
 });
 
-test("mapping says when a file balance sits on the wrong side of the account it is mapped to", async ({ page }) => {
+test("mapping says when a Neraca balance sits on the wrong side of the account it is mapped to", async ({ page }) => {
   await page.goto("/clients/new");
   await page.getByLabel("Nama klien").fill("Klien Saldo Uji");
-  const gl: Cell[][] = [
-    ["Entry Date", "Account Code", "Account Name", "Debit", "Credit"],
-    [new Date(Date.UTC(2024, 0, 31)), "1-1200", "Account Receivable", 0, 500],
-    [new Date(Date.UTC(2024, 0, 31)), "1-1000", "Bank", 500, 0],
-  ];
-  await page.getByTestId("client-file-input").setInputFiles({ name: "gl-saldo.xlsx", mimeType: XLSX, buffer: await workbook({ GL: gl }) });
+  // A receivable carrying a credit (negative) balance in the Neraca of "SALDO UJI ABADI".
+  const neraca = NERACA("SALDO UJI ABADI").map((r): Cell[] => (r[0] === "1-1000" ? ["1-1000", "BANK", 1500] : r[0] === "1-1810" ? ["1-1200", "Account Receivable", -500] : r));
+  await page.getByTestId("client-file-input").setInputFiles({ name: "neraca-saldo.xlsx", mimeType: XLSX, buffer: await workbook({ "31-05-2026": neraca }) });
   await page.getByTestId("client-proposal").getByRole("button", { name: "Buat klien & impor" }).click();
   await expect(page.getByTestId("inbox-list")).toContainText("Draf buku besar siap dipetakan.", { timeout: 60_000 });
   await page.getByRole("link", { name: "Petakan akun" }).click();

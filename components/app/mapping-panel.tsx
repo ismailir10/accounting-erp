@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { displaySourceCode } from "@/lib/ledger-import/code";
 import { againstNature, type NormalSide } from "@/lib/ledger-import/nature";
-import { formatRupiah } from "@/lib/money";
+import { formatMoney } from "@/lib/money";
 
 export type MappingRow = {
   id: string;
@@ -31,6 +31,8 @@ export type MappingRow = {
   typeHint: string | null;
   /** The file's balance for this account, debit-positive minor units as a string: checked against the chosen account's normal side. */
   balance: string | null;
+  /** The entity's functional currency: the balance is in its minor units. */
+  currency: string;
 };
 type Option = { code: string; name: string; group: string; normal: NormalSide };
 const NEW = "__new__";
@@ -203,7 +205,7 @@ export function MappingPanel({
                       {sideDiffers && <div className="mt-1 text-xs text-review" data-testid="side-differs">Sisi akun berbeda: di file {TYPE_LABEL[r.typeHint!]}, akun Buku {typeOfCode.get(value)}.</div>}
                       {against && !sideDiffers && (
                         <div className="mt-1 text-xs text-review" data-testid="balance-against-nature">
-                          Saldo di file {formatRupiah(BigInt(r.balance!) < 0n ? -BigInt(r.balance!) : BigInt(r.balance!))} di sisi {against}, tidak biasa untuk akun Buku ini. Periksa pilihannya.
+                          Saldo di file {formatMoney(BigInt(r.balance!) < 0n ? -BigInt(r.balance!) : BigInt(r.balance!), r.currency)} di sisi {against}, tidak biasa untuk akun Buku ini. Periksa pilihannya.
                         </div>
                       )}
                       {catchAll && <div className="mt-1 text-xs text-muted-foreground" data-testid="catch-all">Akun penampung ({catchAll}) — pilih “+ Buat akun baru” untuk mempertahankan rincian klien.</div>}
