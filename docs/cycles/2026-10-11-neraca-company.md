@@ -22,6 +22,7 @@ A Neraca is usually the first file an accountant has, and its title already name
   entity. Works for a single-sheet file and for each sheet of a multi-sheet one.
 
 ## Verification
+On the branch rebased onto #151 (`ccabdd6`): `npm run lint` clean, typecheck clean, the inbox, ledger-title and preview tests (14 files, 92 tests) pass. The full gate runs in CI.
 
 ## Ship Notes
 - No migration, no env change. Rollback: revert the PR.
