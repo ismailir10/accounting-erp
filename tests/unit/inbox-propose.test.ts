@@ -121,6 +121,43 @@ describe("Klien baru from files: the proposal", () => {
     expect(p.entities).toEqual([{ key: CLIENT_KEY, name: "", shortName: "", kind: "PT", fromClientName: true, banks: [] }]);
   });
 
+  it("a multi-entity ledger proposes one company per entity label, the label as its short name (Chickin)", () => {
+    const sheet = (name: string, entities: string[]) => ({ sheet: name, mode: "LEDGER" as const, rows: 100, periodStart: "2023-01-01", periodEnd: "2025-12-31", entities });
+    const p = proposeClient([
+      { fileName: "chickin.xlsx", kind: "LEDGER", status: "CHECKED", message: null, sections: [sheet("10_HC_GL_MASTER", ["HOLDCO"]), sheet("20_OPCO_GL_MASTER", ["SKP", "SPN", "CSP", "CAH", "skp"])] },
+    ]);
+    expect(p.entities.map((e) => [e.name, e.shortName, e.kind])).toEqual([
+      ["HOLDCO", "HOLDCO", "PT"],
+      ["SKP", "SKP", "PT"],
+      ["SPN", "SPN", "PT"],
+      ["CSP", "CSP", "PT"],
+      ["CAH", "CAH", "PT"],
+    ]);
+    expect(p.entities.some((e) => e.fromClientName)).toBe(false);
+    expect(p.readable).toBe(true);
+  });
+
+  it("a Neraca without an entity column names the company its title names, not the client (Goers)", () => {
+    const neraca = { sheet: "31-05-2026", mode: "NERACA" as const, rows: 23, periodStart: "2026-05-31", periodEnd: "2026-05-31" };
+    const p = proposeClient([
+      { fileName: "balance_sheet.xlsx", kind: "LEDGER", status: "CHECKED", message: null, sections: [neraca], companyName: "SANRAYA ADI NATTAYA" },
+      { fileName: "profit_loss.xlsx", kind: "OTHER", status: "KEPT", message: "Disimpan di Dokumen.", sections: [], companyName: "SANRAYA ADI NATTAYA" },
+    ]);
+    expect(p.entities).toEqual([{ key: expect.stringContaining("title:"), name: "Sanraya Adi Nattaya", shortName: "Sanraya Adi Nattaya", kind: "PT", banks: [] }]);
+    expect(p.clientName).toBe("Sanraya Adi Nattaya");
+  });
+
+  it("a company named by a report and by a bank holder is one entity; a legal form in the title sets the kind", () => {
+    const neraca = { sheet: "BS", mode: "NERACA" as const, rows: 148, periodStart: "2024-12-31", periodEnd: "2024-12-31" };
+    const withBank = proposeClient([
+      bank("fkm.csv", section("BCA", "1112223334", "FILOSOFI KOPI MANDIRI PT")),
+      { fileName: "pl.xlsx", kind: "LEDGER", status: "CHECKED", message: null, sections: [neraca], companyName: "PT Filosofi Kopi Mandiri" },
+    ]);
+    expect(withBank.entities.map((e) => e.name)).toEqual(["PT Filosofi Kopi Mandiri"]);
+    const cv = proposeClient([{ fileName: "n.xlsx", kind: "LEDGER", status: "CHECKED", message: null, sections: [neraca], companyName: "CV Maju Jaya" }]);
+    expect(cv.entities[0]).toMatchObject({ name: "CV Maju Jaya", kind: "CV" });
+  });
+
   it("proposes nothing when nothing could be read", () => {
     const p = proposeClient([
       { fileName: "rusak.pdf", kind: "BANK", status: "FAILED", message: "Tanggal tidak terbaca.", sections: [] },

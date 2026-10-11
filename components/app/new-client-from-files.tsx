@@ -28,7 +28,7 @@ import { cn } from "@/lib/utils";
  */
 
 type Dropped = { key: string; file: File; preview: PreviewFile | null; error: string | null; reading: boolean; password?: string };
-type CardEntity = { key: string; name: string; kind: ProposedKind; fromClientName?: boolean; fromProposal?: boolean; touched?: boolean; removed?: boolean };
+type CardEntity = { key: string; name: string; kind: ProposedKind; fromClientName?: boolean; fromProposal?: boolean; touched?: boolean; removed?: boolean; /** A ledger's entity label: the short name its rows are matched by, kept when the name is edited. */ shortName?: string };
 export type CardState = { entities: CardEntity[]; owner: Record<string, string>; moved: Record<string, true> };
 
 const OFFLINE = "Koneksi terputus. Periksa internet lalu coba lagi.";
@@ -57,7 +57,7 @@ export function reconcile(p: ClientProposal, prev: CardState | null): CardState 
   const used = new Set(Object.values(owner));
   const proposed = new Set(p.entities.map((e) => e.key));
   const entities = (prev?.entities ?? []).filter((x) => proposed.has(x.key) || used.has(x.key) || x.touched || x.removed || !x.fromProposal);
-  for (const e of p.entities) if (!entities.some((x) => x.key === e.key)) entities.push({ key: e.key, name: e.name, kind: e.kind, fromClientName: e.fromClientName, fromProposal: true });
+  for (const e of p.entities) if (!entities.some((x) => x.key === e.key)) entities.push({ key: e.key, name: e.name, kind: e.kind, fromClientName: e.fromClientName, fromProposal: true, ...(e.key.startsWith("label:") ? { shortName: e.shortName } : {}) });
   return { entities, owner, moved };
 }
 
@@ -202,7 +202,7 @@ export function NewClientStart({ company, manual: manualAtStart }: { company: bo
         industry,
         entities: sent.map(({ entity, banks }) => {
           const n = entityName(entity).trim();
-          return { name: n, shortName: shortNameOf(n, entity.kind), kind: entity.kind, npwp: "", banks: banks.map((b) => ({ bank: b.bank, number: b.number, label: "", isOverdraft: b.isOverdraft })) };
+          return { name: n, shortName: entity.shortName ?? shortNameOf(n, entity.kind), kind: entity.kind, npwp: "", banks: banks.map((b) => ({ bank: b.bank, number: b.number, label: "", isOverdraft: b.isOverdraft })) };
         }),
       }).catch(() => ({ ok: false as const, error: OFFLINE, fields: undefined }));
       if (!r.ok) {

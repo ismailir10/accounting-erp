@@ -10,7 +10,15 @@ import { accountDisplay, monthSpan } from "./view";
  */
 
 /** One dropped file as read without a client (lib/inbox/preview.ts): the same outcome an Unggah line has, nothing stored. */
-export type PreviewFile = { fileName: string; kind: UploadKind; status: UploadStatus; message: string | null; sections: BankSection[] | LedgerSection[] };
+export type PreviewFile = {
+  fileName: string;
+  kind: UploadKind;
+  status: UploadStatus;
+  message: string | null;
+  sections: BankSection[] | LedgerSection[];
+  /** The company a spreadsheet's title rows name (a Neraca, laba rugi or arus kas without an entity column). */
+  companyName?: string | null;
+};
 
 export type ProposedKind = "PT" | "CV" | "PERORANGAN";
 export type ProposedAccount = {
@@ -91,6 +99,9 @@ export function proposeClient(files: PreviewFile[]): ClientProposal {
   const documents: string[] = [];
   let numberless = false;
   let ledger = false;
+  // Companies the files name outside any bank statement: a ledger's entity labels ("SKP"), or a report's own title ("PT FKM").
+  const labels = new Map<string, string>();
+  const titled = new Map<string, string>();
 
   for (const f of files) {
     if (f.status === "NEEDS_PASSWORD") {
@@ -100,8 +111,13 @@ export function proposeClient(files: PreviewFile[]): ClientProposal {
     if (f.kind === "LEDGER") {
       ledger = true;
       documents.push(f.fileName);
-      continue;
+      for (const section of f.sections as LedgerSection[]) for (const label of section.entities ?? []) if (!labels.has(label.toLowerCase())) labels.set(label.toLowerCase(), label);
     }
+    if (f.kind !== "BANK" && f.companyName) {
+      const key = normalName(f.companyName);
+      if (key && !titled.has(key)) titled.set(key, f.companyName);
+    }
+    if (f.kind === "LEDGER") continue;
     if (f.kind !== "BANK") {
       documents.push(f.fileName);
       continue;
@@ -178,12 +194,24 @@ export function proposeClient(files: PreviewFile[]): ClientProposal {
     const name = entityName(holder);
     return { key: g.key, name, shortName: shortNameOf(name, kind), kind, banks: g.banks };
   });
+  // A ledger's entity column names the companies exactly (its labels are the short names Unggah matches rows by); without one, the
+  // company a report's title names — unless a bank holder already is that company.
+  if (labels.size) {
+    for (const label of labels.values()) entities.push({ key: `label:${label.toLowerCase()}`, name: label, shortName: label, kind: "PT", banks: [] });
+  } else {
+    for (const [key, title] of titled) {
+      if (groups.some((g) => g.key === key)) continue;
+      const name = entityName(title);
+      const kind = isCompanyName(title) ? companyKind(title) : "PT";
+      entities.push({ key: `title:${key}`, name, shortName: shortNameOf(name, kind), kind, banks: [] });
+    }
+  }
   const firstCompany = entities.find((e) => e.kind !== "PERORANGAN");
-  const firstNamed = firstCompany ?? entities[0];
+  const firstNamed = entities.find((e) => e.kind !== "PERORANGAN" && !e.key.startsWith("label:")) ?? entities.find((e) => !e.key.startsWith("label:"));
   const clientName = firstNamed?.name ?? "";
 
   // A rekening without a holder belongs to the client's company: the first one found, else one named after the client.
-  const readable = accounts.size > 0 || ledger || numberless || valas.size > 0;
+  const readable = accounts.size > 0 || ledger || numberless || valas.size > 0 || titled.size > 0;
   if (holderless.length && firstCompany) firstCompany.banks.push(...holderless);
   else if (holderless.length || (readable && !entities.length)) entities.push({ key: CLIENT_KEY, name: "", shortName: "", kind: "PT", fromClientName: true, banks: holderless });
 
