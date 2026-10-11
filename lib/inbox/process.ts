@@ -24,7 +24,7 @@ type Scope = { firmId: string; clientId: string; batchId: string };
 export type ProcessInput = Scope & { actorId?: string | null; provider: AiProvider | null; passwords?: readonly string[] };
 
 const LEDGER_DRAFT = "Draf buku besar siap dipetakan.";
-const CHOOSE_SHEET = "File ini berisi beberapa tabel. Buka Impor buku besar untuk memilih sheet.";
+const CHOOSE_SHEET = "File ini berisi beberapa tabel, tetapi tidak satu pun bisa disiapkan. Buka Impor buku besar untuk memilih sheet.";
 const digits = (s: string | null | undefined) => (s ?? "").replace(/\D/g, "");
 
 /** The Bahasa message of a refusal the import or ledger staging gives (the same classes `fail()` in app/actions.ts shows as is). */
@@ -100,21 +100,43 @@ async function bookBank(db: Db, row: UploadItem, data: Buffer, input: ProcessInp
 
 async function stageLedger(db: Db, row: UploadItem, data: Buffer, input: ProcessInput): Promise<Result> {
   const entities = await db.entity.findMany({ where: { firmId: input.firmId, clientId: input.clientId }, select: { id: true } });
+  const base = {
+    firmId: input.firmId,
+    clientId: input.clientId,
+    fileName: row.fileName,
+    data,
+    actorId: input.actorId,
+    evidenceVersionId: row.evidenceVersionId ?? undefined,
+    entityId: entities.length === 1 ? entities[0].id : undefined,
+  };
   try {
-    const staged = await stageImport(db, {
-      firmId: input.firmId,
-      clientId: input.clientId,
-      fileName: row.fileName,
-      data,
-      actorId: input.actorId,
-      evidenceVersionId: row.evidenceVersionId ?? undefined,
-      entityId: entities.length === 1 ? entities[0].id : undefined,
-    });
+    const staged = await stageImport(db, base);
     if (staged.status === "STAGED") return { status: "DRAFT", message: LEDGER_DRAFT, ledgerImportId: staged.importId };
-    return { status: "FAILED", message: CHOOSE_SHEET };
+    // Several tables: each sheet is its own draft (a sheet's hash includes its name, so none can double a posted one). A sheet that
+    // can't stage says why on the line; the others still do.
+    const drafts: { sheet: string; importId: string }[] = [];
+    const refused: string[] = [];
+    for (const c of staged.candidates) {
+      try {
+        const one = await stageImport(db, { ...base, sheet: c.sheet });
+        if (one.status === "STAGED") drafts.push({ sheet: c.sheet, importId: one.importId });
+      } catch (e) {
+        refused.push(`${c.sheet}: ${sheetRefusal(e, c.mode)}`);
+      }
+    }
+    if (!drafts.length) return { status: "FAILED", message: refused.join("\n") || CHOOSE_SHEET };
+    const summary = `${drafts.length} draf buku besar siap dipetakan: ${drafts.map((d) => d.sheet).join(", ")}.`;
+    return { status: "DRAFT", message: [summary, ...refused].join("\n"), ledgerImportId: drafts[0].importId };
   } catch (e) {
     return { status: "FAILED", message: failureMessage(e) };
   }
+}
+
+/** Why one sheet of a multi-sheet file didn't stage: a Neraca belongs to one company, which the inbox can't choose for a group. */
+function sheetRefusal(e: unknown, mode: "LEDGER" | "NERACA"): string {
+  const message = failureMessage(e);
+  if (mode === "NERACA" && /Pilih entitas untuk neraca/.test(message)) return "neraca untuk satu perusahaan: unggah lewat Cara lain → Impor buku besar dan pilih perusahaannya.";
+  return message;
 }
 
 /** A claim older than this is a crashed request's: the file counts as CHECKED again (well past any request's time limit). */

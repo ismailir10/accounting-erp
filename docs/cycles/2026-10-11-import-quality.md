@@ -35,7 +35,7 @@ is a load-bearing transient account (accounting-rules 9, 15a, 22); mapped lines 
 ## Tasks
 - [x] T1 `dataMonths` falls back to opening months for a Neraca-only client — accept: `tests/db/data-months.test.ts`.
 - [x] T2 Company name + entity labels from the files into the card (`LedgerSection.entities`, `PreviewFile.companyName`, label kept as the card's short name) — accept: `tests/unit/title-company.test.ts`, `tests/unit/inbox-propose.test.ts`, `tests/db/inbox-preview-ledger.test.ts`.
-- [ ] T3 Multi-sheet workbook → one draft per sheet in the inbox.
+- [x] T3 Multi-sheet workbook → one draft per sheet in the inbox (`stageLedger`; a Neraca sheet that needs a company says so) — accept: the two cases in `tests/db/inbox-process.test.ts`.
 - [ ] T4 Importer copy for unmatched entities + Unggah banner while booking.
 - [ ] T5 Missing-month note on the card.
 - [ ] T6 Re-walk the five clients in production with the fixes; record.

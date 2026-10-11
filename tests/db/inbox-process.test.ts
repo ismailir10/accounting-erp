@@ -106,6 +106,53 @@ describe("Unggah: book the drop file by file", () => {
     expect(await g.next()).toEqual({ item: null, remaining: 0 });
   });
 
+  it("a workbook with several ledger sheets stages one draft per sheet instead of failing (Chickin, 2026-10-11)", async () => {
+    const g = await setup();
+    const wb = new ExcelJS.Workbook();
+    for (const [name, entity, code] of [["10_HC_GL_MASTER", "PT Uji", "10000"], ["20_OPCO_GL_MASTER", "PT Uji", "10001"]] as const) {
+      const ws = wb.addWorksheet(name);
+      for (const r of [
+        ["Entity", "Entry Date", "Account Code", "Account Name", "Currency", "Debit", "Credit", "Notes"],
+        [entity, d(2026, 1, 31), code, "Kas", "IDR", 1000, 0, ""],
+        [entity, d(2026, 1, 31), "31001", "Modal Saham", "IDR", 0, 1000, ""],
+      ])
+        ws.addRow(r);
+    }
+    await g.check("chickin.xlsx", Buffer.from(await wb.xlsx.writeBuffer()));
+    const r = await g.next();
+    expect(r.item).toMatchObject({ status: "DRAFT", message: "2 draf buku besar siap dipetakan: 10_HC_GL_MASTER, 20_OPCO_GL_MASTER." });
+    const drafts = await db.ledgerImport.findMany({ where: { clientId: g.client.id, status: "DRAFT" }, orderBy: { createdAt: "asc" } });
+    expect(drafts).toHaveLength(2);
+    expect(r.item!.ledgerImportId).toBe(drafts[0].id);
+  });
+
+  it("a Neraca sheet that needs a company is said so, and the ledger sheets beside it still stage", async () => {
+    const g = await setup();
+    const wb = new ExcelJS.Workbook();
+    const gl = wb.addWorksheet("20_OPCO_GL_MASTER");
+    for (const r of [
+      ["Entity", "Entry Date", "Account Code", "Account Name", "Currency", "Debit", "Credit", "Notes"],
+      ["PT Uji", d(2026, 1, 31), "10000", "Kas", "IDR", 1000, 0, ""],
+      ["PT Uji", d(2026, 1, 31), "31001", "Modal Saham", "IDR", 0, 1000, ""],
+    ])
+      gl.addRow(r);
+    const bs = wb.addWorksheet("04_HC_2022_FOUNDATION");
+    for (const r of [
+      ["PT CONTOH"], ["Balance Sheet"], ["31/05/2026"], ["(in IDR)"], ["Date", null, "31/05/2026"], ["Assets"], ["Current Assets"], ["1-1000", "Bank", 900],
+      ["Total Current Assets", null, 900], ["Other Assets"], ["1-1810", "Deposit", 100], ["Total Assets", null, 1000], ["Liability & Equity"], ["Current Liability"],
+      ["2-2000", "Accounts Payable", 200], ["2-2100", "Loan from Bank", 100], ["Total Current Liability", null, 300], ["Long-term Liability"],
+      ["2-2744", "Others Payables-Related Parties", 400], ["2-2783", "Employee Benefits Liabilities", 50], ["Total Long-term Liability", null, 450], ["Equity"],
+      ["3-3000", "Share Capital", 250], ["Total Liability & Equity", null, 1000],
+    ])
+      bs.addRow(r);
+    await g.check("chickin.xlsx", Buffer.from(await wb.xlsx.writeBuffer()));
+    const r = await g.next();
+    expect(r.item?.status).toBe("DRAFT");
+    expect(r.item?.message).toMatch(/1 draf buku besar siap dipetakan: 20_OPCO_GL_MASTER\./);
+    expect(r.item?.message).toMatch(/04_HC_2022_FOUNDATION.*neraca.*satu perusahaan/);
+    expect(r.item?.message).not.toMatch(/perbaiki filenya/);
+  });
+
   it("books every section of a combined file that has a rekening, the new ones after the card", async () => {
     const g = await setup();
     await addBankAccount(db, g.firm.id, g.client.id, g.pt.entity.id, { bank: "SMBC", number: "90022152088", label: "" });
