@@ -1,9 +1,12 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { parseStatementSections } from "@/lib/import/parsers";
+import { PdfPasswordError } from "@/lib/import/parsers/pdf";
 import { checkContinuity } from "@/lib/import/normalize";
 
-/** Local-only metadata check. Files stay on disk; no database, model or network calls. */
+/** Local-only metadata check. Files stay on disk; no database, model or network calls.
+ * `error` means the import would refuse the file or section; a running-balance break, which the import only
+ * flags, is reported as `continuity`. The password is tried only on files that say they are locked. */
 async function main() {
   const args = process.argv.slice(2);
   const directory = args[0];
@@ -16,10 +19,14 @@ async function main() {
   const files = (await readdir(directory, { withFileTypes: true })).filter((entry) => entry.isFile()).sort((a, b) => a.name.localeCompare(b.name));
   for (const file of files) {
     try {
-      const sections = await parseStatementSections(file.name, await readFile(join(directory, file.name)), { password });
+      const data = await readFile(join(directory, file.name));
+      const sections = await parseStatementSections(file.name, data).catch((error: unknown) => {
+        if (password && error instanceof PdfPasswordError && error.reason === "needed") return parseStatementSections(file.name, data, { password });
+        throw error;
+      });
       for (const [index, statement] of sections.entries()) {
         const continuity = checkContinuity(statement);
-        const error = statement.error ?? (continuity.ok ? null : continuity.note);
+        const error = statement.error ?? null;
         console.log(JSON.stringify({
           file: file.name,
           section: { index: index + 1, label: statement.section?.label ?? null },
@@ -31,12 +38,13 @@ async function main() {
           opening: { value: statement.openingBalance.toString(), provenance: statement.provenance?.opening ?? null },
           closing: { value: statement.closingBalance.toString(), provenance: statement.provenance?.closing ?? null },
           rows: statement.rows.length,
+          continuity: continuity.ok ? "ok" : continuity.note,
           error,
         }));
         if (error) process.exitCode = 1;
       }
     } catch (error) {
-      console.log(JSON.stringify({ file: file.name, section: null, format: null, accountNumber: null, holder: null, currency: null, period: null, opening: null, closing: null, rows: null, error: error instanceof Error ? error.message : String(error) }));
+      console.log(JSON.stringify({ file: file.name, section: null, format: null, accountNumber: null, holder: null, currency: null, period: null, opening: null, closing: null, rows: null, continuity: null, error: error instanceof Error ? error.message : String(error) }));
       process.exitCode = 1;
     }
   }

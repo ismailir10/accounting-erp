@@ -148,7 +148,7 @@ export function smbcGiroDepositPdf() {
 
 /** BRImo financial report: five pages, zero-filled sides, bilingual headers and the printed summary only on page five.
  * `summarySplit` ends page five with the summary labels and prints the values atop a sixth page, under its title. */
-export function brimoPdf(opts: { debit?: string; credit?: string; opening?: string; closing?: string; totalDebit?: string; totalCredit?: string; holder?: string | null; summarySplit?: boolean } = {}): Buffer {
+export function brimoPdf(opts: { debit?: string; credit?: string; opening?: string; closing?: string; totalDebit?: string; totalCredit?: string; holder?: string | null; summarySplit?: boolean; userPassword?: string } = {}): Buffer {
   const rows: [string, string, string, string, string][] = [
     ["01/01/26 09:35:08", "Transfer Ke Andi via BRImo", opts.debit ?? "5,000,000.00", opts.credit ?? "0.00", "52,400,000.00"],
     ["01/01/26 12:58:17", "Transfer Dari Sari via BRImo", "0.00", "185,000.00", "52,585,000.00"],
@@ -210,7 +210,7 @@ export function brimoPdf(opts: { debit?: string; credit?: string; opening?: stri
     return texts;
   });
   if (opts.summarySplit) pages.push(table(800, [...title(5), ...values, ...footer]));
-  return makePdf(pages);
+  return makePdf(pages, { userPassword: opts.userPassword });
 }
 
 /** Password-protected Mandiri e-Statement with the address/product header and its split date/amount rows. */

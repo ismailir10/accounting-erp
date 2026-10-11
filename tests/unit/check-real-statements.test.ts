@@ -36,7 +36,7 @@ describe("local statement directory check CLI", () => {
       ["mandiri.pdf", "MANDIRI", "1110001234567", "BUDI CONTOH", "IDR", 9, null],
       ["wondr.pdf", "BNI", "8311100000", "BUDI CONTOH", "IDR", 6, null],
     ]);
-    expect(output[0]).toMatchObject({ section: { index: 1, label: null }, period: { start: "2026-01-01", end: "2026-01-31", provenance: "DECLARED" }, opening: { value: "57400000", provenance: "PRINTED" }, closing: { value: "47400000", provenance: "PRINTED" } });
+    expect(output[0]).toMatchObject({ section: { index: 1, label: null }, period: { start: "2026-01-01", end: "2026-01-31", provenance: "DECLARED" }, opening: { value: "57400000", provenance: "PRINTED" }, closing: { value: "47400000", provenance: "PRINTED" }, continuity: "ok" });
     expect(result.stdout).not.toContain("synthetic-password");
   });
   it.each([{ options: [] }, { options: ["--password", "wrong"] }])("reports password errors without aborting later files (options=$options)", ({ options }) => {
@@ -49,6 +49,18 @@ describe("local statement directory check CLI", () => {
     expect(output).toHaveLength(2);
     expect(output[0].error).toMatch(options.length ? /kata sandi PDF salah/i : /dikunci kata sandi/i);
     expect(output[1]).toMatchObject({ format: "BRI", rows: 6, error: null });
+  });
+  it("tries the password only on files that are locked", async () => {
+    const path = directory();
+    // Encrypted for permissions only, like many bank PDFs: opens without a password, refuses a wrong one.
+    writeFileSync(join(path, "a-open.pdf"), brimoPdf({ userPassword: "" }));
+    writeFileSync(join(path, "b-locked.pdf"), mandiriEstatementPdf());
+    const result = run(path, "--password", "synthetic-password");
+    expect(result.status, result.stdout).toBe(0);
+    expect(records(result.stdout).map((record) => [record.file, record.format, record.error])).toEqual([
+      ["a-open.pdf", "BRI", null],
+      ["b-locked.pdf", "MANDIRI", null],
+    ]);
   });
   it("prints every SMBC section including its unsupported-currency error", () => {
     const path = directory();
@@ -81,12 +93,12 @@ describe("local statement directory check CLI", () => {
     expect(output[0].error).toBeTypeOf("string");
     expect(output[1]).toMatchObject({ opening: { value: "90071992547409931" }, closing: { value: "90071992547410031" }, rows: 1, error: null });
   });
-  it("reports continuity conflicts while keeping the independently printed balance", () => {
+  it("reports a continuity break apart from errors, since the import only flags it", () => {
     const path = directory();
     writeFileSync(join(path, "brimo.pdf"), brimoPdf({ closing: "48,400,000.00" }));
     const result = run(path);
-    expect(result.status).toBe(1);
-    expect(records(result.stdout)[0]).toMatchObject({ closing: { value: "48400000", provenance: "PRINTED" }, error: expect.stringMatching(/saldo akhir/i) });
+    expect(result.status).toBe(0);
+    expect(records(result.stdout)[0]).toMatchObject({ closing: { value: "48400000", provenance: "PRINTED" }, continuity: expect.stringMatching(/saldo akhir/i), error: null });
   });
   it.each([[], ["https://example.com/statements"], ["/missing-directory"], ["--password", "secret"], [".", "--password"], [".", "--unknown", "secret"], [".", "--password", "secret", "extra"]].map((args) => ({ args })))("rejects invalid arguments or directories $args without reading remote files", ({ args }) => {
     const result = run(...args);
