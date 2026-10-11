@@ -9,7 +9,7 @@ export async function loadWorkspace(db: Db, firmId: string, intakeId: string) {
   const activeIds = documents.filter(d => !d.excluded && d.status === "READY").flatMap(d => d.currentVersionId ? [d.currentVersionId] : []);
   const includedIds = documents.filter(d => !d.excluded).flatMap(d => d.versions.map(v => v.id));
   const [versions, facts, conflicts, selections, messages, entities] = await Promise.all([
-    db.evidenceVersion.findMany({ where: { firmId, id: { in: documents.flatMap(d => d.currentVersionId ? [d.currentVersionId] : []) } }, select: { id: true, units: true, issues: true, uploadItems: { where: { firmId, status: { in: ["BOOKED", "DRAFT"] } }, orderBy: { createdAt: "desc" }, take: 1, select: { clientId: true, status: true, message: true, sections: true, statementImportIds: true, ledgerImportId: true } } } }),
+    db.evidenceVersion.findMany({ where: { firmId, id: { in: documents.flatMap(d => d.currentVersionId ? [d.currentVersionId] : []) } }, select: { id: true, units: true, issues: true, uploadItems: { where: { firmId, status: { in: ["BOOKED", "DRAFT"] } }, orderBy: { createdAt: "desc" }, take: 1, select: { clientId: true, status: true, message: true, sections: true, statementImportIds: true, ledgerImportId: true, evidenceVersionId: true } } } }),
     db.evidenceFact.findMany({ where: { firmId, intakeId, ...HIDE_INVALID_CURRENCY_FACTS, OR: [{ status: { not: "REJECTED" }, versionId: { in: activeIds } }, { status: "CONFIRMED", versionId: { in: includedIds } }] }, orderBy: { id: "asc" }, take: 100 }),
     db.evidenceConflict.findMany({ where: { firmId, intakeId }, orderBy: [{ resolved: "asc" }, { id: "asc" }], take: 100 }),
     db.evidenceSelection.findMany({ where: { firmId, intakeId } }),

@@ -193,7 +193,10 @@ export default async function ImportPage({ params, searchParams }: { params: Pro
   return (
     <div className="space-y-6">
       <PageHeader title="Unggah" description="Rekening koran, buku besar, neraca, atau dokumen lain — Buku memilah dan membukukannya." />
-      {setup.current === "import" ? (
+      {inbox.items.some((i) => i.status === "CHECKED" || i.status === "PROCESSING") ? (
+        // Files are still being read or booked: the setup message ("Unggah rekening koran pertama") would say the opposite of the screen.
+        <NextStep>Membukukan file yang baru diunggah. Daftar di bawah terisi satu per satu; langkah berikutnya muncul setelah semuanya selesai.</NextStep>
+      ) : setup.current === "import" ? (
         <NextStep>{setup.next?.text}</NextStep>
       ) : (
         <NextStep href={setup.next?.href} cta={setup.next?.cta}>{setup.next?.text}</NextStep>
