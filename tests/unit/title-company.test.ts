@@ -10,6 +10,12 @@ describe("company name from a report's title rows", () => {
     expect(companyFromTitleRows(rows(["SANRAYA ADI NATTAYA"], ["Arus Kas"], ["01/01/2026 - 31/05/2026"]))).toBe("SANRAYA ADI NATTAYA");
   });
 
+  it("a title merged across the table's columns repeats in every cell (the real Jurnal.id export)", () => {
+    const merged = (t: string) => Array<string>(8).fill(t);
+    expect(companyFromTitleRows(rows(merged("SANRAYA ADI NATTAYA"), merged("Balance Sheet"), merged("31/05/2026"), merged("(in IDR)"), ["Date", null, "31/05/2026"], ["Assets"]))).toBe("SANRAYA ADI NATTAYA");
+    expect(companyFromTitleRows(rows(merged("SANRAYA ADI NATTAYA"), merged("Arus Kas"), merged("01/01/2026 - 31/05/2026")))).toBe("SANRAYA ADI NATTAYA");
+  });
+
   it("a line with a legal form wins wherever it is among the title rows (Filosofi Kopi's P&L)", () => {
     expect(
       companyFromTitleRows(rows(["Profit Loss Report"], ["PT Filosofi Kopi Mandiri"], ["Generated", "11-04-2025 16:04:04"], ["Period", "2024"], ["Display Mode", "Show Position Only"])),

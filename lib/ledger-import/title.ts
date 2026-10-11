@@ -19,8 +19,10 @@ export function companyFromTitleRows(rows: RawCell[][]): string | null {
   // Title rows have a cell or two; a row of column headers or data is not one.
   const lines: string[] = [];
   for (const row of rows.slice(0, TITLE_ROWS)) {
-    const cells = row.map(text).filter(Boolean);
-    lines.push(cells.length >= 1 && cells.length <= 2 && row.filter((c) => c !== null && c !== "").length <= 2 ? cells[0] : "");
+    // A merged title repeats in every cell it spans, so count distinct texts, and any number or date makes it a data row.
+    const cells = [...new Set(row.map(text).filter(Boolean))];
+    const onlyText = row.every((c) => c === null || c === "" || typeof c === "string");
+    lines.push(onlyText && cells.length >= 1 && cells.length <= 2 ? cells[0] : "");
   }
   const named = (t: string) => t.length >= 3 && t.length <= 100 && /\p{L}/u.test(t) && !DATE_LIKE.test(t) && !REPORT_WORD.test(t);
 
