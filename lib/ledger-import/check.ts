@@ -197,7 +197,10 @@ export function planLedger(
   const unknownEntities = [...new Set(rows.map(entityKeyOf))].filter((k) => !opts.entities.has(k));
   for (const k of unknownEntities) {
     const refs = rows.filter((r) => entityKeyOf(r) === k).map((r) => r.ref);
-    checks.push({ severity: "BLOCK", code: "UNKNOWN_ENTITY", message: `Entitas "${k || "(kosong)"}" belum dipasangkan ke entitas klien (${refs.length} baris).`, refs: cap(refs), entityKey: k });
+    const message = k
+      ? `Entitas "${k}" belum dipasangkan ke perusahaan klien (${refs.length} baris). Tambahkan perusahaan dengan nama singkat "${k}" di Pengaturan klien, lalu unggah ulang file ini.`
+      : `${refs.length} baris tanpa entitas, padahal klien punya lebih dari satu perusahaan: pilih perusahaannya di Impor buku besar (Cara lain), atau isi kolom entitas di file.`;
+    checks.push({ severity: "BLOCK", code: "UNKNOWN_ENTITY", message, refs: cap(refs), entityKey: k });
   }
   const unknownCurrency = rows.filter((r) => r.currency && !isCurrency(r.currency));
   for (const [cur, list] of groupBy(unknownCurrency, (r) => r.currency!)) {

@@ -46,6 +46,13 @@ describe("planLedger", () => {
     expect(p.checks.find((c) => c.code === "ROW_ERROR")?.message).toMatch(/#VALUE!/);
   });
 
+  it("an entity the client doesn't have says how to add it, not to fix the file", () => {
+    const p = planLedger([row({ code: "1", entity: "SKP", debit: 1n }), row({ code: "2", entity: "", credit: 1n })], { entities: ENT, currencyMode: "FUNCTIONAL" });
+    const unknown = p.checks.filter((c) => c.code === "UNKNOWN_ENTITY");
+    expect(unknown.find((c) => c.entityKey === "SKP")?.message).toBe('Entitas "SKP" belum dipasangkan ke perusahaan klien (1 baris). Tambahkan perusahaan dengan nama singkat "SKP" di Pengaturan klien, lalu unggah ulang file ini.');
+    expect(unknown.find((c) => c.entityKey === "")?.message).toMatch(/tanpa entitas.*pilih perusahaan/i);
+  });
+
   it("flags a reused code and a receivable with a credit balance", () => {
     const p = planLedger(
       [
