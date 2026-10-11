@@ -185,6 +185,36 @@ describe("Unggah: book the drop file by file", () => {
     expect(await db.ledgerImport.count({ where: { clientId: g.client.id } })).toBe(1);
   });
 
+  it("a Neraca for a client with several companies goes to the company its title names (Goers), else says it needs one", async () => {
+    const g = await setup();
+    const neraca = async (company: string) => {
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet("31-05-2026");
+      for (const r of [
+        [company], ["Balance Sheet"], ["31/05/2026"], ["(in IDR)"], ["Date", null, "31/05/2026"], ["Assets"], ["Current Assets"], ["1-1000", "Bank", 900],
+        ["Total Current Assets", null, 900], ["Other Assets"], ["1-1810", "Deposit", 100], ["Total Assets", null, 1000], ["Liability & Equity"], ["Current Liability"],
+        ["2-2000", "Accounts Payable", 200], ["2-2100", "Loan from Bank", 100], ["Total Current Liability", null, 300], ["Long-term Liability"],
+        ["2-2744", "Others Payables-Related Parties", 400], ["2-2783", "Employee Benefits Liabilities", 50], ["Total Long-term Liability", null, 450], ["Equity"],
+        ["3-3000", "Share Capital", 250], ["Total Liability & Equity", null, 1000],
+      ])
+        ws.addRow(r);
+      return Buffer.from(await wb.xlsx.writeBuffer());
+    };
+    // makeGroup: PT Uji Sejahtera and Andi Wijaya. The title names the first (legal form and word order don't matter).
+    await g.check("neraca.xlsx", await neraca("UJI SEJAHTERA PT"));
+    const r = await g.next();
+    expect(r.item).toMatchObject({ status: "DRAFT", message: "Draf buku besar siap dipetakan." });
+    const imp = await db.ledgerImport.findUniqueOrThrow({ where: { id: r.item!.ledgerImportId! } });
+    expect((imp.data as { entities: Record<string, string> }).entities[""]).toBe(g.pt.entity.id);
+
+    // A title that names nobody the client has: the company is asked for, not guessed.
+    const h = await setup();
+    await h.check("neraca-lain.xlsx", await neraca("PT ASING ABADI"));
+    const none = await h.next();
+    expect(none.item).toMatchObject({ status: "FAILED" });
+    expect(none.item?.message).toMatch(/Pilih entitas untuk neraca ini/);
+  });
+
   it("books every section of a combined file that has a rekening, the new ones after the card", async () => {
     const g = await setup();
     await addBankAccount(db, g.firm.id, g.client.id, g.pt.entity.id, { bank: "SMBC", number: "90022152088", label: "" });
