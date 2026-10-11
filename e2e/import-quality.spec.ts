@@ -79,3 +79,21 @@ test("a multi-entity workbook proposes a company per entity and stages a draft p
   await expect(page.getByText("10_HC_GL").first()).toBeVisible();
   await expect(page.getByText("20_OPCO_GL").first()).toBeVisible();
 });
+
+test("mapping says when a file balance sits on the wrong side of the account it is mapped to", async ({ page }) => {
+  await page.goto("/clients/new");
+  await page.getByLabel("Nama klien").fill("Klien Saldo Uji");
+  const gl: Cell[][] = [
+    ["Entry Date", "Account Code", "Account Name", "Debit", "Credit"],
+    [new Date(Date.UTC(2024, 0, 31)), "1-1200", "Account Receivable", 0, 500],
+    [new Date(Date.UTC(2024, 0, 31)), "1-1000", "Bank", 500, 0],
+  ];
+  await page.getByTestId("client-file-input").setInputFiles({ name: "gl-saldo.xlsx", mimeType: XLSX, buffer: await workbook({ GL: gl }) });
+  await page.getByTestId("client-proposal").getByRole("button", { name: "Buat klien & impor" }).click();
+  await expect(page.getByTestId("inbox-list")).toContainText("Draf buku besar siap dipetakan.", { timeout: 60_000 });
+  await page.getByRole("link", { name: "Petakan akun" }).click();
+  // The receivable (a debit-normal asset) carries a Rp 500 credit: said on its row; the bank row is quiet.
+  const hint = page.getByTestId("balance-against-nature");
+  await expect(hint).toHaveCount(1);
+  await expect(hint).toContainText("Rp 500 di sisi kredit");
+});

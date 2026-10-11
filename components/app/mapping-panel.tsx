@@ -13,6 +13,8 @@ import { acceptMappingsAction, suggestMappingsAction } from "@/app/actions";
 import { cn } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { displaySourceCode } from "@/lib/ledger-import/code";
+import { againstNature, type NormalSide } from "@/lib/ledger-import/nature";
+import { formatRupiah } from "@/lib/money";
 
 export type MappingRow = {
   id: string;
@@ -27,8 +29,10 @@ export type MappingRow = {
   mappedCode: string | null;
   mappedBy: string | null;
   typeHint: string | null;
+  /** The file's balance for this account, debit-positive minor units as a string: checked against the chosen account's normal side. */
+  balance: string | null;
 };
-type Option = { code: string; name: string; group: string };
+type Option = { code: string; name: string; group: string; normal: NormalSide };
 const NEW = "__new__";
 const NEW_ITEM = [{ value: NEW, label: "+ Buat akun baru" }];
 const RULES = ["PRIOR", "NAME", "KEYWORD", "NEW"];
@@ -75,6 +79,7 @@ export function MappingPanel({
   const noSuggestion = unmapped.filter((r) => !r.suggestedCode);
   // The type each Buku account belongs to, from the option group label ("Beban · Beban umum & administrasi").
   const typeOfCode = new Map(options.map((o) => [o.code, o.group.split(" · ")[0]]));
+  const normalOfCode = new Map(options.map((o) => [o.code, o.normal]));
   const visible = (showAll ? rows : unmapped).slice(0, limit);
 
   async function run(key: string, fn: () => Promise<void>) {
@@ -162,6 +167,7 @@ export function MappingPanel({
                 const creating = value === NEW;
                 const na = newAcc[r.id] ?? { fsLine: newLine ?? DEFAULT_FS[r.typeHint ?? ""] ?? fsLines[0]?.key ?? "", name: r.name };
                 const sideDiffers = !creating && !!value && !!r.typeHint && !!typeOfCode.get(value) && typeOfCode.get(value) !== TYPE_LABEL[r.typeHint];
+                const against = !creating && value && r.balance ? againstNature(BigInt(r.balance), normalOfCode.get(value) ?? "DEBIT") : null;
                 const catchAll = !creating && !!value && !r.mappedCode && CATCH_ALLS[value];
                 return (
                   <TableRow key={r.id} className="border-t align-top">
@@ -195,6 +201,11 @@ export function MappingPanel({
                       )}
                       {low && <div className="mt-1 text-xs text-review">Keyakinan AI rendah ({Math.round((r.confidence ?? 0) * 100)}%). Periksa sebelum menerima.</div>}
                       {sideDiffers && <div className="mt-1 text-xs text-review" data-testid="side-differs">Sisi akun berbeda: di file {TYPE_LABEL[r.typeHint!]}, akun Buku {typeOfCode.get(value)}.</div>}
+                      {against && !sideDiffers && (
+                        <div className="mt-1 text-xs text-review" data-testid="balance-against-nature">
+                          Saldo di file {formatRupiah(BigInt(r.balance!) < 0n ? -BigInt(r.balance!) : BigInt(r.balance!))} di sisi {against}, tidak biasa untuk akun Buku ini. Periksa pilihannya.
+                        </div>
+                      )}
                       {catchAll && <div className="mt-1 text-xs text-muted-foreground" data-testid="catch-all">Akun penampung ({catchAll}) — pilih “+ Buat akun baru” untuk mempertahankan rincian klien.</div>}
                     </TableCell>
                     <TableCell className="whitespace-normal hidden p-2 lg:table-cell">

@@ -38,7 +38,9 @@ is a load-bearing transient account (accounting-rules 9, 15a, 22); mapped lines 
 - [x] T3 Multi-sheet workbook → one draft per sheet in the inbox (`stageLedger`; a Neraca sheet that needs a company says so) — accept: the two cases in `tests/db/inbox-process.test.ts`.
 - [x] T4 Importer copy for unmatched entities (message + the page's next step: add the company) and the Unggah banner while files are booking — accept: `tests/unit/ledger-check.test.ts`; the banner is walked in T6.
 - [x] T5 Missing-month note on the card (`ProposedAccount.gaps`, by the statements' dates; Tutup Buku's coverage control stays the authority) — accept: `tests/unit/inbox-propose.test.ts`.
-- [ ] T6 Re-walk the five clients in production with the fixes; record.
+- [x] T6 The real files through the real preview and inbox, locally (`scripts/_tmp-*.ts`, untracked: private data) — Goers, Filosofi, Chickin, Belifi; found and fixed the merged-title bug the synthetic fixtures missed.
+- [x] T7 The mapping table says when a file balance sits on the wrong side of the account it is mapped to (`againstNature`, `importBalances`) — accept: `tests/unit/nature.test.ts`, `tests/db/import-balances.test.ts`, the third case of `e2e/import-quality.spec.ts`.
+- [ ] T8 Re-walk the five production clients after merge; record.
 
 ## Implementation
 
