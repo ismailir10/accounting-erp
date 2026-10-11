@@ -515,6 +515,11 @@ function AccountRow({ account: a, value, options, disabled, error, onMove }: { a
         <p className="text-xs text-muted-foreground">
           {[a.months, a.holder ? `a.n. ${a.holder}` : null, a.fileNames.length === 1 ? "1 file" : `${a.fileNames.length} file`].filter(Boolean).join(" · ")}
         </p>
+        {a.gaps.length > 0 && (
+          <p className="text-xs text-review" data-testid="proposal-gap">
+            {a.gaps.join(", ")} belum ada filenya. Unggah rekening koran bulan itu agar saldonya nyambung.
+          </p>
+        )}
         {error && <p role="alert" className="text-sm text-fail">{error}</p>}
       </div>
       <div className="flex items-center gap-2 text-sm">

@@ -37,7 +37,7 @@ is a load-bearing transient account (accounting-rules 9, 15a, 22); mapped lines 
 - [x] T2 Company name + entity labels from the files into the card (`LedgerSection.entities`, `PreviewFile.companyName`, label kept as the card's short name) — accept: `tests/unit/title-company.test.ts`, `tests/unit/inbox-propose.test.ts`, `tests/db/inbox-preview-ledger.test.ts`.
 - [x] T3 Multi-sheet workbook → one draft per sheet in the inbox (`stageLedger`; a Neraca sheet that needs a company says so) — accept: the two cases in `tests/db/inbox-process.test.ts`.
 - [x] T4 Importer copy for unmatched entities (message + the page's next step: add the company) and the Unggah banner while files are booking — accept: `tests/unit/ledger-check.test.ts`; the banner is walked in T6.
-- [ ] T5 Missing-month note on the card.
+- [x] T5 Missing-month note on the card (`ProposedAccount.gaps`, by the statements' dates; Tutup Buku's coverage control stays the authority) — accept: `tests/unit/inbox-propose.test.ts`.
 - [ ] T6 Re-walk the five clients in production with the fixes; record.
 
 ## Implementation

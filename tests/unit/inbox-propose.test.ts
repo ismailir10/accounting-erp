@@ -158,6 +158,15 @@ describe("Klien baru from files: the proposal", () => {
     expect(cv.entities[0]).toMatchObject({ name: "CV Maju Jaya", kind: "CV" });
   });
 
+  it("says which months a rekening skips between its first and last statement (Belifi: Jun and Agu, no Jul)", () => {
+    const month = (m: number) => bank(`bca-${m}.pdf`, section("BCA", "7655563814", "PT BELIFI", m));
+    const gap = proposeClient([month(6), month(8)]);
+    expect(gap.entities[0].banks[0].gaps).toEqual(["Jul 2026"]);
+    expect(proposeClient([month(6), month(7), month(8)]).entities[0].banks[0].gaps).toEqual([]);
+    expect(proposeClient([month(5), month(8)]).entities[0].banks[0].gaps).toEqual(["Jun–Jul 2026"]);
+    expect(proposeClient([month(6)]).entities[0].banks[0].gaps).toEqual([]);
+  });
+
   it("proposes nothing when nothing could be read", () => {
     const p = proposeClient([
       { fileName: "rusak.pdf", kind: "BANK", status: "FAILED", message: "Tanggal tidak terbaca.", sections: [] },

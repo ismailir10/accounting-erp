@@ -33,6 +33,8 @@ export type ProposedAccount = {
   isOverdraft: boolean;
   /** "Jun–Jul 2026". */
   months: string;
+  /** Months between its first and last statement that no file covers ("Jul 2026", "Jun–Jul 2026"): the saldo won't connect there. */
+  gaps: string[];
   fileNames: string[];
 };
 export type ProposedEntity = {
@@ -86,6 +88,31 @@ export function shortNameOf(name: string, kind: ProposedKind): string {
   if (kind === "PERORANGAN") return w[0] ?? "";
   if (w.length > 1 && ["PT", "CV", "UD", "PD"].includes(legalWord(w[0]))) return `${w[0]} ${w[1]}`;
   return w.join(" ");
+}
+
+/** Months strictly between the first and last statement that none covers, as runs ("Jul 2026", "Jun–Jul 2026"). Dates are `YYYY-MM-DD`. */
+function missingMonths(periods: (readonly [string, string])[]): string[] {
+  const index = (d: string) => (/^\d{4}-\d{2}/.test(d) ? Number(d.slice(0, 4)) * 12 + Number(d.slice(5, 7)) - 1 : null);
+  const covered = new Set<number>();
+  for (const [start, end] of periods) {
+    const a = index(start) ?? index(end);
+    const b = index(end) ?? a;
+    if (a === null || b === null) continue;
+    for (let m = a; m <= b; m++) covered.add(m);
+  }
+  if (covered.size < 2) return [];
+  const all = [...covered];
+  const first = Math.min(...all);
+  const last = Math.max(...all);
+  const runs: [number, number][] = [];
+  for (let m = first + 1; m < last; m++) {
+    if (covered.has(m)) continue;
+    const run = runs.at(-1);
+    if (run && run[1] === m - 1) run[1] = m;
+    else runs.push([m, m]);
+  }
+  const iso = (m: number) => `${Math.floor(m / 12)}-${String((m % 12) + 1).padStart(2, "0")}-01`;
+  return runs.map(([a, b]) => monthSpan(iso(a), iso(b)));
 }
 
 type Group = { key: string; holders: string[]; company: boolean; banks: ProposedAccount[] };
@@ -153,7 +180,7 @@ export function proposeClient(files: PreviewFile[]): ClientProposal {
         entry.isOverdraft ||= overdraft;
         if (!entry.fileNames.includes(f.fileName)) entry.fileNames.push(f.fileName);
       } else {
-        accounts.set(key, { key, bank: s.bank as BankCode, number: digits(s.number), display: accountDisplay(s.bank, s.number!), holder: s.holder, isOverdraft: overdraft, months: "", fileNames: [f.fileName] });
+        accounts.set(key, { key, bank: s.bank as BankCode, number: digits(s.number), display: accountDisplay(s.bank, s.number!), holder: s.holder, isOverdraft: overdraft, months: "", gaps: [], fileNames: [f.fileName] });
       }
       const span = spans.get(key) ?? { start: [], end: [] };
       span.start.push(s.periodStart);
@@ -169,6 +196,7 @@ export function proposeClient(files: PreviewFile[]): ClientProposal {
   for (const [key, a] of accounts) {
     const span = spans.get(key)!;
     a.months = monthSpan([...span.start].sort()[0] ?? null, [...span.end].sort().at(-1) ?? null);
+    a.gaps = missingMonths(span.start.map((start, i) => [start, span.end[i]] as const));
   }
 
   // Holders become entities: the same words in any order, legal-form words and punctuation ignored, are one entity.
