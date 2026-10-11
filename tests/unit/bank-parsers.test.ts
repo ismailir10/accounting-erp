@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseStatement, parseStatementSections } from "@/lib/import/parsers";
 import { bcaHolderPdf, bniWondrPdf, brimoPdf, mandiriEstatementPdf, makePdf, smbcCombinedPdf, table } from "../pdf-fixture";
 import { LAYOUTS } from "../bank-layouts";
-import { parsePdf, PdfPasswordError } from "@/lib/import/parsers/pdf";
+import { parsePdf, PdfPasswordError, periodOf } from "@/lib/import/parsers/pdf";
 import { assertSingleSide } from "@/lib/import/parsers/common";
 import { SourceAmountError, SourceDateError } from "@/lib/import/types";
 import { checkContinuity } from "@/lib/import/normalize";
@@ -391,6 +391,11 @@ describe("two-column zero sides and BRImo financial reports", () => {
   });
   it.each([{ opening: "58,40x,000.00" }, { closing: "47,40x,000.00" }, { totalDebit: "120,00x,000.00" }, { totalCredit: "110,00x,000.00" }, { opening: "unreadable", closing: "unreadable", totalDebit: "unreadable", totalCredit: "unreadable" }])("refuses malformed printed summary evidence %j", async (opts) => {
     await expect(parseStatement("brimo.pdf", brimoPdf(opts))).rejects.toThrow(SourceAmountError);
+  });
+  it("declares a two-digit-year period range only under BRImo's title, where it is day first", () => {
+    expect(periodOf("LAPORAN TRANSAKSI FINANSIAL\nPeriode Transaksi : 01/01/26 - 31/01/26")).toEqual({ start: new Date(Date.UTC(2026, 0, 1)), end: new Date(Date.UTC(2026, 0, 31)) });
+    // Could be 1 Feb – 3 Apr or 2 Jan – 4 Mar: another layout leaves the period to its rows.
+    expect(periodOf("Statement\nPeriod 01/02/26 - 03/04/26")).toBeNull();
   });
   it("reads BRImo summary values printed atop the next page when the labels end a page", async () => {
     const st = await parseStatement("brimo.pdf", brimoPdf({ summarySplit: true }));

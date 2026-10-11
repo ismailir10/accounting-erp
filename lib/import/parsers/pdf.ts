@@ -328,8 +328,9 @@ export function detectFormat(headerText: string): BankCode {
 export function periodOf(text: string): { start: Date; end: Date } | null {
   const range = periodFromText(text);
   if (range) return range;
-  // BRImo declares both bounds with two-digit years, just like its transaction dates.
-  const short = text.match(/(\d{1,2}\/\d{1,2}\/\d{2})\s*[-–]\s*(\d{1,2}\/\d{1,2}\/\d{2})(?!\d)/);
+  // BRImo declares both bounds with two-digit years, day first like its transaction dates. Other layouts don't
+  // print this form, and a bare dd/mm/yy range can't tell day-first from month-first, so only BRImo's title admits it.
+  const short = /laporan\s+transaksi\s+finansial/i.test(text) && text.match(/(\d{1,2}\/\d{1,2}\/\d{2})\s*[-–]\s*(\d{1,2}\/\d{1,2}\/\d{2})(?!\d)/);
   if (short) {
     const start = parseDate(short[1], null);
     const end = parseDate(short[2], null);
