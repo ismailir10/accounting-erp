@@ -3,7 +3,7 @@ import type { BankCode } from "@/lib/generated/prisma/enums";
 import type { ParsedStatement } from "@/lib/import/types";
 import { checkContinuity } from "@/lib/import/normalize";
 import { BAL, CLOSE, MON_EN, OPEN, TX, bniDirectCsv, bniDirectXlsx, cimbOctoCsv, cimbPdf, en, idn, mandiriLivinXlsx, p2, permataCsv, xlsxBuffer } from "./bank-fixture";
-import { makePdf, smbcCombinedPdf, table, type PdfText } from "./pdf-fixture";
+import { bniWondrPdf, brimoPdf, mandiriEstatementPdf, makePdf, smbcCombinedPdf, table, type PdfText } from "./pdf-fixture";
 
 /**
  * One synthetic file per bank export Buku claims to read (`lib/banks.ts` formats), each holding the same five August 2026
@@ -17,6 +17,7 @@ export type Layout = {
   format: string;
   file: string;
   build: () => Buffer | Promise<Buffer>;
+  password?: string;
   /** The description starts with a counterparty column (Jago's Sumber/Tujuan) rather than the bank's transaction text. */
   counterpartyFirst?: boolean;
   /** A file that isn't the five August rows (a real layout reproduced as it was): its own check instead of `expectAugust`. */
@@ -313,7 +314,7 @@ export const LAYOUTS: Layout[] = [
     // Year-less DD/MM, CBG column, one MUTASI column with DB/CR after it, SALDO AWAL row, the summary block at the end.
     build: () =>
       pdfPage(
-        ["REKENING GIRO", "BCA", "NO. REKENING : 0000012345", "PERIODE : AGUSTUS 2026", "MATA UANG : IDR"],
+        ["REKENING GIRO", "BCA", "NAMA : PT CONTOH FIKTIF", "NO. REKENING : 0000012345", "PERIODE : AGUSTUS 2026", "MATA UANG : IDR"],
         [[40, "TANGGAL"], [100, "KETERANGAN"], [330, "CBG"], [410, "MUTASI"], [510, "SALDO"]],
         [
           [[40, "01/08"], [100, "SALDO AWAL"], [490, en(OPEN)]],
@@ -344,7 +345,7 @@ export const LAYOUTS: Layout[] = [
   },
   {
     bank: "MANDIRI",
-    format: "e-statement Livin'",
+    format: "e-Statement (Livin')",
     file: "mandiri-livin-estatement.pdf",
     // New Livin' e-Statement: a row-number column, bilingual headers, "02 Agu 2026 10:15:30 WIB", signed Indonesian amounts.
     build: () =>
@@ -353,6 +354,23 @@ export const LAYOUTS: Layout[] = [
         [[40, "No"], [62, "Tanggal/Date"], [190, "Keterangan/Remarks"], [400, "Nominal/Amount"], [495, "Saldo/Balance"]],
         TX.flatMap((t, i) => wrapped(t, 190, [[40, String(i + 1)], [62, `${p2(t.d)} ${ID_MON[7]} 2026 10:15:30 WIB`], [190, t.desc[0]], [400, (t.amt < 0 ? "-" : "") + idn(t.amt)], [495, idn(BAL[i])]])),
       ),
+  },
+  {
+    bank: "MANDIRI", format: "e-Statement (Livin')", file: "mandiri-estatement-password.pdf", build: mandiriEstatementPdf, password: "synthetic-password",
+    check: (sections) => {
+      expect(sections).toHaveLength(1);
+      const st = sections[0];
+      expect(st.holder).toBe("BUDI CONTOH");
+      expect(st.accountNumber).toBe("1110001234567");
+      expect(st.currency).toBe("IDR");
+      expect(st.openingBalance).toBe(80_000_001n);
+      expect(st.closingBalance).toBe(75_000_001n);
+      expect(st.rows.map((r) => r.amount)).toEqual([-5_000_000n, 1_000_000n, -3_000_000n, 1_000_000n, -4_000_000n, 1_000_000n, -3_000_000n, 2_000_000n, 5_000_000n]);
+      expect(st.rows[0].description).toBe("Transfer ke BANK MANDIRI ANDI CONTOH 1010000000001");
+      expect(st.rows.every((r) => !/WIB|Disclaimer/.test(r.description))).toBe(true);
+      expect(st.provenance).toEqual({ period: "DECLARED", opening: "PRINTED", closing: "PRINTED" });
+      expect(checkContinuity(st).ok).toBe(true);
+    },
   },
   {
     bank: "MANDIRI",
@@ -406,7 +424,7 @@ export const LAYOUTS: Layout[] = [
   },
   {
     bank: "BNI",
-    format: "wondr laporan mutasi",
+    format: "wondr Laporan Mutasi Rekening",
     file: "bni-wondr.pdf",
     // wondr by BNI: "01 Aug 2026 08:14:47 WIB", signed whole-Rupiah amounts with comma thousands.
     build: () =>
@@ -416,6 +434,24 @@ export const LAYOUTS: Layout[] = [
         TX.flatMap((t, i) => wrapped(t, 170, [[40, `${p2(t.d)} ${MON_EN[7]} 2026 08:14:47 WIB`], [170, t.desc[0]], [400, `${t.amt < 0 ? "-" : "+"}${Math.abs(t.amt).toLocaleString("en-US")}`], [490, BAL[i].toLocaleString("en-US")]])),
         [`Saldo Akhir ${CLOSE.toLocaleString("en-US")}`],
       ),
+  },
+  {
+    bank: "BNI", format: "wondr Laporan Mutasi Rekening", file: "bni-wondr-password.pdf", build: bniWondrPdf, password: "synthetic-password",
+    check: (sections) => {
+      expect(sections).toHaveLength(1);
+      const st = sections[0];
+      expect(st.holder).toBe("BUDI CONTOH");
+      expect(st.accountNumber).toBe("8311100000");
+      expect(st.currency).toBe("IDR");
+      expect(st.periodStart.toISOString().slice(0, 10)).toBe("2026-01-01");
+      expect(st.periodEnd.toISOString().slice(0, 10)).toBe("2026-01-31");
+      expect(st.provenance).toEqual({ period: "DECLARED", opening: "PRINTED", closing: "PRINTED" });
+      expect(st.openingBalance).toBe(20_000_000n);
+      expect(st.closingBalance).toBe(18_000_000n);
+      expect(st.rows.map((r) => r.amount)).toEqual([1_000_000n, 1_000_000n, -2_000_000n, 1_000_000n, -5_000_000n, 2_000_000n]);
+      expect(st.rows.every((r) => /^Lainnya TRANSFER/.test(r.description) && !/WIB|Informasi/.test(r.description))).toBe(true);
+      expect(checkContinuity(st).ok).toBe(true);
+    },
   },
   {
     bank: "BRI",
@@ -428,6 +464,28 @@ export const LAYOUTS: Layout[] = [
         TX.flatMap((t, i) => wrapped(t, 125, [[40, `${p2(t.d)}/08/26`], [125, t.desc[0]], [330, "8888"], [370, t.amt < 0 ? idn(t.amt) : "0,00"], [440, t.amt > 0 ? idn(t.amt) : "0,00"], [505, idn(BAL[i])]])),
         [`Total Mutasi Debet : ${idn(total(-1))}`, `Saldo Akhir : ${idn(CLOSE)}`],
       ),
+  },
+  {
+    bank: "BRI",
+    format: "BRImo Laporan Transaksi Finansial",
+    file: "bri-brimo.pdf",
+    build: brimoPdf,
+    check: (sections) => {
+      expect(sections).toHaveLength(1);
+      const st = sections[0];
+      expect(st.holder).toBe("BUDI CONTOH");
+      expect(st.accountNumber).toBe("123401000012345");
+      expect(st.currency).toBe("IDR");
+      expect(st.periodStart.toISOString().slice(0, 10)).toBe("2026-01-01");
+      expect(st.periodEnd.toISOString().slice(0, 10)).toBe("2026-01-31");
+      expect(st.provenance).toEqual({ period: "DECLARED", opening: "PRINTED", closing: "PRINTED" });
+      expect(st.openingBalance).toBe(57_400_000n);
+      expect(st.closingBalance).toBe(47_400_000n);
+      expect(st.rows.map((r) => r.amount)).toEqual([-5_000_000n, 185_000n, -1_469_322n, 99_815_000n, -113_530_678n, 10_000_000n]);
+      expect(st.rows[2].description).toBe("Pembayaran Tagihan Kartu Kredit 5100xxxx001 via BRImo");
+      expect(st.rows.every((r) => !/Created By|StatementBRImo|88880/.test(r.description))).toBe(true);
+      expect(checkContinuity(st).ok).toBe(true);
+    },
   },
   {
     bank: "BRI",
@@ -480,7 +538,7 @@ export const LAYOUTS: Layout[] = [
   },
   {
     bank: "MANDIRI",
-    format: "e-statement Livin'",
+    format: "e-Statement (Livin')",
     file: "mandiri-livin-estatement-time-below.pdf",
     // The same e-Statement as extracted from some PDFs: the time on its own line under the date.
     build: () =>

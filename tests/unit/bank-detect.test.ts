@@ -63,6 +63,15 @@ describe("bank registry", () => {
     expect(detectBank("Livin' by Mandiri")).toBe("MANDIRI");
   });
 
+  it.each(["Tabungan Mandiri", "Giro Mandiri", "Menara Mandiri 1 Jalan Jenderal Sudirman"])("detects a Mandiri header phrase %s", (header) => {
+    expect(detectBank(`e-Statement\n${header}`)).toBe("MANDIRI");
+  });
+  it.each(["TAPLUS", "TAPLUS BISNIS", "TAPLUS MUDA"])("requires the wondr statement title together with the product %s", (product) => {
+    expect(detectBank(`Laporan Mutasi Rekening\nBUDI CONTOH ${product} - 8311100000`)).toBe("BNI");
+    expect(detectBank(`Rekening Koran\n${product} - 8311100000`)).toBe("GENERIC");
+    expect(detectBank("Laporan Mutasi Rekening\nProduk tidak dikenal")).toBe("GENERIC");
+  });
+
   it("names the bank of a SWIFT BIC, with or without a branch code", () => {
     expect(bankOfBic("CENAIDJA")).toBe("BCA");
     expect(bankOfBic("bmriidjaXXX")).toBe("MANDIRI");

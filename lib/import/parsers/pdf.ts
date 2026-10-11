@@ -36,7 +36,7 @@ const HEADER: Record<ColKind, RegExp> = {
   balance: /^(saldo|balance|saldo akhir|running balance|ledger balance)$/i,
   flag: /^(db\/cr|d\/k|dk|cr\/db|db\.?\s*\/\s*cr\.?)$/i,
   currency: CURRENCY_HEADER,
-  skip: /^(no\.?|#|cbg|cabang|branch|journal( no\.?)?|jurnal|teller)$/i,
+  skip: /^(no\.?|#|cbg|cabang|branch|journal( no\.?)?|jurnal|teller|user id)$/i,
 };
 /** An amount: optional sign and "Rp"/"IDR" before it ("+1.000.000", "-Rp 2.500", "(2.500)"), a DB/CR marker after. */
 const NUMBER = /^[+-]?\s*(?:(?:Rp\.?|IDR)\s*)?\(?[+-]?\d+(?:[.,]\d{3})*(?:[.,]\d{1,2})?\)?(?:\s*(DB|CR|DR|D|K|C)\.?)?$/i;
@@ -59,6 +59,49 @@ const OPENING = /saldo\s*awal|opening\s*balance|beginning\s*balance|saldo\s*sebe
 const CLOSING = /saldo\s*akhir|closing\s*balance|ending\s*balance|current\s*balance/i;
 const FOOTER = /^(saldo\s*awal|saldo\s*akhir|mutasi\s*(cr|db|kredit|debet)|total|jumlah|bersambung|halaman|page|opening|closing|ending)\b/i;
 
+/** Only labelled fields and each supported layout's known header cells can name the account holder. */
+function holderOfHeader(lines: Line[], format: BankCode): string | undefined {
+  if (!["BCA", "BRI", "MANDIRI", "BNI", "SMBC"].includes(format)) return undefined;
+  const tableAt = lines.findIndex((line) => headerColumns(line));
+  const header = tableAt < 0 ? lines : lines.slice(0, tableAt);
+  const clean = (text: string | undefined): string | undefined => {
+    const value = text?.replace(/^:\s*/, "").trim();
+    if (!value || /^(?:JL\.?|Jalan|Alamat)(?:\s|:|$)/i.test(value) || /^(?:periode|period|tanggal|statement date|cabang|branch|no\.?\s*(?:rekening|rek\.?)|nomor rekening|account (?:no|number)|mata uang|currency|valuta|nama produk|product name|alamat|jalan|jl(?:\.|\s|$)|kantor cabang|saldo|laporan|rekening)\b/i.test(value)) return undefined;
+    return value;
+  };
+  const positioned = (text: string | undefined): string | undefined => {
+    const value = clean(text);
+    if (!value || /^(?:PT\.?\s+)?BANK\b/i.test(value) || /^(?:BCA|BRI|BNI|SMBC|BRImo|Britama(?:-IDR)?|Tabungan Mandiri|Giro Mandiri|TAPLUS(?: BISNIS| MUDA)?)$/i.test(value)) return undefined;
+    return value;
+  };
+  const nameLabel = /^(?:nama(?:\s+(?:nasabah|pemilik rekening|rekening))?|name|account name)(?:\s*\/\s*(?:name|account name))?(?:\s*:\s*(.*)|\s*)$/i;
+  const recipient = /^kepada\s+yth\.?(?:\s*\/\s*to)?(?:\s*:\s*(.*)|\s*)$/i;
+  for (const [lineIndex, line] of header.entries()) {
+    for (const [cellIndex, cell] of line.cells.entries()) {
+      const label = cell.text.match(nameLabel) ?? cell.text.match(recipient);
+      if (!label) continue;
+      const next = line.cells.slice(cellIndex + 1).find((candidate) => candidate.text.trim() !== ":");
+      const value = clean(label[1] || next?.text);
+      if (value) return value;
+      if (format === "SMBC" && recipient.test(cell.text)) {
+        const below = header[lineIndex + 1];
+        if (below?.page === line.page && below.cells[0] && Math.abs(below.cells[0].x0 - cell.x0) < 5) {
+          const recipientName = positioned(below.cells[0].text);
+          if (recipientName) return recipientName;
+        }
+      }
+    }
+    const metadata = format === "BCA" ? /^(?:no\.?\s*rekening|nomor rekening|account (?:no|number))\b/i
+      : format === "BRI" ? /^periode transaksi$/i
+      : format === "BNI" ? /^(?:TAPLUS(?:\s+(?:BISNIS|MUDA))?|BNI\s+TAPLUS|GIRO\s+BNI)\b/i : null;
+    if (metadata && line.cells.findIndex((cell, index) => index > 0 && metadata.test(cell.text)) > 0) {
+      const value = positioned(line.cells[0].text);
+      if (value) return value;
+    }
+  }
+  return undefined;
+}
+
 export async function parsePdf(data: Buffer, opts: { password?: string } = {}): Promise<ParsedStatement> {
   return (await parsePdfSections(data, opts))[0];
 }
@@ -78,16 +121,19 @@ export async function parsePdfSections(data: Buffer, opts: { password?: string }
   const starts = lines.map((l, i) => ({ i, m: sectionOf(l) })).filter((x) => x.m);
   if (starts.length === 0) return [withDeposits(parseLines(lines))];
   const docText = lines.map(lineText).join("\n");
-  const format = detectFormat(lines.slice(0, starts[0].i).map(lineText).join("\n"));
+  const docHeader = lines.slice(0, starts[0].i);
+  const format = detectFormat(docHeader.map(lineText).join("\n"));
+  const documentHolder = holderOfHeader(docHeader, format);
   const period = periodOf(docText);
   const out: ParsedStatement[] = [];
   starts.forEach(({ i, m }, k) => {
     const segment = lines.slice(i + 1, k + 1 < starts.length ? starts[k + 1].i : lines.length);
     if (!segment.some((l) => headerColumns(l))) return; // a section title without a transaction table
     const section = { label: m!.label, currency: m!.currency };
+    const holder = holderOfHeader(segment, format) ?? documentHolder;
     if (section.currency !== "IDR") {
       // A disabled section carries no parsed money. Keep the other accounts selectable.
-      out.push({ format, currency: section.currency, accountNumber: m!.number, section,
+      out.push({ format, currency: section.currency, accountNumber: m!.number, section, ...(holder ? { holder } : {}),
         periodStart: period?.start ?? new Date(0), periodEnd: period?.end ?? new Date(0),
         openingBalance: 0n, closingBalance: 0n, rows: [],
         error: `Mata uang ${section.currency} belum didukung untuk impor bank. Gunakan rekening koran IDR; nominal tidak dikonversi otomatis.`,
@@ -96,7 +142,7 @@ export async function parsePdfSections(data: Buffer, opts: { password?: string }
       return;
     }
     const st = parseLines(segment, { period, format, allowEmpty: true });
-    out.push(withDeposits({ ...st, currency: "IDR", accountNumber: m!.number, section }));
+    out.push(withDeposits({ ...st, currency: "IDR", accountNumber: m!.number, section, ...(holder ? { holder } : {}) }));
   });
   if (!out.length) return [withDeposits(parseLines(lines))];
   return out;
@@ -282,6 +328,21 @@ export function detectFormat(headerText: string): BankCode {
 export function periodOf(text: string): { start: Date; end: Date } | null {
   const range = periodFromText(text);
   if (range) return range;
+  // BRImo declares both bounds with two-digit years, day first like its transaction dates. Other layouts don't
+  // print this form, and a bare dd/mm/yy range can't tell day-first from month-first, so only BRImo's title admits it.
+  const short = /laporan\s+transaksi\s+finansial/i.test(text) && text.match(/(\d{1,2}\/\d{1,2}\/\d{2})\s*[-–]\s*(\d{1,2}\/\d{1,2}\/\d{2})(?!\d)/);
+  if (short) {
+    const start = parseDate(short[1], null);
+    const end = parseDate(short[2], null);
+    if (start && end) return { start, end };
+  }
+  // wondr shares the month/year across both day bounds: "Periode: 1 - 31 Januari 2026".
+  const shared = text.match(/periode\s*:\s*(\d{1,2})\s*[-–]\s*(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/i);
+  if (shared) {
+    const start = parseDate(`${shared[1]} ${shared[3]} ${shared[4]}`, null);
+    const end = parseDate(`${shared[2]} ${shared[3]} ${shared[4]}`, null);
+    if (start && end) return { start, end };
+  }
   // "01 MEI 2026 - 31 MEI 2026" (SMBC and others print month names)
   const long = text.match(/(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})\s*[-–]\s*(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})/);
   if (long) {
@@ -382,11 +443,19 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
     throw new ParseError("Tabel transaksi di PDF tidak dikenali (kolom tanggal, keterangan, mutasi/debet-kredit tidak ditemukan). Kirim contoh baris judulnya agar formatnya bisa ditambahkan.");
   }
   const preamble = lines.slice(0, firstHeader).map(lineText).join("\n");
+  const holder = holderOfHeader(lines.slice(0, firstHeader), ctx.format ?? detectFormat(preamble));
   const currency = currencyOfLines(lines, firstHeader);
   const allText = lines.map(lineText).join("\n");
   const period = ctx.period ?? periodOf(preamble) ?? periodOf(allText);
   const order = dateOrderOfLines(lines, firstHeader, ctx.format ?? detectFormat(preamble), period);
-  const accountNumber =
+  // wondr prints its account in the right-hand product cell, never in a transaction.
+  const headerCells = lines.slice(0, firstHeader).flatMap((line) => line.cells);
+  const rightColumn = (Math.min(...headerCells.map((cell) => cell.x0)) + Math.max(...headerCells.map((cell) => cell.x1))) / 2;
+  const productHeader = /laporan\s+mutasi\s+rekening/i.test(preamble)
+    ? headerCells.find((cell) => cell.x0 > rightColumn && /^(?:TAPLUS(?:\s+(?:BISNIS|MUDA))?|BNI\s+TAPLUS|GIRO\s+BNI)\b/i.test(cell.text))
+    : undefined;
+  const wondrAccount = productHeader?.text.match(/^(?:TAPLUS(?:\s+(?:BISNIS|MUDA))?|BNI\s+TAPLUS|GIRO\s+BNI)\s+-\s+(\d{10})$/i)?.[1];
+  const accountNumber = productHeader ? wondrAccount ?? null :
     preamble
       .split("\n")
       .filter((t) => /(no\.?\s*rek|nomor rekening|rekening|account)/i.test(t))
@@ -394,6 +463,7 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
       .find(Boolean)
       ?.replace(/-/g, "") ?? null;
 
+  const brimo = /laporan\s+transaksi\s+finansial/i.test(preamble) && /nama\s+produk\s*:?\s*britama(?:-IDR)?\b/i.test(preamble);
   const sen = new SenWatch();
   type Draft = ParsedRow & { flag: "DB" | "CR" | null; parts: string[]; page: number; lastY: number; moneySeen: boolean; unreadable: string | null };
   const drafts: Draft[] = [];
@@ -402,6 +472,26 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
   let opening: bigint | null = null;
   let closing: bigint | null = null;
   let lineNo = 0;
+  let footerPage: number | null = null;
+  let summaryValuesAt = -1;
+  const brimoFooter = (line: Line) => line.cells.some((cell) => /^created by brimo$/i.test(cell.text)) && !parseDate(line.cells[0]?.text.split(/\s+/)[0] ?? "", period, order);
+  // The summary values follow their labels or, when the labels end a page, open the next page under its repeated title.
+  // Only the English label row, that page's footer and the next page's title lines may sit in between.
+  const brimoSummaryValues = (labelsAt: number): number => {
+    const labels = lines[labelsAt];
+    let footer = false;
+    for (let at = labelsAt + 1; at < lines.length; at++) {
+      const line = lines[at];
+      if (line.page > labels.page + 1) break;
+      if (line.page === labels.page && (footer || (footer = brimoFooter(line)))) continue;
+      if (line.cells.every((cell) => NUMBER.test(cell.text.trim()))) return at;
+      const between = line.page === labels.page
+        ? at === labelsAt + 1 && line.cells.some((cell) => /^opening balance$/i.test(cell.text))
+        : !headerColumns(line) && !parseDate(line.cells[0]?.text.split(/\s+/)[0] ?? "", period, order);
+      if (!between) break;
+    }
+    return -1;
+  };
   // Description text printed just above a row's amount line (SMBC centres a two-line description on it): held for that row.
   let lead: string[] = [];
   // BCA prints a row's counterparty below it, and across a page break under the repeated header (UC-B1g): the row a new page continues.
@@ -423,6 +513,25 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
       continue;
     }
     const text = lineText(line);
+    if (index === summaryValuesAt) { current = null; continue; }
+    if (brimo && brimoFooter(line)) footerPage = line.page;
+    if (footerPage === line.page) { current = null; continue; }
+    // BRImo prints opening and closing in a horizontal summary only on the last page.
+    // Read their own cells, independently of the running balances in the transaction table.
+    if (brimo && line.cells.some((cell) => /^saldo awal$/i.test(cell.text)) && line.cells.some((cell) => /^saldo akhir$/i.test(cell.text))) {
+      summaryValuesAt = brimoSummaryValues(index);
+      const values = lines[summaryValuesAt];
+      if (!values || values.cells.length !== line.cells.length) {
+        throw new SourceAmountError("Nominal ringkasan BRImo tidak lengkap. Periksa Saldo Awal, total Debet/Kredit, dan Saldo Akhir pada file.");
+      }
+      const first = line.cells.findIndex((cell) => /^saldo awal$/i.test(cell.text));
+      const last = line.cells.findIndex((cell) => /^saldo akhir$/i.test(cell.text));
+      values.cells.forEach((cell) => { parseBankAmount(cell.text); sen.check(cell.text, lineNo); });
+      opening ??= parseBankAmount(values.cells[first].text);
+      closing = parseBankAmount(values.cells[last].text);
+      current = null;
+      continue;
+    }
     // "Saldo Awal : 1.000", bilingual "Saldo Awal/Initial Balance 1.000", BTN "Last Bal : 1,000.00".
     const labelled = text.match(/(saldo\s*awal|saldo\s*sebelumnya|opening\s*balance|beginning\s*balance|starting\s*balance|previous\s*balance|initial\s*balance|last\s*bal(?:ance)?|saldo\s*akhir|closing\s*balance|ending\s*balance|current\s*balance)(?:\s*\/\s*[A-Za-z ]+?)?\s*:?\s*(?:rp\.?\s*)?([\d.,()-]*\d[\d.,()-]*)/i);
     if (labelled && !(cols && parseDate(line.cells[0]?.text ?? "", period, order))) {
@@ -557,7 +666,9 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
       if (unreadable && !current.moneySeen) current.unreadable ??= unreadable;
       if (current.amount === 0n && nums.length) {
         assertSingleSide(nums.find((n) => n.kind === "debit")?.text, nums.find((n) => n.kind === "credit")?.text, lineNo);
-        const amt = nums.find((n) => n.kind === "amount" || n.kind === "credit" || n.kind === "debit");
+        const amt = nums.find((n) => n.kind === "amount")
+          ?? nums.find((n) => (n.kind === "credit" || n.kind === "debit") && n.value !== 0n)
+          ?? nums.find((n) => n.kind === "credit" || n.kind === "debit");
         if (amt) current.moneySeen = true;
         if (amt) current.amount = amt.kind === "debit" ? -(amt.value < 0n ? -amt.value : amt.value) : amt.kind === "credit" && amt.value < 0n ? -amt.value : amt.value;
         if (amt?.flag) current.flag = amt.flag;
@@ -598,6 +709,7 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
   return {
     format: ctx.format ?? detectFormat(preamble),
     accountNumber,
+    ...(holder ? { holder } : {}),
     currency,
     provenance: { period: period ? "DECLARED" : "INFERRED", opening: printedOpening ? "PRINTED" : "DERIVED", closing: closing !== null ? "PRINTED" : closingProvenance(rows) },
     periodStart: bounds.start,

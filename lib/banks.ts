@@ -57,13 +57,13 @@ export const BANKS: BankInfo[] = [
   {
     code: "MANDIRI", name: "Mandiri", fullName: "PT Bank Mandiri (Persero) Tbk", group: "Bank besar", bic: ["BMRIIDJA"],
     // The bank's own names: account holders are often called "… Mandiri …".
-    detect: /bank\s+mandiri|\blivin['’]?(?![a-z])|\bkopra\b|mandiri\s+(?:online|cash|cms|direct)|\bMCM\b/i, words: ["MANDIRI", "MDR"],
-    formats: [xlsx("Livin' / MCM (Excel)"), pdf("e-statement Livin'"), pdf("rekening koran tabungan"), pdf("MCM / Kopra account statement"), csv("Kopra / MCM (CSV)"), mt940],
+    detect: /bank\s+mandiri|\blivin['’]?(?![a-z])|\bkopra\b|mandiri\s+(?:online|cash|cms|direct)|\bMCM\b|\b(?:tabungan|giro|menara)\s+mandiri\b/i, words: ["MANDIRI", "MDR"],
+    formats: [xlsx("Livin' / MCM (Excel)"), pdf("e-Statement (Livin')"), pdf("rekening koran tabungan"), pdf("MCM / Kopra account statement"), csv("Kopra / MCM (CSV)"), mt940],
   },
   {
     code: "BRI", name: "BRI", fullName: "PT Bank Rakyat Indonesia (Persero) Tbk", group: "Bank besar", bic: ["BRINIDJA"],
-    detect: /\bBRI\b|bank rakyat|\bbrimo\b|\bqlola\b|\bibbiz\b/i, words: ["BRI", "SIMPEDES", "BRITAMA"],
-    formats: [csv("BRImo / CMS (CSV)"), csv("internet banking (CSV)"), pdf("Rincian Rekening Koran"), pdf("IBBIZ Laporan Transaksi Finansial"), xlsx("QLola (Excel)"), mt940],
+    detect: /\bBRI\b|bank rakyat|\bbrimo\b|\bqlola\b|\bibbiz\b|nama\s+produk\s*:?\s*britama(?:-IDR)?\b/i, words: ["BRI", "SIMPEDES", "BRITAMA"],
+    formats: [csv("BRImo / CMS (CSV)"), csv("internet banking (CSV)"), pdf("Rincian Rekening Koran"), pdf("IBBIZ Laporan Transaksi Finansial"), pdf("BRImo Laporan Transaksi Finansial"), xlsx("QLola (Excel)"), mt940],
   },
   {
     code: "BCA", name: "BCA", fullName: "PT Bank Central Asia Tbk", group: "Bank besar", bic: ["CENAIDJA"],
@@ -72,8 +72,8 @@ export const BANKS: BankInfo[] = [
   },
   {
     code: "BNI", name: "BNI", fullName: "PT Bank Negara Indonesia (Persero) Tbk", group: "Bank besar", bic: ["BNINIDJA"],
-    detect: /\bBNI\b|bank negara indonesia|bnidirect|\bwondr\b/i, words: ["BNI"],
-    formats: [csv("BNIDirect (CSV)"), xlsx("BNIDirect (Excel)"), xlsx("BNI Mobile (Excel)"), pdf("BNI account statement (korporat)"), pdf("e-statement tabungan"), pdf("wondr laporan mutasi")],
+    detect: /\bBNI\b|bank negara indonesia|bnidirect|\bwondr\b|laporan\s+mutasi\s+rekening[\s\S]*\btaplus(?:\s+(?:bisnis|muda))?\b/i, words: ["BNI"],
+    formats: [csv("BNIDirect (CSV)"), xlsx("BNIDirect (Excel)"), xlsx("BNI Mobile (Excel)"), pdf("BNI account statement (korporat)"), pdf("e-statement tabungan"), pdf("wondr Laporan Mutasi Rekening")],
   },
   {
     code: "BTN", name: "BTN", fullName: "PT Bank Tabungan Negara (Persero) Tbk", group: "Bank besar", bic: ["BTANIDJA"],

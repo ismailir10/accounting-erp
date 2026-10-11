@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { parseStatement, parseStatementSections } from "@/lib/import/parsers";
-import { makePdf, table } from "../pdf-fixture";
+import { bcaHolderPdf, bniWondrPdf, brimoPdf, mandiriEstatementPdf, makePdf, smbcCombinedPdf, table } from "../pdf-fixture";
 import { LAYOUTS } from "../bank-layouts";
+import { parsePdf, PdfPasswordError, periodOf } from "@/lib/import/parsers/pdf";
+import { assertSingleSide } from "@/lib/import/parsers/common";
+import { SourceAmountError, SourceDateError } from "@/lib/import/types";
 import { checkContinuity } from "@/lib/import/normalize";
 import { BAL, TX, en, bniDirectCsv, bniDirectXlsx, bniMobileXlsx, xlsxBuffer, briInternetBankingCsv, cimbPdf, idn, mandiriLivinPdf, mandiriLivinXlsx, serialDateXlsx, cimbOctoCsv, expectAugust, p2, permataCsv, titleWithCommasSemicolonCsv, utf16TabCsv } from "../bank-fixture";
 
@@ -338,5 +341,206 @@ describe("pockets and amounts read from the balance", () => {
     const st = await parseStatement("seabank.pdf", pdf);
     expect(st.rows.map((r) => r.amount)).toEqual([-250_000n, 100_000n]);
     expect(st.openingBalance).toBe(1_000_000n);
+  });
+});
+
+describe("two-column zero sides and BRImo financial reports", () => {
+  it.each(["0", "0.00", "0,00"])("accepts an exactly zero side %s beside a nonzero side", (zero) => {
+    expect(() => assertSingleSide(zero, "100", 1)).not.toThrow();
+    expect(() => assertSingleSide("100", zero, 1)).not.toThrow();
+    expect(() => assertSingleSide(zero, zero, 1)).not.toThrow();
+  });
+  it.each([["100", "200"], ["0.40", "0.40"]])("still refuses two nonzero sides %s and %s, before rounding", (debit, credit) => {
+    expect(() => assertSingleSide(debit, credit, 21)).toThrow(SourceAmountError);
+    expect(() => assertSingleSide(debit, credit, 21)).toThrow(/Baris 21: Debet dan Kredit sama-sama berisi nominal/);
+  });
+  it.each([["100", "0.00", -100n, "900"], ["0.00", "100", 100n, "1100"], ["0.00", "0.00", 0n, "1000"]])("reads separate-line debit %s and credit %s without treating zero as the populated side", async (debit, credit, amount, balance) => {
+    const file = makePdf([[
+      ...table(800, [[[40, "BRI"]], [[40, "Saldo Awal: 1000"]]]),
+      ...table(730, [
+        [[40, "Tanggal"], [130, "Keterangan"], [330, "Debit"], [410, "Credit"], [510, "Balance"]],
+        [[40, "13/08/2026"], [130, "Transfer sintetis"]],
+        [[330, debit as string], [410, credit as string], [510, balance as string]],
+      ]),
+    ]]);
+    const st = await parsePdf(file);
+    expect(st.rows).toHaveLength(1);
+    expect(st.rows[0].amount).toBe(amount);
+  });
+  it("reads the synthetic five-page BRImo report", async () => {
+    const layout = LAYOUTS.find((l) => l.file === "bri-brimo.pdf")!;
+    const sections = await parseStatementSections(layout.file, await layout.build());
+    expect(sections[0].format).toBe("BRI");
+    layout.check!(sections);
+  });
+  it("refuses a BRImo row whose debit and credit are both nonzero", async () => {
+    await expect(parseStatement("brimo.pdf", brimoPdf({ credit: "100.00" }))).rejects.toThrow(SourceAmountError);
+    await expect(parseStatement("brimo.pdf", brimoPdf({ credit: "100.00" }))).rejects.toThrow(/Debet dan Kredit sama-sama berisi nominal/);
+  });
+  it("preserves independently printed closing evidence when it contradicts the last movement", async () => {
+    const st = await parseStatement("brimo.pdf", brimoPdf({ closing: "48,400,000.00" }));
+    expect(st.closingBalance).toBe(48_400_000n);
+    expect(st.provenance?.closing).toBe("PRINTED");
+    expect(checkContinuity(st).ok).toBe(false);
+  });
+  it("keeps the existing whole-Rupiah rounding and reports sen", async () => {
+    const st = await parseStatement("brimo.pdf", brimoPdf({ debit: "5,000,000.40" }));
+    expect(st.rows[0].amount).toBe(-5_000_000n);
+    expect(st.notes?.join(" ")).toMatch(/sen|dibulatkan/i);
+    expect(checkContinuity(st).ok).toBe(true);
+  });
+  it.each([{ opening: "58,40x,000.00" }, { closing: "47,40x,000.00" }, { totalDebit: "120,00x,000.00" }, { totalCredit: "110,00x,000.00" }, { opening: "unreadable", closing: "unreadable", totalDebit: "unreadable", totalCredit: "unreadable" }])("refuses malformed printed summary evidence %j", async (opts) => {
+    await expect(parseStatement("brimo.pdf", brimoPdf(opts))).rejects.toThrow(SourceAmountError);
+  });
+  it("declares a two-digit-year period range only under BRImo's title, where it is day first", () => {
+    expect(periodOf("LAPORAN TRANSAKSI FINANSIAL\nPeriode Transaksi : 01/01/26 - 31/01/26")).toEqual({ start: new Date(Date.UTC(2026, 0, 1)), end: new Date(Date.UTC(2026, 0, 31)) });
+    // Could be 1 Feb – 3 Apr or 2 Jan – 4 Mar: another layout leaves the period to its rows.
+    expect(periodOf("Statement\nPeriod 01/02/26 - 03/04/26")).toBeNull();
+  });
+  it("reads BRImo summary values printed atop the next page when the labels end a page", async () => {
+    const st = await parseStatement("brimo.pdf", brimoPdf({ summarySplit: true }));
+    expect(st.format).toBe("BRI");
+    expect(st.rows).toHaveLength(6);
+    expect(st.openingBalance).toBe(57_400_000n);
+    expect(st.closingBalance).toBe(47_400_000n);
+    expect(st.provenance).toMatchObject({ opening: "PRINTED", closing: "PRINTED" });
+    expect(checkContinuity(st).ok).toBe(true);
+  });
+  it.each([{ opening: "58,40x,000.00" }, { closing: "unreadable" }])("still refuses malformed summary values across a page break %j", async (opts) => {
+    await expect(parseStatement("brimo.pdf", brimoPdf({ ...opts, summarySplit: true }))).rejects.toThrow(SourceAmountError);
+  });
+  it("refuses BRImo summary labels with no values on the same or the next page", async () => {
+    const pdf = makePdf([table(800, [
+      [[30, "LAPORAN TRANSAKSI FINANSIAL"]],
+      [[30, "Nama Produk"], [170, ": Britama-IDR"]],
+      [[30, "Periode Transaksi"], [170, ": 01/01/26 - 31/01/26"]],
+      [[20, "Tanggal Transaksi"], [130, "Uraian Transaksi"], [330, "Teller"], [380, "Debet"], [450, "Kredit"], [530, "Saldo"]],
+      [[20, "01/01/26 09:35:08"], [130, "Transfer Ke Andi via BRImo"], [330, "8888018"], [375, "5,000,000.00"], [445, "0.00"], [520, "52,400,000.00"]],
+      [[30, "Saldo Awal"], [160, "Total Transaksi Debet"], [310, "Total Transaksi Kredit"], [460, "Saldo Akhir"]],
+      [[30, "Opening Balance"], [160, "Total Debit Transaction"], [310, "Total Credit Transaction"], [460, "Closing Balance"]],
+      [[30, "ABC1234_synthetic_e-"], [350, "Created By BRIMO"]],
+      [[30, "2026010100000001"]],
+    ])]);
+    await expect(parseStatement("brimo.pdf", pdf)).rejects.toThrow(/ringkasan BRImo tidak lengkap/);
+  });
+  it("preserves independently printed opening evidence when it contradicts the first movement", async () => {
+    const st = await parseStatement("brimo.pdf", brimoPdf({ opening: "58,400,000.00" }));
+    expect(st.openingBalance).toBe(58_400_000n);
+    expect(st.provenance?.opening).toBe("PRINTED");
+    expect(checkContinuity(st).ok).toBe(false);
+  });
+});
+
+describe("address/product-only password statement layouts", () => {
+  it.each(["mandiri-estatement-password.pdf", "bni-wondr-password.pdf"])("reads %s with the correct password", async (file) => {
+    const layout = LAYOUTS.find((l) => l.file === file)!;
+    const sections = await parseStatementSections(file, await layout.build(), { password: layout.password });
+    expect(sections[0].format).toBe(layout.bank);
+    layout.check!(sections);
+  });
+  it.each([mandiriEstatementPdf, bniWondrPdf])("requests a password and refuses a wrong password", async (build) => {
+    const file = build();
+    await expect(parseStatement("statement.pdf", file)).rejects.toMatchObject({ reason: "needed" });
+    await expect(parseStatement("statement.pdf", file, { password: "wrong" })).rejects.toBeInstanceOf(PdfPasswordError);
+    await expect(parseStatement("statement.pdf", file, { password: "wrong" })).rejects.toMatchObject({ reason: "wrong" });
+  });
+  it.each(["TAPLUS - 8311100000", "TAPLUS BISNIS - 8311100000", "TAPLUS MUDA - 8311100000", "BNI Taplus - 8311100000", "Giro BNI - 8311100000"])("reads only the account number in the product header %s", async (productCell) => {
+    const st = await parseStatement("statement.pdf", bniWondrPdf({ productCell }), { password: "synthetic-password" });
+    expect(st.format).toBe("BNI");
+    expect(st.accountNumber).toBe("8311100000");
+  });
+  it("reads the right-hand product cell when the holder also starts with a product word", async () => {
+    const st = await parseStatement("statement.pdf", bniWondrPdf({ holder: "TAPLUS CONTOH" }), { password: "synthetic-password" });
+    expect(st.accountNumber).toBe("8311100000");
+  });
+  it.each(["TAPLUS BISNIS", "TAPLUS BISNIS - 831110000", "TAPLUS BISNIS - 83111000001", "TAPLUS BISNIS 8311100000", "TAPLUS BISNIS-8311100000", "UNRELATED PRODUCT - 8311100000"])("does not guess an account from malformed/absent product number %s", async (productCell) => {
+    const st = await parseStatement("statement.pdf", bniWondrPdf({ productCell }), { password: "synthetic-password" });
+    expect(st.accountNumber).toBeNull();
+    if (productCell !== "UNRELATED PRODUCT - 8311100000") expect(st.format).toBe("BNI");
+  });
+  it.each([
+    { holder: "PT REKENING CONTOH", productCell: "TAPLUS BISNIS-8311100000" },
+    { title: "Laporan Mutasi Rekening 9876543210", productCell: "TAPLUS BISNIS" },
+  ])("never falls back to arbitrary holder/title digits in a product layout %j", async (opts) => {
+    const st = await parseStatement("statement.pdf", bniWondrPdf(opts), { password: "synthetic-password" });
+    expect(st.accountNumber).toBeNull();
+  });
+  it("keeps Mandiri's existing rows and metadata when only detection evidence changes", async () => {
+    const read = (opts = {}) => parseStatement("statement.pdf", mandiriEstatementPdf(opts), { password: "synthetic-password" });
+    const { format: branded, holder: brandedHolder, ...source } = await read();
+    const { format: generic, holder: genericHolder, ...unchanged } = await read({ product: "Unbranded savings", bankAddress: "Jalan Contoh 1" });
+    expect(branded).toBe("MANDIRI");
+    expect(brandedHolder).toBe("BUDI CONTOH");
+    expect(genericHolder).toBeUndefined();
+    expect(generic).toBe("GENERIC");
+    expect(unchanged).toEqual(source);
+  });
+  it("refuses an impossible declared shared-month period", async () => {
+    await expect(parseStatement("statement.pdf", bniWondrPdf({ period: "Periode: 1 - 31 Februari 2026" }), { password: "synthetic-password" })).rejects.toThrow(SourceDateError);
+  });
+  it("does not use transaction or footer bank names for either layout", async () => {
+    const mandiri = await parseStatement("statement.pdf", mandiriEstatementPdf({ product: "Unbranded savings", bankAddress: "Jalan Contoh 1" }), { password: "synthetic-password" });
+    expect(mandiri.format).toBe("GENERIC");
+    const bni = await parseStatement("statement.pdf", bniWondrPdf({ productCell: "UNRELATED PRODUCT - 8311100000", transactionDescription: "TAPLUS BISNIS - 8311100000 TRANSFER KE BANK MANDIRI" }), { password: "synthetic-password" });
+    expect(bni.format).toBe("GENERIC");
+    expect(bni.accountNumber).toBeNull();
+  });
+});
+
+describe("printed account holders belong to headers only", () => {
+  it.each([false, true])("reads BCA's labelled or known header position (labelled=%s)", async (labelled) => {
+    const st = await parseStatement("statement.pdf", bcaHolderPdf({ labelled, holder: "  PT CONTOH FIKTIF  " }));
+    expect(st.holder).toBe("PT CONTOH FIKTIF");
+  });
+  it("reads BRImo's holder at the left of its period field", async () => {
+    expect((await parseStatement("statement.pdf", brimoPdf())).holder).toBe("BUDI CONTOH");
+  });
+  it.each(["Britama-IDR", "BRI", "JL CONTOH NO 1", "Alamat: JL CONTOH NO 1"])("never substitutes product/bank/address text %s for a BRImo holder", async (holder) => {
+    expect((await parseStatement("statement.pdf", brimoPdf({ holder }))).holder).toBeUndefined();
+  });
+  it("reads Mandiri's labelled holder without the period or branch metadata", async () => {
+    expect((await parseStatement("statement.pdf", mandiriEstatementPdf(), { password: "synthetic-password" })).holder).toBe("BUDI CONTOH");
+  });
+  it("reads BNI's holder even when it starts with a product name", async () => {
+    expect((await parseStatement("statement.pdf", bniWondrPdf({ holder: "TAPLUS CONTOH" }), { password: "synthetic-password" })).holder).toBe("TAPLUS CONTOH");
+  });
+  it.each(["BCA", "REKENING TAHAPAN", "JL CONTOH NO 1", "JL. CONTOH NO 1", "Alamat: JL CONTOH NO 1", "PT Bank Central Asia Tbk"])("never substitutes bank/product/address text %s for a BCA holder", async (candidate) => {
+    expect((await parseStatement("statement.pdf", bcaHolderPdf({ candidate }))).holder).toBeUndefined();
+  });
+  it.each([
+    ["bca", () => bcaHolderPdf({ holder: null })],
+    ["brimo", () => brimoPdf({ holder: null })],
+    ["mandiri", () => mandiriEstatementPdf({ holder: null })],
+    ["bni", () => bniWondrPdf({ holder: null })],
+  ] as const)("leaves an absent %s holder undefined", async (_layout, build) => {
+    expect((await parseStatement("statement.pdf", build(), { password: "synthetic-password" })).holder).toBeUndefined();
+  });
+  it("keeps BNI's right-hand account number when the holder cell is absent", async () => {
+    const st = await parseStatement("statement.pdf", bniWondrPdf({ holder: null }), { password: "synthetic-password" });
+    expect(st.accountNumber).toBe("8311100000");
+    expect(st.holder).toBeUndefined();
+  });
+  it("leaves unsupported layouts undefined even when their header has a name", async () => {
+    expect((await parseStatement("statement.pdf", bcaHolderPdf({ labelled: true, bank: "Bank Danamon" }))).holder).toBeUndefined();
+  });
+  it("does not read a transaction's labelled name when the header has none", async () => {
+    expect((await parseStatement("statement.pdf", bcaHolderPdf({ holder: null }))).holder).toBeUndefined();
+  });
+  it("propagates the SMBC document holder, including a disabled foreign-currency section", async () => {
+    const sections = await parseStatementSections("statement.pdf", smbcCombinedPdf({ holder: "PT INDUK CONTOH" }));
+    expect(sections.map((st) => st.holder)).toEqual(["PT INDUK CONTOH", "PT INDUK CONTOH", "PT INDUK CONTOH"]);
+    expect(sections[2].error).toMatch(/JPY/);
+  });
+  it("reads SMBC's recipient immediately below its standalone label", async () => {
+    const sections = await parseStatementSections("statement.pdf", smbcCombinedPdf({ holder: "PT INDUK CONTOH", holderNextLine: true }));
+    expect(sections.map((st) => st.holder)).toEqual(["PT INDUK CONTOH", "PT INDUK CONTOH", "PT INDUK CONTOH"]);
+  });
+  it("keeps SMBC section holders isolated and overrides the shared header per section", async () => {
+    const sections = await parseStatementSections("statement.pdf", smbcCombinedPdf({ holder: "PT INDUK CONTOH", sectionHolders: ["PT REKENING SATU", undefined, "PT REKENING JPY"] }));
+    expect(sections.map((st) => st.holder)).toEqual(["PT REKENING SATU", "PT INDUK CONTOH", "PT REKENING JPY"]);
+  });
+  it("never inherits another SMBC section's holder or the bank's own name", async () => {
+    const sections = await parseStatementSections("statement.pdf", smbcCombinedPdf({ sectionHolders: ["PT REKENING SATU"] }));
+    expect(sections.map((st) => st.holder)).toEqual(["PT REKENING SATU", undefined, undefined]);
   });
 });

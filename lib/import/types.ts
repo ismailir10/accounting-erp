@@ -27,6 +27,8 @@ export type ParsedStatement = {
     closing: "PRINTED" | "ROW" | "DERIVED";
   };
   accountNumber: string | null;
+  /** Account holder exactly as printed in a supported statement header, when present. */
+  holder?: string;
   periodStart: Date;
   periodEnd: Date;
   openingBalance: bigint;
