@@ -15,6 +15,8 @@ import { isSimpleGuess } from "@/lib/classify/fallback";
 import { resolveAiConfig } from "@/lib/settings/ai";
 import { getCurrentMember } from "@/lib/tenant";
 import { isAdminRole } from "@/lib/auth/permissions";
+import { accessView, requireWorkspaceSession } from "@/lib/auth/session";
+import { aiRunForView } from "@/lib/ai/background";
 
 export const metadata = { title: "Review transaksi" };
 
@@ -28,6 +30,8 @@ export default async function ReviewPage({ params, searchParams }: { params: Pro
   const simpleGuesses = (await simpleGuessRows(prisma, { clientId: client.id, entityIds: scope.entityIds, through: period.end })).length;
   const ai = await resolveAiConfig(prisma);
   const member = await getCurrentMember();
+  // The client's background AI run (a stalled one resumes after this response when the member may write).
+  const aiRun = await aiRunForView(prisma, client, { canWrite: accessView(await requireWorkspaceSession()).canWrite });
   const accounts = await prisma.account.findMany({ where: { clientId: client.id, isBank: false, isSuspense: false }, orderBy: { code: "asc" } });
   const similarCount = new Map<string, number>();
   for (const t of txs) similarCount.set(`${t.merchantKey}|${t.direction}`, (similarCount.get(`${t.merchantKey}|${t.direction}`) ?? 0) + 1);
@@ -67,7 +71,7 @@ export default async function ReviewPage({ params, searchParams }: { params: Pro
           </a>
         </div>
       )}
-      <ReviewQueue items={items} accounts={options} scope={{ entityIds: scope.entityIds, period: period.key }} clientId={client.id} simpleGuesses={simpleGuesses} aiReady={Boolean(ai.apiKey && ai.model)} canSetUpAi={isAdminRole(member.role)} />
+      <ReviewQueue items={items} accounts={options} scope={{ entityIds: scope.entityIds, period: period.key }} clientId={client.id} simpleGuesses={simpleGuesses} aiReady={Boolean(ai.apiKey && ai.model)} canSetUpAi={isAdminRole(member.role)} aiRun={aiRun} />
     </div>
   );
 }

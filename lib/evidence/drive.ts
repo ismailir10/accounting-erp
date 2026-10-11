@@ -200,6 +200,13 @@ export async function listDriveChildren(accessToken: string, id: string, pageTok
   return { files: result.files.map(parseFile), ...(typeof result.nextPageToken === "string" ? { nextPageToken: result.nextPageToken } : {}) };
 }
 
+const GOOGLE_EXPORTS = ["application/vnd.google-apps.document", "application/vnd.google-apps.spreadsheet"];
+/** Whether `downloadDriveFile` can fetch this file: a Google Doc / Sheet (exported) or a PDF, XLSX, XLS, CSV, TXT or Markdown file. */
+export function driveDownloadable(file: Pick<DriveFile, "name" | "mimeType">): boolean {
+  if (GOOGLE_EXPORTS.includes(file.mimeType)) return true;
+  return !file.mimeType.startsWith("application/vnd.google-apps.") && /\.(pdf|xlsx|xls|csv|txt|md|markdown)$/i.test(file.name);
+}
+
 export async function downloadDriveFile(accessToken: string, file: DriveFile): Promise<{ name: string; data: Buffer }> {
   const id = checkedId(file.id);
   if (file.size && /^\d+$/.test(file.size) && BigInt(file.size) > BigInt(DRIVE_FILE_LIMIT)) throw new DriveError("File melebihi batas 10 MiB. Pecah file atau unggah versi yang lebih kecil.", "TOO_LARGE");
@@ -212,7 +219,7 @@ export async function downloadDriveFile(accessToken: string, file: DriveFile): P
     const extension = sheet ? ".xlsx" : ".txt";
     if (!name.toLowerCase().endsWith(extension)) name += extension;
   } else {
-    if (file.mimeType.startsWith("application/vnd.google-apps.") || !/\.(pdf|xlsx|xls|csv|txt|md|markdown)$/i.test(name)) throw new DriveError("Format belum didukung. Unggah PDF berteks, XLSX, XLS, CSV, TXT, atau Markdown; ekspor dokumen lain ke salah satu format tersebut.", "UNSUPPORTED");
+    if (!driveDownloadable(file)) throw new DriveError("Format belum didukung. Unggah PDF berteks, XLSX, XLS, CSV, TXT, atau Markdown; ekspor dokumen lain ke salah satu format tersebut.", "UNSUPPORTED");
     url.search = new URLSearchParams({ alt: "media", supportsAllDrives: "true" }).toString();
   }
   const response = await checkedResponse(await request(url, { headers: driveHeaders(accessToken, id, file.resourceKey) }));

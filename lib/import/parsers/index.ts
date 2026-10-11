@@ -1,4 +1,4 @@
-import { ParseError, SourceAmountError, SourceCurrencyError, SourceDateError, ScanError, UnreadableFileError, YearNeededError, type ParsedStatement } from "@/lib/import/types";
+import { ParseError, SourceAmountError, SourceCurrencyError, SourceDateError, ScanError, StatementRepairError, UnreadableFileError, YearNeededError, type ParsedStatement } from "@/lib/import/types";
 import { PdfPasswordError } from "@/lib/import/parsers/pdf";
 import { readGrid } from "@/lib/import/grid";
 import { readWithLayout, type RememberedLayout } from "@/lib/import/mapped";
@@ -33,8 +33,10 @@ export async function parseStatement(fileName: string, data: Buffer, opts: Parse
 export async function parseStatementSections(fileName: string, data: Buffer, opts: ParseOptions = {}): Promise<ParsedStatement[]> {
   const kind = sniffImageFile(data);
   if (kind === "PNG" || kind === "JPEG") throw new ScanError("File ini gambar (foto atau scan) rekening koran, bukan file dengan teks. Minta e-statement atau ekspor CSV/Excel dari internet banking.");
+  let read = false;
   try {
     const sections = await parseAny(fileName, data, opts);
+    read = true;
     // One account's refusal (a year it can't hold) doesn't refuse the file's other accounts: it travels on its own section.
     return sections.map((st) => {
       try {
@@ -50,7 +52,7 @@ export async function parseStatementSections(fileName: string, data: Buffer, opt
     const message = e instanceof ParseError ? e.message : `File tidak bisa dibaca: ${(e as Error).message}`;
     const remembered = opts.layouts?.length ? await rememberedRead(fileName, data, opts) : null;
     if (remembered) return [remembered];
-    throw new UnreadableFileError(message);
+    throw read ? new StatementRepairError(message) : new UnreadableFileError(message);
   }
 }
 

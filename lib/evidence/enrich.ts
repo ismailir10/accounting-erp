@@ -1,6 +1,7 @@
 import type { Db } from "@/lib/db";
 import { INTAKE_TOKEN_LIMIT, runBudgetedAi } from "@/lib/ai/budget";
 import { AiAnswerError, buildEvidencePrompt, EVIDENCE_MAX_TOKENS, EVIDENCE_PROMPT_VERSION, EVIDENCE_TIMEOUT_MS, parseEvidenceAnalysis, type AiProvider } from "@/lib/ai/provider";
+import { factAllowed } from "./types";
 import { assertLease, claimStep, intakeForFirm, lockIntake, releaseStep, hash, json } from "./store";
 
 /** Explicit, review-only enrichment. Extraction/refresh never call this automatically. */
@@ -61,7 +62,7 @@ export async function analyzeVersion(db: Db, firmId: string, intakeId: string, v
       let facts = 0;
       for (const fact of proposed) {
         const source = locations.get(fact.locator);
-        if (!source) continue;
+        if (!source || !factAllowed(fact.key, fact.value)) continue;
         const created = await tx.evidenceFact.createMany({ data: [{ firmId, intakeId, versionId, unitKey: source.unitKey, locator: source.locator, key: fact.key, value: fact.value, effectiveDate: analysis.periodEnd }], skipDuplicates: true });
         facts += created.count;
       }

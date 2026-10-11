@@ -9,7 +9,7 @@ import { periodBounds } from "@/lib/format";
 import { incomeStatement, trialBalance } from "@/lib/reports/ledger";
 import { runControls } from "@/lib/controls";
 import { intakeForFirm, json, hash } from "./store";
-import type { EvidenceFigure, EvidenceUnit } from "./types";
+import { HIDE_INVALID_CURRENCY_FACTS, type EvidenceFigure, type EvidenceUnit } from "./types";
 import { selectionEntityIds } from "./review";
 
 export type EvidenceQuestion = { question: string; entityId?: string; period?: string | { from: string; to: string } };
@@ -277,7 +277,7 @@ export async function askEvidence(db: Db, firmId: string, intakeId: string, inpu
       answer.text = answer.rows.length ? "Dokumen dan keputusan yang masih perlu ditangani:" : "Tidak ada pengecualian terbuka yang tercatat.";
       answer.limitations.push("Daftar ini bukan jaminan dokumen lengkap; kelengkapan bergantung rekening, entitas, dan periode yang dikonfirmasi.");
     } else if (plan.intent === "CONTEXT") {
-      const facts = contextVersionIds.length ? await db.evidenceFact.findMany({ where: { firmId, intakeId, AND: [{ OR: [{ versionId: { in: versionIds }, status: { in: ["CONFIRMED", "PROPOSED", "CONFLICTING"] } }, { versionId: { in: contextVersionIds }, status: "CONFIRMED" }] }, ...(scope?.excluded.length ? [{ NOT: { OR: scope.excluded } }] : [])] }, orderBy: [{ status: "asc" }, { id: "asc" }], take: MAX_RESULTS + 1 }) : [];
+      const facts = contextVersionIds.length ? await db.evidenceFact.findMany({ where: { firmId, intakeId, AND: [HIDE_INVALID_CURRENCY_FACTS, { OR: [{ versionId: { in: versionIds }, status: { in: ["CONFIRMED", "PROPOSED", "CONFLICTING"] } }, { versionId: { in: contextVersionIds }, status: "CONFIRMED" }] }, ...(scope?.excluded.length ? [{ NOT: { OR: scope.excluded } }] : [])] }, orderBy: [{ status: "asc" }, { id: "asc" }], take: MAX_RESULTS + 1 }) : [];
       if (facts.length > MAX_RESULTS) answer.limitations.push(`Hanya ${MAX_RESULTS} fakta pertama ditampilkan; persempit cakupan.`);
       const scopedFacts = facts.slice(0, MAX_RESULTS).filter((f) => unitAllowed(f.versionId, f.unitKey));
       if (scopedFacts.some(f => !versionIds.includes(f.versionId))) answer.limitations.push("Konteks dikonfirmasi dari versi sebelumnya tetap dipertahankan. Usulan baru tidak menggantikannya tanpa keputusan Anda.");

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import ExcelJS from "exceljs";
+import { openManualImport, openClientForm } from "./qa-helpers";
 
 /**
  * Ledger client, end to end (synthetic data): Tambah klien with an IDR company and an SGD holding (no bank accounts)
@@ -28,7 +29,7 @@ async function ledgerXlsx(): Promise<Buffer> {
 }
 
 test("ledger import: checks, mapping, post, Kurs, Gabungan in IDR, client accounts", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Grup Uji Buku Besar");
   await page.getByLabel("Nama lengkap").click();
   await page.getByLabel("Nama lengkap").pressSequentially("PT Satu Uji");
@@ -53,7 +54,8 @@ test("ledger import: checks, mapping, post, Kurs, Gabungan in IDR, client accoun
   await page.getByRole("button", { name: "Simpan klien" }).click();
 
   // Ledger-only client lands on the ledger import.
-  await expect(page.getByRole("heading", { name: "Impor Buku Besar" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Unggah", exact: true })).toBeVisible();
+  await openManualImport(page);
   await page.getByTestId("ledger-file-input").setInputFiles({ name: "buku-besar-uji.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: await ledgerXlsx() });
   await page.getByRole("button", { name: "Periksa file" }).click();
 

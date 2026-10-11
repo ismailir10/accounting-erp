@@ -68,6 +68,9 @@ export class ScanError extends ParseError {}
 /** A text file no reader (and no remembered layout) could read: the import page offers *Atur kolom*. Same message as the reader's. */
 export class UnreadableFileError extends ParseError {}
 
+/** A file a reader recognised whose one statement its repair refused (rule 12): still a bank statement, unlike other unreadable files. */
+export class StatementRepairError extends UnreadableFileError {}
+
 /** The file's account number(s) aren't the selected account: the action can offer the client's matching account instead. */
 export class AccountMismatchError extends ParseError {
   constructor(message: string, readonly fileNumbers: string[]) {

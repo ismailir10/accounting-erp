@@ -23,8 +23,8 @@ describe.each(pages)("public $name", ({ document }) => {
     expect(article.firstElementChild?.getAttribute("role")).toBe("note");
     expect(article.firstElementChild?.textContent).toContain("Draf");
     expect(dom.querySelector("h1")?.textContent).toBe(document.title);
-    expect(dom.querySelector("time")?.getAttribute("datetime")).toBe("2026-10-10");
-    expect(dom.querySelector("time")?.textContent).toBe("10 Oktober 2026");
+    expect(dom.querySelector("time")?.getAttribute("datetime")).toBe("2026-10-11");
+    expect(dom.querySelector("time")?.textContent).toBe("11 Oktober 2026");
     expect(dom.querySelector(`a[href='${document.relatedHref}']`)?.textContent).toBe(document.relatedLabel);
   });
 
@@ -74,6 +74,8 @@ describe("public Privacy AI and rights disclosures", () => {
     expect(paragraphs.find((p) => p.startsWith("Analisis"))).toMatch(/kutipan dokumen yang dibatasi.*pertanyaan.*konteks entitas\/periode/);
     expect(paragraphs.find((p) => p.startsWith("Penjelasan"))).toMatch(/baris terkait beserta nominal.*fakta naratif yang dihitung/);
     expect(paragraphs.find((p) => p.startsWith("Baca scan"))).toMatch(/mati kecuali Buku menyalakannya.*gambar halaman.*nominal, saldo/);
+    // ADR 0018: Unggah remembers PDF passwords per client; the other import paths still don't.
+    expect(paragraphs.find((p) => p.startsWith("Baca scan"))).toMatch(/tidak pernah dikirim ke penyedia AI.*disimpan terenkripsi untuk klien itu saja.*admin dapat menghapusnya.*cara impor lain.*tidak disimpan/);
     expect(paragraphs.join(" ")).toMatch(/tidak ada jaminan bahwa semua nominal atau identitas rekening selalu tinggal di Buku/);
   });
 

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Browser, type Page } from "@playwright/test";
+import { openManualImport } from "./qa-helpers";
 
 /**
  * Trial access (ADR 0017, cycle 2026-10-09-trial-tenants-roles T10): an organisation whose trial ended reads and exports but every
@@ -28,6 +29,7 @@ test("an ended trial reads and exports, and the import explains why it is closed
   const href = await page.getByRole("link", { name: "Klien Uji Berakhir", exact: true }).first().getAttribute("href");
   const id = href!.match(/clients\/([^/?]+)/)![1];
   await page.goto(`/clients/${id}/import`);
+  await openManualImport(page);
   await expect(page.getByRole("button", { name: /Proses mutasi/ })).toBeDisabled();
   await expect(page.getByTestId("write-blocked").first()).toContainText("Masa uji coba berakhir");
 

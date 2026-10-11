@@ -18,9 +18,9 @@ Automated end to end by `e2e/investor-demo.spec.ts` — if you change this scrip
 
 > Talking point: *the product gets cheaper to run every month — memory and rules replace AI calls.*
 
-### 2. Impor Mutasi — the live moment (45 s)
+### 2. Unggah — the live moment (45 s)
 - Before uploading, point at **Kelengkapan data**: the owner's BRI August is *Bolong*, and **Minta data yang kurang ke klien** already holds the WhatsApp message asking for it (*Salin pesan* / *Kirim lewat WhatsApp*).
-- Rekening *BRI Simpedes (Budi)* is preselected. Click **Pakai file contoh (BRI-5509-2026-08.csv)** (or drop the file from `public/demo/`).
+- Open **Cara lain**: rekening *BRI Simpedes (Budi)* is preselected. Click **Pakai file contoh (BRI-5509-2026-08.csv)** (or drop the file from `public/demo/`).
 - Result card: rows imported, **transfers paired automatically** (PT → owner, owner BCA → BRI), balance continuity *Nyambung*, **0 AI calls** (memory + cache), 1 line to review.
 
 > Talking point: *no open banking in Indonesia — statements are the integration, so we made import bulletproof:

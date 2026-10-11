@@ -183,7 +183,7 @@ export function draftCsv(rows: OcrRow[], opening: bigint, evidence?: { closing: 
   return `${lines.join("\n")}\n`;
 }
 
-export async function importOcrDraft(db: Db, input: { firmId: string; clientId: string; draftId: string; provider: AiProvider | null; actorId?: string | null }): Promise<ImportSummary> {
+export async function importOcrDraft(db: Db, input: { firmId: string; clientId: string; draftId: string; provider: AiProvider | null; aiLater?: boolean; actorId?: string | null }): Promise<ImportSummary> {
   const d = await ocrDraft(db, input.firmId, input.clientId, input.draftId);
   if (d.status !== "DRAFT") throw new OcrError("Draf ini sudah diimpor.");
   if (d.source === "OCR" && d.closing === null) throw new OcrError("Saldo akhir yang tercetak belum ada. Salin saldo akhir dari scan sebelum mengimpor.");
@@ -199,6 +199,7 @@ export async function importOcrDraft(db: Db, input: { firmId: string; clientId: 
     fileName: `${base} (${mapped ? "pemetaan kolom" : "OCR"}).csv`,
     data: Buffer.from(csv, "utf8"),
     provider: input.provider,
+    aiLater: input.aiLater,
     actorId: input.actorId ?? null,
     // The generated CSV's SALDO AWAL line must not promote an inferred/manual opening to printed evidence.
     sourceProvenance: {

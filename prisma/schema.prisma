@@ -392,6 +392,9 @@ model Client {
   auditEvents        AuditEvent[]
   reportFormat       ReportFormat?
   access             ClientAccess[]
+  aiRuns             AiRun[]
+  uploadItems        UploadItem[]
+  pdfPasswords       ClientPdfPassword[]
   coaVersion         Int                  @default(1)
   /// Modules turned on in the client menu (lib/clients/modules.ts): receivables · inventory · assets · leases · benefits. Presentation only.
   modules            String[]             @default([])
@@ -847,6 +850,41 @@ model AiSuggestion {
   createdAt   DateTime  @default(now())
 }
 
+enum AiRunStatus {
+  RUNNING
+  DONE
+}
+
+/// One background pass of AI suggestions over a client's lines still on a simple guess (lib/ai/run.ts). It only replaces
+/// suggestions of lines still in review; nothing is posted (accounting-rules 17–19). At most one RUNNING run per client:
+/// the partial unique index "AiRun_one_running_per_client" lives in the migration SQL (Prisma can't express it).
+model AiRun {
+  id             String      @id @default(cuid())
+  firmId         String
+  clientId       String
+  client         Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  status         AiRunStatus @default(RUNNING)
+  /// Lines on a simple guess when the run started, plus lines that joined later (askedLines + what is still pending).
+  totalLines     Int         @default(0)
+  /// Lines whose counterparty was settled in this run: answered (cache or model) or asked and left unanswered.
+  askedLines     Int         @default(0)
+  /// Lines that received an AI suggestion in this run.
+  suggestedLines Int         @default(0)
+  calls          Int         @default(0)
+  note           String?
+  /// `${merchantKey}|${direction}` asked in this run and left unanswered: never asked again in this run.
+  skippedKeys    String[]    @default([])
+  /// The worker holding the run: a slice claims it until leaseUntil (lib/ai/run.ts runAiSlice).
+  leaseToken     String?
+  leaseUntil     DateTime?
+  heartbeatAt    DateTime    @default(now())
+  createdAt      DateTime    @default(now())
+  finishedAt     DateTime?
+
+  @@index([clientId, createdAt])
+  @@index([firmId])
+}
+
 model AiUsage {
   id               String   @id @default(cuid())
   firmId           String
@@ -1051,6 +1089,9 @@ model EvidenceIntake {
   leaseToken     String?
   leaseUntil     DateTime?
   contextVersion Int                @default(1)
+  /// The client's Unggah inbox (lib/inbox/store.ts): every file dropped on Unggah is kept here. At most one per client — a partial
+  /// unique index in migration `unggah_inbox` (Prisma can't express it).
+  isInbox        Boolean            @default(false)
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
   documents      EvidenceDocument[]
@@ -1105,23 +1146,88 @@ model EvidenceDocument {
 }
 
 model EvidenceVersion {
-  id         String            @id @default(cuid())
-  firmId     String
-  documentId String
-  document   EvidenceDocument  @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  hash       String
-  data       Bytes
-  name       String
-  size       Int
-  units      Json              @default("[]")
-  issues     Json              @default("[]")
-  extracted  Boolean           @default(false)
-  analyzed   Boolean           @default(false)
-  createdAt  DateTime          @default(now())
-  passages   EvidencePassage[]
+  id          String            @id @default(cuid())
+  firmId      String
+  documentId  String
+  document    EvidenceDocument  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  hash        String
+  data        Bytes
+  name        String
+  size        Int
+  units       Json              @default("[]")
+  issues      Json              @default("[]")
+  extracted   Boolean           @default(false)
+  analyzed    Boolean           @default(false)
+  createdAt   DateTime          @default(now())
+  passages    EvidencePassage[]
+  uploadItems UploadItem[]
 
   @@unique([documentId, hash])
   @@index([firmId])
+}
+
+enum UploadKind {
+  BANK
+  LEDGER
+  OTHER
+}
+
+enum UploadStatus {
+  CHECKED
+  /// Claimed by one processNext call (lib/inbox/process.ts); one older than 10 minutes counts as CHECKED again.
+  PROCESSING
+  NEEDS_PASSWORD
+  NEEDS_ACCOUNT
+  BOOKED
+  DRAFT
+  KEPT
+  FAILED
+}
+
+/// One file dropped on a client's Unggah page (lib/inbox): what Buku read it as and what it did with it. The page's per-file list reads
+/// these rows, so outcomes survive a reload. Never holds the file's bytes (those are the EvidenceVersion) or a password.
+model UploadItem {
+  id                 String           @id @default(cuid())
+  firmId             String
+  clientId           String
+  client             Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// One drop (files dropped or one Drive folder read together).
+  batchId            String
+  fileName           String
+  sha256             String
+  evidenceVersionId  String?
+  evidenceVersion    EvidenceVersion? @relation(fields: [evidenceVersionId], references: [id], onDelete: SetNull)
+  kind               UploadKind
+  status             UploadStatus
+  message            String?
+  periodStart        DateTime?
+  periodEnd          DateTime?
+  /// Bank: one per statement section (bank, number, holder, currency, period, rows, opening/closing as strings, error). Ledger: one per
+  /// postable table (sheet, mode, period).
+  sections           Json             @default("[]")
+  statementImportIds String[]         @default([])
+  ledgerImportId     String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([clientId, batchId])
+  @@index([clientId, createdAt])
+}
+
+/// A client's PDF password keyring (ADR 0018): every password that opened one of its PDFs, encrypted with SETTINGS_SECRET
+/// (lib/settings/secret.ts). Server-only: never returned to the browser, logged or put in a message (lib/inbox/keyring.ts).
+model ClientPdfPassword {
+  id          String    @id @default(cuid())
+  firmId      String
+  clientId    String
+  client      Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// encryptSecret(password)
+  secret      String
+  createdById String?
+  createdAt   DateTime  @default(now())
+  lastUsedAt  DateTime?
+
+  @@index([clientId])
 }
 
 model EvidencePassage {

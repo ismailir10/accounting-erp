@@ -3,7 +3,7 @@ import type { Db, Tx } from "@/lib/db";
 import { validateNewClient, type NewClientInput } from "@/lib/onboarding";
 import { createClient, type ClientCreator } from "@/lib/setup";
 import { isCurrency } from "@/lib/fx/currency";
-import type { EvidenceUnit } from "./types";
+import { factAllowed, type EvidenceUnit } from "./types";
 import { intakeForFirm, lockIntake, releaseStep } from "./store";
 import { entityForLabel, stageImport } from "@/lib/ledger-import/post";
 import type { CurrencyMode } from "@/lib/ledger-import/check";
@@ -136,6 +136,7 @@ export async function decideFact(db: Db, firmId: string, intakeId: string, factI
     await lockIntake(tx, intakeId);
     const fact = await tx.evidenceFact.findFirst({ where: { id: factId, firmId, intakeId } });
     if (!fact) throw new Error("Konteks tidak ditemukan.");
+    if (accept && !factAllowed(fact.key, fact.value)) throw new Error(`"${fact.value}" bukan kode mata uang. Abaikan usulan ini; mata uang ditulis sebagai kode seperti IDR atau USD.`);
     await tx.evidenceFact.update({ where: { id: factId }, data: { status: accept ? "CONFIRMED" : "REJECTED" } });
     await tx.evidenceIntake.update({ where: { id: intakeId }, data: { contextVersion: { increment: 1 } } });
   });

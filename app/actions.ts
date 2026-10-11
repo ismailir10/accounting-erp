@@ -65,7 +65,9 @@ import { dismissProposal, postProposal } from "@/lib/adjust/proposals";
 import { postSuspenseCorrection, SUSPENSE_NOT_DISMISSABLE, SUSPENSE_PREFIX } from "@/lib/adjust/suspense";
 import { AiBudgetError } from "@/lib/ai/budget";
 import { AI_LONG_TIMEOUT_MS, AiAnswerError } from "@/lib/ai/provider";
-import { suggestAgainWithAi } from "@/lib/ai/retry";
+import { aiRunForView, scheduleAiRun } from "@/lib/ai/background";
+import type { AiRunView } from "@/lib/ai/run";
+import type { AiProvider } from "@/lib/ai/provider";
 import { acceptCheck, LedgerImportError, postImport, stageImport } from "@/lib/ledger-import/post";
 import { acceptMappings, MappingError, suggestMappings } from "@/lib/ledger-import/mapping";
 import { infraErrorMessage } from "@/lib/db-errors";
@@ -109,7 +111,21 @@ async function writeClient(clientId: string) {
 
 const MAX_UPLOAD = MAX_UPLOAD_BYTES;
 
-export async function importAction(formData: FormData): Promise<Result<{ summary: ImportSummary }>> {
+/**
+ * An import answers without waiting on a paid AI call (cycle 2026-10-10-import-ai-background): with a model set, the pipeline uses only
+ * cached answers (`aiLater`) and the client's background run asks about the rest after the response. Without one, today's rules-only import.
+ */
+async function importOptions() {
+  const provider = await resolveProvider(prisma);
+  return { provider, aiLater: provider !== null };
+}
+
+/** After a successful import: hand the lines left on a simple guess to the client's background run. */
+async function afterImport(client: { id: string; firmId: string }, provider: AiProvider | null): Promise<AiRunView | null> {
+  return provider ? scheduleAiRun(prisma, client, provider) : null;
+}
+
+export async function importAction(formData: FormData): Promise<Result<{ summary: ImportSummary; aiRun: AiRunView | null }>> {
   let banks: { id: string; number: string }[] = [];
   let selected = "";
   try {
@@ -126,9 +142,11 @@ export async function importAction(formData: FormData): Promise<Result<{ summary
     if (!client.entities.some((e) => e.bankAccounts.some((b) => b.id === bankAccountId))) return { ok: false, error: "Pilih rekening bank dulu." };
     if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Pilih file rekening koran (PDF, CSV, XLS, atau XLSX)." };
     if (file.size > MAX_UPLOAD) return { ok: false, error: "File terlalu besar (maks. 5 MB)." };
-    const summary = await importStatement(prisma, { bankAccountId, fileName: file.name, data: Buffer.from(await file.arrayBuffer()), provider: await resolveProvider(prisma), password, year, actorId: (await getCurrentMember()).id });
+    const ai = await importOptions();
+    const summary = await importStatement(prisma, { bankAccountId, fileName: file.name, data: Buffer.from(await file.arrayBuffer()), ...ai, password, year, actorId: (await getCurrentMember()).id });
+    const aiRun = await afterImport(client, ai.provider);
     revalidatePath(`/clients/${clientId}`, "layout");
-    return { ok: true, summary };
+    return { ok: true, summary, aiRun };
   } catch (e) {
     // The file belongs to another account of this client: say which, so the form can switch to it in one click.
     if (e instanceof AccountMismatchError) {
@@ -263,12 +281,14 @@ export async function saveOcrDraftAction(clientId: string, draftId: string, inpu
 }
 
 /** Import a proved scan draft through the normal statement pipeline (the accountant's click). */
-export async function importOcrDraftAction(clientId: string, draftId: string): Promise<Result<{ summary: ImportSummary }>> {
+export async function importOcrDraftAction(clientId: string, draftId: string): Promise<Result<{ summary: ImportSummary; aiRun: AiRunView | null }>> {
   try {
     const client = await writeClient(clientId);
-    const summary = await importOcrDraft(prisma, { firmId: client.firmId, clientId: client.id, draftId, provider: await resolveProvider(prisma), actorId: (await getCurrentMember()).id });
+    const ai = await importOptions();
+    const summary = await importOcrDraft(prisma, { firmId: client.firmId, clientId: client.id, draftId, ...ai, actorId: (await getCurrentMember()).id });
+    const aiRun = await afterImport(client, ai.provider);
     revalidatePath(`/clients/${client.id}`, "layout");
-    return { ok: true, summary };
+    return { ok: true, summary, aiRun };
   } catch (e) {
     if (e instanceof OcrError) return { ok: false, error: e.message };
     return fail(e);
@@ -276,14 +296,16 @@ export async function importOcrDraftAction(clientId: string, draftId: string): P
 }
 
 /** Demo shortcut: import the held-back statement without hunting for the file. */
-export async function importSampleAction(clientId: string, bankAccountId: string): Promise<Result<{ summary: ImportSummary }>> {
+export async function importSampleAction(clientId: string, bankAccountId: string): Promise<Result<{ summary: ImportSummary; aiRun: AiRunView | null }>> {
   try {
     const client = await writeClient(clientId);
     if (!client.entities.some((e) => e.bankAccounts.some((b) => b.id === bankAccountId))) return { ok: false, error: "Rekening tidak ditemukan." };
     const f = await liveUploadFile();
-    const summary = await importStatement(prisma, { bankAccountId, fileName: f.fileName, data: f.data, provider: await resolveProvider(prisma), actorId: (await getCurrentMember()).id });
+    const ai = await importOptions();
+    const summary = await importStatement(prisma, { bankAccountId, fileName: f.fileName, data: f.data, ...ai, actorId: (await getCurrentMember()).id });
+    const aiRun = await afterImport(client, ai.provider);
     revalidatePath(`/clients/${clientId}`, "layout");
-    return { ok: true, summary };
+    return { ok: true, summary, aiRun };
   } catch (e) {
     return fail(e);
   }
@@ -325,7 +347,6 @@ export async function reviewAction(input: { bankTxId: string; accountCode: strin
   }
 }
 
-/** *Minta saran AI* on Review for lines that only have the simple guess (lib/ai/retry.ts). Suggestions only; nothing posts. */
 /** Pecah transaksi: a combined bank line across accounts; the parts must add up to the line (lib/review.ts). */
 export async function splitTransactionAction(input: { bankTxId: string; parts: SplitPartInput[] }): Promise<Result> {
   try {
@@ -338,16 +359,39 @@ export async function splitTransactionAction(input: { bankTxId: string; parts: S
   }
 }
 
-export async function suggestAgainAction(clientId: string, scope: { entityIds: string[]; period: string }): Promise<Result<{ rows: number; updated: number; note?: string }>> {
+/**
+ * *Minta saran AI* on Review: starts (or joins) the client's background run, which covers every line of the client still on a simple
+ * guess (lib/ai/run.ts) and works after the response. Suggestions only; nothing posts. `aiRun` is null when no line needs asking.
+ */
+export async function suggestAgainAction(clientId: string, scope: { entityIds: string[]; period: string }): Promise<Result<{ aiRun: AiRunView | null }>> {
   try {
     const client = await writeClient(clientId);
     if (!scope || !/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(scope.period) || !scope.entityIds.length || scope.entityIds.some((id) => !client.entities.some((e) => e.id === id))) return { ok: false, error: "Cakupan review tidak valid. Muat ulang halaman." };
     const provider = await resolveProvider(prisma);
     if (!provider) return { ok: false, error: "AI belum diatur di Pengaturan, jadi belum ada saran AI. Pilih akunnya langsung." };
-    const through = new Date(Date.UTC(Number(scope.period.slice(0, 4)), Number(scope.period.slice(5)), 0));
-    const r = await suggestAgainWithAi(prisma, { clientId: client.id, entityIds: scope.entityIds, through, provider });
+    const aiRun = await scheduleAiRun(prisma, client, provider);
     revalidatePath(`/clients/${client.id}`, "layout");
-    return { ok: true, rows: r.rows, updated: r.updated, note: r.note };
+    return { ok: true, aiRun };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Progress of the client's background AI run for the import result and Review. Reading is enough to see it; a stalled run is resumed
+ * only for a member who may write the books (resuming spends AI budget). Returns the progress view only, never keys or lease details.
+ */
+export async function aiRunStatusAction(clientId: string): Promise<Result<{ aiRun: AiRunView | null }>> {
+  try {
+    const client = await clientFor("books.read", clientId);
+    const canWrite = await requireCapability("books.write", { clientId: client.id }).then(
+      () => true,
+      (e) => {
+        if (e instanceof AccessError) return false;
+        throw e;
+      },
+    );
+    return { ok: true, aiRun: await aiRunForView(prisma, client, { canWrite }) };
   } catch (e) {
     return fail(e);
   }
@@ -1269,6 +1313,7 @@ export async function discardLedgerDraftAction(clientId: string, importId: strin
 // Public UI action facade; explicit async exports are required by Next.js.
 import * as evidenceActions from "./evidence-actions";
 import * as googleActions from "./google-actions";
+import * as inboxActions from "./inbox-actions";
 export async function createEvidenceAction(...args: Parameters<typeof evidenceActions.createEvidenceAction>) { return evidenceActions.createEvidenceAction(...args); }
 export async function loadEvidenceAction(...args: Parameters<typeof evidenceActions.loadEvidenceAction>) { return evidenceActions.loadEvidenceAction(...args); }
 export async function beginEvidenceUploadAction(...args: Parameters<typeof evidenceActions.beginEvidenceUploadAction>) { return evidenceActions.beginEvidenceUploadAction(...args); }
@@ -1289,6 +1334,19 @@ export async function prepareEvidenceImportAction(...args: Parameters<typeof evi
 export async function postEvidenceBankAction(...args: Parameters<typeof evidenceActions.postEvidenceBankAction>) { return evidenceActions.postEvidenceBankAction(...args); }
 export async function startGoogleAction(...args: Parameters<typeof googleActions.startGoogleAction>) { return googleActions.startGoogleAction(...args); }
 export async function disconnectGoogleAction(...args: Parameters<typeof googleActions.disconnectGoogleAction>) { return googleActions.disconnectGoogleAction(...args); }
+export async function inboxCheckFileAction(...args: Parameters<typeof inboxActions.inboxCheckFileAction>) { return inboxActions.inboxCheckFileAction(...args); }
+export async function inboxFromDocumentAction(...args: Parameters<typeof inboxActions.inboxFromDocumentAction>) { return inboxActions.inboxFromDocumentAction(...args); }
+export async function previewClientFileAction(...args: Parameters<typeof inboxActions.previewClientFileAction>) { return inboxActions.previewClientFileAction(...args); }
+export async function inboxPlanAction(...args: Parameters<typeof inboxActions.inboxPlanAction>) { return inboxActions.inboxPlanAction(...args); }
+export async function inboxUnlockAction(...args: Parameters<typeof inboxActions.inboxUnlockAction>) { return inboxActions.inboxUnlockAction(...args); }
+export async function inboxConfirmAction(...args: Parameters<typeof inboxActions.inboxConfirmAction>) { return inboxActions.inboxConfirmAction(...args); }
+export async function inboxSkipAction(...args: Parameters<typeof inboxActions.inboxSkipAction>) { return inboxActions.inboxSkipAction(...args); }
+export async function inboxProcessNextAction(...args: Parameters<typeof inboxActions.inboxProcessNextAction>) { return inboxActions.inboxProcessNextAction(...args); }
+export async function inboxBatchAction(...args: Parameters<typeof inboxActions.inboxBatchAction>) { return inboxActions.inboxBatchAction(...args); }
+export async function inboxDriveListAction(...args: Parameters<typeof inboxActions.inboxDriveListAction>) { return inboxActions.inboxDriveListAction(...args); }
+export async function inboxDriveFileAction(...args: Parameters<typeof inboxActions.inboxDriveFileAction>) { return inboxActions.inboxDriveFileAction(...args); }
+export async function inboxKeyringAction(...args: Parameters<typeof inboxActions.inboxKeyringAction>) { return inboxActions.inboxKeyringAction(...args); }
+export async function clearInboxKeyringAction(...args: Parameters<typeof inboxActions.clearInboxKeyringAction>) { return inboxActions.clearInboxKeyringAction(...args); }
 
 /** Admin only: removes a client and all its books after the typed-name confirmation (lib/clients/delete.ts). */
 /** Hapus impor (ADR 0013): admin only; the lib refuses closed months and imports something else rests on. */

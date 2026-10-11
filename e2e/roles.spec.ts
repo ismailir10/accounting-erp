@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Browser, type Page } from "@playwright/test";
+import { openManualImport } from "./qa-helpers";
 
 /**
  * Pengaturan → Tim (ADR 0017 §5, cycle 2026-10-09-trial-tenants-roles T11): an admin narrows an AKUNTAN to one client, who then sees
@@ -57,6 +58,7 @@ test("an admin narrows an akuntan to one client, then makes them a reviewer who 
   const id = href!.match(/clients\/([^/?]+)/)![1];
   expect((await them.goto(`/clients/${id}/reports`))?.status()).toBe(200);
   await them.goto(`/clients/${id}/import`);
+  await openManualImport(them);
   await expect(them.getByRole("button", { name: /Proses mutasi/ })).toBeDisabled();
   await expect(them.getByTestId("write-blocked").first()).toContainText("Peran Peninjau hanya dapat melihat dan mengunduh laporan.");
 

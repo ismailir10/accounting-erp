@@ -18,7 +18,7 @@ type Status = {
   model: string | null;
   modelSource: Source;
   gatewayHost: string;
-  maxCallsPerImport: number;
+  maxCallsPerRun: number;
   /** Tokens used this calendar month by every organisation together (logged + reserved). */
   monthlyTokensUsed: number;
   /** The monthly cap of an organisation without its own (AI_MONTHLY_TOKEN_BUDGET); each organisation's is set on its page. */
@@ -55,8 +55,8 @@ export function AiSettingsForm({ status, canSave }: { status: Status; canSave: b
       <CardHeader>
         <CardTitle>AI untuk usulan akun</CardTitle>
         <CardDescription>
-          Satu kunci untuk semua organisasi; dipakai hanya untuk mutasi yang belum dikenali aturan atau memori. Maks. {status.maxCallsPerImport} panggilan
-          per impor. Bulan ini terpakai <span data-testid="ai-monthly-use">{status.monthlyTokensUsed.toLocaleString("id-ID")} token</span> di semua organisasi;
+          Satu kunci untuk semua organisasi; dipakai hanya untuk mutasi yang belum dikenali aturan atau memori. Maks. {status.maxCallsPerRun} panggilan
+          per proses. Bulan ini terpakai <span data-testid="ai-monthly-use">{status.monthlyTokensUsed.toLocaleString("id-ID")} token</span> di semua organisasi;
           batas bawaan {status.defaultTokenBudget.toLocaleString("id-ID")} token per organisasi per bulan. Tanpa kunci, Buku tetap jalan dengan aturan saja.
         </CardDescription>
       </CardHeader>

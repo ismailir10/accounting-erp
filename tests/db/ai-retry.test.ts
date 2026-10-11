@@ -1,10 +1,19 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { db, makeGroup, resetDb } from "../helpers";
-import { MockProvider } from "@/lib/ai/provider";
-import { suggestAgainWithAi } from "@/lib/ai/retry";
+import { AiTruncatedError, MockProvider } from "@/lib/ai/provider";
+import { simpleGuessRows, suggestForRows } from "@/lib/ai/retry";
+import type { AiProvider } from "@/lib/ai/provider";
 import { aiFailureNote, aiScope } from "@/lib/ai/classify";
 import type { AiItem } from "@/lib/ai/provider";
 import { dateOnly } from "@/lib/format";
+
+/** Review's old synchronous *Minta saran AI*, kept here to test the shared line update (the app now uses the background run). */
+async function suggestAgainWithAi(_db: typeof db, args: { clientId: string; entityIds: string[]; through: Date; provider: AiProvider | null }) {
+  const rows = await simpleGuessRows(_db, args);
+  if (!rows.length) return { rows: 0, updated: 0, calls: 0, cacheHits: 0, note: undefined as string | undefined };
+  const r = await suggestForRows(_db, { clientId: args.clientId, rows, provider: args.provider });
+  return { rows: rows.length, updated: r.updated, calls: r.calls, cacheHits: r.cacheHits, note: r.notes[0] };
+}
 
 describe("Minta saran AI on Review", () => {
   beforeEach(resetDb);
@@ -81,6 +90,30 @@ describe("Minta saran AI on Review", () => {
     const pt = aiScope(g.client, "PT", accounts);
     expect(pt.clientName).toBe(`${g.client.name} (${g.client.industry ?? "umum"})`);
     expect(pt.accounts.map((a) => a.code)).toEqual(expect.arrayContaining(["1130", "5100", "6150"]));
+  });
+
+  it("a cut-off answer for the company's lines doesn't skip the owner's pass", async () => {
+    const g = await makeGroup();
+    const date = dateOnly(2026, 6, 3);
+    const line = async (who: typeof g.pt, hash: string, description: string) => {
+      const bank = who.banks[0];
+      const imp = await db.statementImport.create({ data: { firmId: g.firm.id, bankAccountId: bank.id, fileName: `${hash}.pdf`, format: "BCA", periodStart: date, periodEnd: date, openingBalance: 0n, closingBalance: 0n, rowCount: 1, continuityOk: true } });
+      return db.bankTransaction.create({ data: { firmId: g.firm.id, entityId: who.entity.id, bankAccountId: bank.id, importId: imp.id, date, description, merchantKey: description, direction: "OUT", amount: -1_000_000n, rowNumber: 1, rawRow: "synthetic", hash, status: "NEEDS_REVIEW", method: "HEURISTIC", confidence: 0.3, reason: "Tebakan sederhana", suggestedCode: "6190", accountCode: "1999" } });
+    };
+    await line(g.pt, "p", "TOKO PANJANG SEKALI");
+    const own = await line(g.owner, "o", "TOKO EMAS ANTAM");
+    class CutsOffCompany extends MockProvider {
+      async classify(items: AiItem[]) {
+        this.calls++;
+        if (items.some((i) => i.key === "TOKO PANJANG SEKALI")) throw new AiTruncatedError("Jawaban AI terpotong (batas 9200 token). Coba lagi atau pilih model lain.", 100, 9200, "mock");
+        this.calls--;
+        return super.classify(items);
+      }
+    }
+    const provider = new CutsOffCompany({ "TOKO EMAS ANTAM": { accountCode: "3300", confidence: 0.6, taxTag: null, reason: "pemakaian pribadi" } });
+    const r = await suggestAgainWithAi(db, { clientId: g.client.id, entityIds: [g.pt.entity.id, g.owner.entity.id], through: dateOnly(2026, 6, 30), provider });
+    expect(r.note).toMatch(/terpotong/);
+    expect((await db.bankTransaction.findUniqueOrThrow({ where: { id: own.id } })).suggestedCode).toBe("3300");
   });
 
   it("says in Bahasa that the AI timed out", () => {

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openManualImport } from "./qa-helpers";
 
 /** A statement uploaded to the wrong account names the right one and switches in one click (staging E2E 2026-09-29, L2). */
 test("wrong account: the error offers the client's matching account", async ({ page }) => {
@@ -7,6 +8,7 @@ test("wrong account: the error offers the client's matching account", async ({ p
   await expect(page).toHaveURL(/\/clients\/[^/?]+/);
   const base = new URL(page.url()).pathname.match(/\/clients\/[^/]+/)![0];
   await page.goto(`${base}/import`);
+  await openManualImport(page);
   // Companies first (ui rule 13): the PT's accounts are listed before the owner's. Pick the PT's BCA on purpose.
   await page.getByRole("combobox", { name: "Rekening", exact: true }).click();
   await expect(page.getByRole("option").first()).toContainText("8720145566");

@@ -30,7 +30,8 @@ export type ImportSummary = {
   posted: number;
   needsReview: number;
   byMethod: Record<ClassifyMethod, number>;
-  ai: { calls: number; cacheHits: number; note?: string };
+  /** `later`: with `aiLater`, the lines of this import left on a simple guess for the client's background run (lib/ai/run.ts). */
+  ai: { calls: number; cacheHits: number; note?: string; later?: number };
   continuityOk: boolean;
   continuityNote: string | null;
   /** Combined statements: the other account sections in the file, not imported into this bank account. */
@@ -51,7 +52,7 @@ export type ImportSummary = {
 
 export async function importStatement(
   db: Db,
-  args: { sourceProvenance?: ParsedStatement["provenance"]; evidenceVersionId?: string; evidenceUnitKey?: string; bankAccountId: string; fileName: string; data: Buffer; provider: AiProvider | null; password?: string; year?: number; actorId?: string | null },
+  args: { sourceProvenance?: ParsedStatement["provenance"]; evidenceVersionId?: string; evidenceUnitKey?: string; bankAccountId: string; fileName: string; data: Buffer; provider: AiProvider | null; password?: string; year?: number; actorId?: string | null; /** Answer from the cache only and leave the rest to the client's background run: no AI call inside the import. */ aiLater?: boolean },
 ): Promise<ImportSummary> {
   const bankAccount = await db.bankAccount.findUniqueOrThrow({
     where: { id: args.bankAccountId },
@@ -239,6 +240,8 @@ export async function importStatement(
 
   const result = new Map<string, Classification>();
   const pendingAi: { key: string; direction: Direction; sample: string }[] = [];
+  /** Lines a model could be asked about (named counterparty, nothing else suggests an account). */
+  const askable = new Set<string>();
   for (const it of items) {
     const financing = financingSuggestion(it.description, it.direction) ?? taxPaymentSuggestion(it.description, it.direction);
     const c =
@@ -254,7 +257,10 @@ export async function importStatement(
       (financing && codes.has(financing.accountCode) ? financing : null);
     if (c) result.set(it.id, c);
     // A description that names no one (only channel words) tells a model nothing: it would only guess (rule 17, credit).
-    else if (!isGenericKey(it.merchantKey)) pendingAi.push({ key: it.merchantKey, direction: it.direction, sample: it.description });
+    else if (!isGenericKey(it.merchantKey)) {
+      pendingAi.push({ key: it.merchantKey, direction: it.direction, sample: it.description });
+      askable.add(it.id);
+    }
   }
 
   const scope = aiScope(client, entity.kind, accounts.filter(isClassifiable));
@@ -266,6 +272,8 @@ export async function importStatement(
     accounts: scope.accounts,
     pending: pendingAi,
     provider: args.provider,
+    // Cache only: the provider names the model whose stored answers apply, and no call may start (the background run asks).
+    ...(args.aiLater ? { maxCalls: 0 } : {}),
   });
   // An AI receivable/payable with nothing on the books to settle is demoted below the bulk accept (lib/ai/unbacked.ts).
   const backingAt = ai.suggestions.size ? await tradeBacking(db, entity.id) : () => ({ receivable: true, payable: true });
@@ -377,7 +385,7 @@ export async function importStatement(
     posted: items.length - needsReview,
     needsReview,
     byMethod,
-    ai: ai.usage,
+    ai: args.aiLater ? { calls: 0, cacheHits: ai.usage.cacheHits, later: items.filter((it) => askable.has(it.id) && !ai.suggestions.has(`${it.merchantKey}|${it.direction}`)).length } : ai.usage,
     continuityOk: continuity.ok,
     continuityNote: continuity.note,
     otherSections,

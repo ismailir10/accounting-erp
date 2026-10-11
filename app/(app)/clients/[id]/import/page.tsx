@@ -11,7 +11,6 @@ import { ImportForm } from "@/components/app/import-form";
 import { StatusPill } from "@/components/app/status";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LedgerImportForm } from "@/components/app/ledger-import-form";
 import { importKindLabel } from "@/lib/ledger-import/code";
 import Link from "next/link";
@@ -29,8 +28,12 @@ import { UploadLinksCard } from "@/components/app/upload-links-card";
 import { uploadLinks } from "@/lib/upload-links";
 import { RemoveImportButton } from "@/components/app/remove-import";
 import { isAdminRole } from "@/lib/auth/permissions";
+import { accessView, requireWorkspaceSession } from "@/lib/auth/session";
+import { aiRunForView } from "@/lib/ai/background";
+import { batchItems } from "@/lib/inbox/plan";
+import { UnggahInbox, UnggahTabs } from "@/components/app/unggah-inbox";
 
-export const metadata = { title: "Impor Mutasi" };
+export const metadata = { title: "Unggah" };
 
 export default async function ImportPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: SearchParams }) {
   const { client, sp, period } = await loadClientPage(params, searchParams);
@@ -50,7 +53,13 @@ export default async function ImportPage({ params, searchParams }: { params: Pro
   const shownImports = showAll ? imports : imports.slice(0, HISTORY);
   // Removing an import (ADR 0013) is an admin's decision, like reopening a month.
   const isAdmin = isAdminRole((await getCurrentMember()).role);
-  const tab = !hasBanks || sp.tab === "ledger" ? "ledger" : "statement";
+  // The client's background AI run (a stalled one resumes after this response when the member may write).
+  const aiRun = await aiRunForView(prisma, client, { canWrite: accessView(await requireWorkspaceSession()).canWrite });
+  // The Unggah inbox (cycle 2026-10-10-unggah-inbox): the client's latest drop, so its lines survive a reload. Reads only.
+  // A hand-off from Dokumen (`?lanjut=<batchId>`) opens exactly that drop, so the flag can only ever carry on the drop it was made for.
+  const handoff = typeof sp.lanjut === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sp.lanjut) ? sp.lanjut : undefined;
+  const inbox = await batchItems(prisma, { firmId: client.firmId, clientId: client.id, batchId: handoff });
+  const drive = !evidenceEnabled() ? "off" : (await prisma.driveConnection.findUnique({ where: { firmId: client.firmId }, select: { firmId: true } })) ? "ready" : "disconnected";
   // Sumber first (ADR 0014): what is missing for this month, and the message that asks the client for it.
   const completeness = await completenessMatrix(prisma, client.id, period.year, period.month);
   // …and the lines still in Review the client should explain (I1c), as Review's Excel lists them.
@@ -73,83 +82,11 @@ export default async function ImportPage({ params, searchParams }: { params: Pro
     if (acct && !already) sample = { bankAccountId: acct.id, fileName: f.fileName };
   }
 
-  const ledger = (
-    <div className="space-y-6">
-      <LedgerImportForm clientId={client.id} entities={client.entities.map((e) => ({ id: e.id, name: e.name, currency: e.functionalCurrency }))} />
+  const history = (
+    <>
       <Card>
         <CardHeader>
-          <CardTitle>Riwayat impor buku besar & neraca</CardTitle>
-        </CardHeader>
-        <CardContent className="px-0">
-          {ledgerImports.length === 0 ? (
-            <p className="px-6 text-sm text-muted-foreground">Belum ada buku besar atau neraca yang diimpor untuk klien ini.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="pl-6">File · sheet</TableHead>
-                  <TableHead>Jenis</TableHead>
-                  <TableHead className="hidden md:table-cell">Periode</TableHead>
-                  <TableHead className="text-right">Baris</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="w-10 pr-6" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {ledgerImports.map((i) => (
-                  <TableRow key={i.id}>
-                    <TableCell className="pl-6">
-                      <Link href={`/clients/${client.id}/import/ledger/${i.id}`} className="hover:text-primary">
-                        <span className="font-mono text-xs">{i.fileName}</span> <span className="text-muted-foreground">· {i.sheetName}</span>
-                      </Link>
-                    </TableCell>
-                    <TableCell>{importKindLabel(i)}</TableCell>
-                    <TableCell className="hidden text-muted-foreground md:table-cell">{formatDate(i.periodStart)}{+i.periodEnd !== +i.periodStart ? ` – ${formatDate(i.periodEnd)}` : ""}</TableCell>
-                    <TableCell className="num text-right">{i.rowCount}</TableCell>
-                    <TableCell>
-                      <StatusPill status={i.status === "POSTED" ? "PASS" : "REVIEW"} label={i.status === "POSTED" ? `Tercatat · ${i._count.entries} jurnal` : "Draf"} /><span className="mt-1 block text-xs text-muted-foreground">{i.status === "POSTED" ? `oleh ${i.postedBy?.name ?? "Sistem"}` : `diunggah ${i.importedBy?.name ?? "Sistem"}`}</span>
-                    </TableCell>
-                    <TableCell className="pr-6 text-right">
-                      <Link href={`/clients/${client.id}/import/ledger/${i.id}`} aria-label={`Buka ${i.fileName}`} className="text-muted-foreground hover:text-primary">
-                        <ChevronRight className="size-4" />
-                      </Link>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-
-  return (
-    <div className="space-y-6">
-      <PageHeader
-        title={hasBanks ? "Impor Mutasi" : "Impor Buku Besar"}
-        description={`${hasBanks ? "rekening koran, buku besar atau neraca" : "buku besar atau neraca dari sistem lama"}; setiap angka tetap bisa ditelusuri ke baris file aslinya`}
-      />
-      {setup.current === "import" ? (
-        <NextStep>{setup.next?.text}</NextStep>
-      ) : (
-        <NextStep href={setup.next?.href} cta={setup.next?.cta}>{setup.next?.text}</NextStep>
-      )}
-      <SetupSteps progress={setup} />
-      {completeness.rows.length > 0 && <CompletenessCard months={completeness.months} rows={completeness.rows} />}
-      {!hasBanks ? (
-        ledger
-      ) : (
-        <Tabs defaultValue={tab}>
-          <TabsList className="max-w-full justify-start overflow-x-auto">
-            <TabsTrigger value="statement">Rekening koran bank</TabsTrigger>
-            <TabsTrigger value="ledger">Neraca atau buku besar dari sistem lama</TabsTrigger>
-          </TabsList>
-          <TabsContent value="statement" className="space-y-6">
-      <ImportForm clientId={client.id} banks={banks} sample={sample} openingPending={setup.needsOpening.map((e) => e.shortName)} />
-      <Card>
-        <CardHeader>
-          <CardTitle>Riwayat impor</CardTitle>
+          <CardTitle>Rekening koran yang diimpor</CardTitle>
         </CardHeader>
         <CardContent className="px-0">
           <Table>
@@ -195,10 +132,76 @@ export default async function ImportPage({ params, searchParams }: { params: Pro
           )}
         </CardContent>
       </Card>
-          </TabsContent>
-          <TabsContent value="ledger">{ledger}</TabsContent>
-        </Tabs>
+      <Card>
+        <CardHeader>
+          <CardTitle>Buku besar & neraca yang diimpor</CardTitle>
+        </CardHeader>
+        <CardContent className="px-0">
+          {ledgerImports.length === 0 ? (
+            <p className="px-6 text-sm text-muted-foreground">Belum ada buku besar atau neraca yang diimpor untuk klien ini.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-6">File · sheet</TableHead>
+                  <TableHead>Jenis</TableHead>
+                  <TableHead className="hidden md:table-cell">Periode</TableHead>
+                  <TableHead className="text-right">Baris</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-10 pr-6" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {ledgerImports.map((i) => (
+                  <TableRow key={i.id}>
+                    <TableCell className="pl-6">
+                      <Link href={`/clients/${client.id}/import/ledger/${i.id}`} className="hover:text-primary">
+                        <span className="font-mono text-xs">{i.fileName}</span> <span className="text-muted-foreground">· {i.sheetName}</span>
+                      </Link>
+                    </TableCell>
+                    <TableCell>{importKindLabel(i)}</TableCell>
+                    <TableCell className="hidden text-muted-foreground md:table-cell">{formatDate(i.periodStart)}{+i.periodEnd !== +i.periodStart ? ` – ${formatDate(i.periodEnd)}` : ""}</TableCell>
+                    <TableCell className="num text-right">{i.rowCount}</TableCell>
+                    <TableCell>
+                      <StatusPill status={i.status === "POSTED" ? "PASS" : "REVIEW"} label={i.status === "POSTED" ? `Tercatat · ${i._count.entries} jurnal` : "Draf"} /><span className="mt-1 block text-xs text-muted-foreground">{i.status === "POSTED" ? `oleh ${i.postedBy?.name ?? "Sistem"}` : `diunggah ${i.importedBy?.name ?? "Sistem"}`}</span>
+                    </TableCell>
+                    <TableCell className="pr-6 text-right">
+                      <Link href={`/clients/${client.id}/import/ledger/${i.id}`} aria-label={`Buka ${i.fileName}`} className="text-muted-foreground hover:text-primary">
+                        <ChevronRight className="size-4" />
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </>
+  );
+  const manual = (
+    <>
+      {hasBanks ? (
+        <ImportForm clientId={client.id} banks={banks} sample={sample} openingPending={setup.needsOpening.map((e) => e.shortName)} aiRun={aiRun} />
+      ) : (
+        <p className="text-sm text-muted-foreground">Klien ini belum punya rekening. Unggah rekening korannya di atas; rekeningnya ditambahkan dari file.</p>
       )}
+      <LedgerImportForm clientId={client.id} entities={client.entities.map((e) => ({ id: e.id, name: e.name, currency: e.functionalCurrency }))} />
+    </>
+  );
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Unggah" description="Rekening koran, buku besar, neraca, atau dokumen lain — Buku memilah dan membukukannya." />
+      {setup.current === "import" ? (
+        <NextStep>{setup.next?.text}</NextStep>
+      ) : (
+        <NextStep href={setup.next?.href} cta={setup.next?.cta}>{setup.next?.text}</NextStep>
+      )}
+      <SetupSteps progress={setup} />
+      <UnggahInbox clientId={client.id} initial={inbox} drive={drive} aiRun={aiRun} handedOver={Boolean(handoff) && inbox.items.length > 0} />
+      {completeness.rows.length > 0 && <CompletenessCard months={completeness.months} rows={completeness.rows} />}
+      <UnggahTabs history={history} manual={manual} />
       {request && <DataRequestCard message={request.text} items={request.items} clientId={client.id} canLink={evidenceEnabled()} />}
       {evidenceEnabled() && (
         <UploadLinksCard
@@ -209,5 +212,4 @@ export default async function ImportPage({ params, searchParams }: { params: Pro
       )}
       {evidenceEnabled() && <p className="text-sm text-muted-foreground">Ingin menyimpan berkas untuk ditanyakan, bukan dibukukan? Pakai <Link href="/documents" className="text-primary hover:underline">Dokumen</Link>. Yang diimpor di sini langsung menjadi jurnal.</p>}
     </div>
-  );
-}
+  );}

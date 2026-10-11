@@ -78,7 +78,7 @@ describe("clientSections", () => {
   it("lists the overview, the stages in order, modules the client shows, then settings", () => {
     const labels = clientSections(["leases"]).map((s) => s.label);
     expect(labels[0]).toBe("Ringkasan klien");
-    expect(labels.indexOf("Impor Mutasi")).toBeLessThan(labels.indexOf("Saldo Awal"));
+    expect(labels.indexOf("Unggah")).toBeLessThan(labels.indexOf("Saldo Awal"));
     expect(labels.indexOf("Sewa (PSAK 116)")).toBeGreaterThan(labels.indexOf("Jurnal Penyesuaian"));
     expect(labels.indexOf("Sewa (PSAK 116)")).toBeLessThan(labels.indexOf("Tutup Buku"));
     expect(labels).not.toContain("Persediaan");

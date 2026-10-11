@@ -8,7 +8,7 @@ export type PublicLegalDocument = {
   sections: readonly PublicLegalSection[];
 };
 
-export const PUBLIC_LEGAL_UPDATED = { iso: "2026-10-10", label: "10 Oktober 2026" };
+export const PUBLIC_LEGAL_UPDATED = { iso: "2026-10-11", label: "11 Oktober 2026" };
 export const PUBLIC_LEGAL_DRAFT = "Draf untuk ditinjau. Identitas pengelola dan ketentuan ini perlu dikonfirmasi sebelum uji coba eksternal.";
 
 const trialRequest: PublicLegalSection = {
@@ -116,7 +116,7 @@ export const PUBLIC_PRIVACY: PublicLegalDocument = {
         "Pemetaan akun mengirim kode dan nama akun sumber, petunjuk jenis akun, serta konteks klien dan bagan akun tujuan. Tugas ini tidak mengirim nominal transaksi atau saldo.",
         "Analisis bukti dapat mengirim kutipan dokumen yang dibatasi beserta lokasinya dan konteks. Perencanaan jawaban atas pertanyaan mengirim pertanyaan dan konteks entitas/periode yang dibatasi. Bahan tersebut dapat memuat data pribadi dan keuangan; penghitungan jawaban dilakukan oleh Buku.",
         "Penjelasan Tutup Buku dapat mengirim kontrol yang ditandai, baris terkait beserta nominal, akun, dan konteks entitas. Catatan laporan manajemen mengirim fakta naratif yang dihitung Buku, beserta konteks klien, entitas, periode, dan mata uang; fakta itu dapat berisi angka laporan.",
-        "Baca scan dengan AI mati kecuali Buku menyalakannya. Saat digunakan, gambar halaman dikirim ke penyedia untuk disalin. Gambar dapat memuat nama, nomor rekening, nominal, saldo, dan data pribadi atau keuangan lainnya. Kata sandi PDF hanya digunakan untuk membuka file dan tidak disimpan.",
+        "Baca scan dengan AI mati kecuali Buku menyalakannya. Saat digunakan, gambar halaman dikirim ke penyedia untuk disalin. Gambar dapat memuat nama, nomor rekening, nominal, saldo, dan data pribadi atau keuangan lainnya. Kata sandi PDF tidak pernah dikirim ke penyedia AI. Sandi yang membuka file di halaman Unggah disimpan terenkripsi untuk klien itu saja, agar file bulan berikutnya tidak perlu diketik ulang; admin dapat menghapusnya di pengaturan klien. Sandi yang diketik di cara impor lain hanya dipakai untuk membuka file dan tidak disimpan.",
         "Karena bahan mengikuti tugasnya, tidak ada jaminan bahwa semua nominal atau identitas rekening selalu tinggal di Buku. Tanpa AI, fungsi pembukuan dengan aturan dan memori tetap tersedia.",
       ],
     },

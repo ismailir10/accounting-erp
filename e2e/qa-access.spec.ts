@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Browser, type Page } from "@playwright/test";
+import { openClientForm } from "./qa-helpers";
 
 /**
  * Who can see and do what, from the end-to-end QA run (docs/qa, cases A12–A14, U1): a second firm's ADMIN reaches nothing of the demo
@@ -116,12 +117,12 @@ test.describe("sign-in does not reveal who has an account, and typed HTML stays 
 test("HTML typed into a client name is shown as text, never run", async ({ page }) => {
   const dialogs: string[] = [];
   page.on("dialog", (d) => { dialogs.push(d.message()); void d.dismiss(); });
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("QA XSS <img src=x onerror=alert(1)>");
   await page.getByLabel("Nama lengkap").fill("PT XSS <script>alert(2)</script>");
   await page.getByLabel("Nomor rekening").fill("7000300001");
   await page.getByRole("button", { name: "Simpan klien" }).click();
-  await expect(page.getByRole("heading", { name: "Impor Mutasi" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Unggah", exact: true })).toBeVisible();
   await page.goto("/");
   await expect(page.getByText("QA XSS <img src=x onerror=alert(1)>").first()).toBeVisible();
   await expect(page.locator("img[src=x]")).toHaveCount(0);

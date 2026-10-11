@@ -26,7 +26,7 @@ export const OVERVIEW: NavSection = { href: "", label: "Ringkasan klien" };
 /** Client pages in three stages (ADR 0014): Sumber → Buku Besar → Laporan, in working order (ui-rules 14). */
 export function clientStages(modules: string[]): NavStage[] {
   return [
-    { label: "1 · Sumber", items: [{ href: "/import", label: "Impor Mutasi" }, { href: "/opening", label: "Saldo Awal" }] },
+    { label: "1 · Sumber", items: [{ href: "/import", label: "Unggah" }, { href: "/opening", label: "Saldo Awal" }] },
     {
       label: "2 · Buku Besar",
       items: [

@@ -24,7 +24,9 @@ import { loadReportFormat } from "@/lib/reports/format";
 import { formatUniverse } from "@/lib/reports/format-settings";
 import { ModulesCard } from "@/components/app/modules-card";
 import { clientModules, MODULES } from "@/lib/clients/modules";
-import { isAdminRole } from "@/lib/auth/permissions";
+import { can, isAdminRole } from "@/lib/auth/permissions";
+import { keyringSize } from "@/lib/inbox/keyring";
+import { PdfKeyringCard } from "@/components/app/pdf-keyring-card";
 
 export const metadata = { title: "Pengaturan klien" };
 
@@ -52,6 +54,8 @@ export default async function SettingsPage({ params, searchParams }: { params: P
   const clientRules = rules.filter((r) => r.clientId);
   const firmRules = rules.filter((r) => !r.clientId);
   const tab = TABS.find((t) => t.key === sp.tab) ?? TABS[0];
+  // Admin-only like its actions (org.settings, ADR 0018): other members neither see the card nor load the count.
+  const keyringCount = tab.key === "perusahaan" && can(member.role, "org.settings") ? await keyringSize(prisma, client.id) : null;
   const live = Boolean(cfg.apiKey && cfg.model);
   const lastMonth = auto[auto.length - 1];
   const aiLines = auto.reduce((s, a) => s + a.ai, 0);
@@ -76,6 +80,7 @@ export default async function SettingsPage({ params, searchParams }: { params: P
           />
           {/* Keyed on what's saved: after a save or a reset the editor starts again from the server's format. */}
           <ReportFormatCard key={JSON.stringify(reportFormat)} clientId={client.id} initial={formatValue} custom={customFormat} stale={staleFormat} universe={formatUniverse()} />
+          {keyringCount !== null && <PdfKeyringCard clientId={client.id} count={keyringCount} />}
           {isAdminRole(member.role) && firm.kind !== "PERUSAHAAN" && <DeleteClientCard clientId={client.id} name={client.name} />}
         </>
       ) : (
@@ -90,7 +95,7 @@ export default async function SettingsPage({ params, searchParams }: { params: P
             <CardHeader>
               <CardTitle>Batas pemakaian</CardTitle>
               <CardDescription>
-                Maks. {cfg.maxCallsPerImport} panggilan per impor · {(await firmTokenBudget(prisma, client.firmId)).toLocaleString("id-ID")} token per bulan untuk kantor ini.
+                Maks. {cfg.maxCallsPerRun} panggilan per proses · {(await firmTokenBudget(prisma, client.firmId)).toLocaleString("id-ID")} token per bulan untuk kantor ini.
                 {lastMonth && ` Bulan terakhir: ${lastMonth.pct}% dikode otomatis (${formatMonthShort(Number(lastMonth.ym.slice(0, 4)), Number(lastMonth.ym.slice(5)))}).`}
               </CardDescription>
             </CardHeader>

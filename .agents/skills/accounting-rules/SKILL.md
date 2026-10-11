@@ -375,13 +375,18 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     account at that bank whose readers fail, whose header matches and whose dates don't prove the other day/month order is read with it
     inside `parseStatementSections` and goes through the import's continuity check like any file.
 17. LLM runs **outside** DB transactions, only for leftovers, **one request per unique merchant key + direction**,
-    batched (≤40/call), cached in `AiSuggestion` with firm/client isolation (key implementation: `lib/ai/classify.ts`).
-    Account mapping (rule 9a) follows the same discipline: names + type hints only (no amounts, no descriptions), ≤40 per call,
+    batched (≤15/call), cached in `AiSuggestion` with firm/client isolation (key implementation: `lib/ai/classify.ts`).
+    **No request waits on a paid call:** an import with a model set uses cached answers only and hands the rest to the
+    client's background run (`lib/ai/run.ts`, one RUNNING run per client, time-boxed slices after the response via
+    `lib/ai/background.ts`); the run only replaces the suggestion of lines still in review — nothing posts. Only an import or
+    *Minta saran AI* starts a run; resuming (a status poll, `app/api/ai-run`) works the run it validated and never opens a new
+    one, so a run that stopped at its call cap stays stopped.
+    Account mapping (rule 9a) follows the same discipline: names + type hints only (no amounts, no descriptions), ≤15 per call,
     cached by `(normalised name, type hint, coaVersion)`, whitelisted against the client chart, counted in the same caps.
     Timeouts: 90 s per classification/mapping call, 180 s for close review and *Jelaskan* (`AI_TIMEOUT_MS`, `AI_LONG_TIMEOUT_MS`).
-    A failed call leaves the simple guess; Review offers *Minta saran AI* for those lines (`lib/ai/retry.ts`: the same cache, batches,
-    caps and budget; financing text excluded; it only replaces the suggestion of lines still in review — nothing posts).
-18. All paid paths reserve the shared monthly allowance atomically through `lib/ai/budget.ts` before network calls. Evidence context proposals and read-only query plans use bounded source passages, versioned citations, and scope/model/prompt caches; monetary answers are deterministic tool results (ADR 0007). Existing classification/mapping payload restrictions still apply. Hard caps: `AI_MAX_CALLS_PER_IMPORT`, `AI_MONTHLY_TOKEN_BUDGET`; every call logged in `AiUsage`. No retry loops.
+    A failed call leaves the simple guess; Review's *Minta saran AI* starts the same background run for those lines (shared line
+    update in `lib/ai/retry.ts`: the same cache, batches, caps and budget; financing text excluded).
+18. All paid paths reserve the shared monthly allowance atomically through `lib/ai/budget.ts` before network calls. Evidence context proposals and read-only query plans use bounded source passages, versioned citations, and scope/model/prompt caches; monetary answers are deterministic tool results (ADR 0007). Existing classification/mapping payload restrictions still apply. Hard caps: `AI_MAX_CALLS_PER_RUN` (per classification or mapping run), `AI_MONTHLY_TOKEN_BUDGET`; every call logged in `AiUsage`. No retry loops — the only repeat is one bounded split of a cut-off classification batch into two halves, counted in the per-run cap.
 19. Bank text is untrusted: output codes must be in the client's COA whitelist (`parseAiResponse`), else dropped.
 20. Tests and the seed **never** call a real model (`MockProvider`, pre-cached answers). `npm run ai:smoke` is the only live call.
 20a. **AI close review** (ADR 0009) may send amounts and ≤ 80-char bank descriptions of the rows behind flagged controls only

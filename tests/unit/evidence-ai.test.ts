@@ -14,6 +14,15 @@ describe("evidence AI boundaries", () => {
       { key: "profit", value: "100000", locator: "Profil!A1" },
     ] }), input)).toEqual({ kind: "COMPANY_PROFILE", entity: "Citra Ternak PTE LTD", currency: "USD", periodStart: null, periodEnd: null, facts: [{ key: "companyName", value: "Citra Ternak PTE LTD", locator: "Profil!A1" }] });
   });
+  it("never proposes a country name as the currency (production: \"Mata uang: INDONESIA\")", () => {
+    const statement = { context: "", passages: [{ locator: "hal 1", text: "PT CONTOH JAYA, JAKARTA INDONESIA. MATA UANG IDR" }] };
+    const analysis = parseEvidenceAnalysis(JSON.stringify({ kind: "BANK", currency: "INDONESIA", facts: [
+      { key: "currency", value: "INDONESIA", locator: "hal 1" },
+      { key: "currency", value: "IDR", locator: "hal 1" },
+    ] }), statement);
+    expect(analysis.currency).toBeNull();
+    expect(analysis.facts).toEqual([{ key: "currency", value: "IDR", locator: "hal 1" }]);
+  });
   it("does not validate facts using truncated text that model never saw", () => {
     const source = { context: "", passages: [{ locator: "p1", text: `${"x".repeat(400)}secret` }] };
     const analysis = parseEvidenceAnalysis(JSON.stringify({ kind: "OTHER", facts: [{ key: "companyName", value: "secret", locator: "p1" }] }), source);
@@ -65,7 +74,7 @@ describe("evidence AI boundaries", () => {
   });
   it("invalid billed plan carries usage and triggers no retry", async () => {
     let calls = 0;
-    const provider = new OpenAiCompatibleProvider({ baseUrl: "https://test.invalid", apiKey: "x", model: "m", maxCallsPerImport: 1, monthlyTokenBudget: 20_000 }, (async () => {
+    const provider = new OpenAiCompatibleProvider({ baseUrl: "https://test.invalid", apiKey: "x", model: "m", maxCallsPerRun: 20, monthlyTokenBudget: 20_000 }, (async () => {
       calls++;
       return new Response(JSON.stringify({ usage: { prompt_tokens: 200, completion_tokens: 30 }, choices: [{ message: { content: '{"intent":"POST","terms":[]}' } }] }));
     }) as typeof fetch);
@@ -77,7 +86,7 @@ describe("evidence AI boundaries", () => {
 
   it("gives evidence, classification and mapping calls 90 seconds and close review/explain 180", async () => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
-    const provider = new OpenAiCompatibleProvider({ baseUrl: "https://test.invalid", apiKey: "x", model: "m", maxCallsPerImport: 1, monthlyTokenBudget: 20_000 }, (async () =>
+    const provider = new OpenAiCompatibleProvider({ baseUrl: "https://test.invalid", apiKey: "x", model: "m", maxCallsPerRun: 20, monthlyTokenBudget: 20_000 }, (async () =>
       new Response(JSON.stringify({ usage: { prompt_tokens: 1, completion_tokens: 1 }, choices: [{ message: { content: '{"items":[]}' } }] }))) as typeof fetch);
     const used = async (call: () => Promise<unknown>) => { timeout.mockClear(); await call().catch(() => {}); return timeout.mock.calls.map((c) => c[0]); };
     expect(await used(() => provider.analyzeEvidence({ context: "", passages: [] }))).toEqual([EVIDENCE_TIMEOUT_MS]);

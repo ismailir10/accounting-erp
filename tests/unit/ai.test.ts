@@ -32,7 +32,7 @@ describe("OpenAiCompatibleProvider", () => {
         { status: 200 },
       );
     }) as unknown as typeof fetch;
-    const p = new OpenAiCompatibleProvider({ baseUrl: "https://gw.test/v1", apiKey: "k", model: "m1", maxCallsPerImport: 3, monthlyTokenBudget: 1000 }, fakeFetch);
+    const p = new OpenAiCompatibleProvider({ baseUrl: "https://gw.test/v1", apiKey: "k", model: "m1", maxCallsPerRun: 20, monthlyTokenBudget: 1000 }, fakeFetch);
     const res = await p.classify(items, [{ code: "6140", name: "Logistik" }], "x");
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toBe("https://gw.test/v1/chat/completions");
@@ -43,7 +43,7 @@ describe("OpenAiCompatibleProvider", () => {
 });
 
 describe("OpenAiCompatibleProvider — answers that can't be used", () => {
-  const cfg = { baseUrl: "https://gw.test/v1", apiKey: "k", model: "glm", maxCallsPerImport: 3, monthlyTokenBudget: 1000 };
+  const cfg = { baseUrl: "https://gw.test/v1", apiKey: "k", model: "glm", maxCallsPerRun: 20, monthlyTokenBudget: 1000 };
   const reply = (content: string | null, finish = "stop") =>
     (async () =>
       new Response(JSON.stringify({ model: "glm", usage: { prompt_tokens: 1354, completion_tokens: 220 }, choices: [{ message: { content }, finish_reason: finish }] }), {
@@ -89,13 +89,13 @@ describe("OpenAiCompatibleProvider — answers that can't be used", () => {
 
 it("a Zen 503 'Endpoint is unavailable' leads with the fix (notes are cut at 120 chars)", async () => {
   const f = (async () => new Response('{"error":{"type":"server_error","message":"Upstream request failed: Endpoint is unavailable."}}', { status: 503 })) as unknown as typeof fetch;
-  const p = new OpenAiCompatibleProvider({ baseUrl: "https://opencode.ai/zen/v1", apiKey: "k", model: "gpt-5.6-luna", maxCallsPerImport: 3, monthlyTokenBudget: 1000 }, f);
+  const p = new OpenAiCompatibleProvider({ baseUrl: "https://opencode.ai/zen/v1", apiKey: "k", model: "gpt-5.6-luna", maxCallsPerRun: 20, monthlyTokenBudget: 1000 }, f);
   const err = await p.mapAccounts([{ key: "a0", code: "1", name: "Kas", typeHint: null }], [], "x").catch((e) => e);
   expect(`AI gagal: ${err.message}`.slice(0, 120)).toMatch(/gpt-5\.6-luna tidak tersedia lewat \/chat\/completions \(AI 503\)\. Pilih mis\. glm-5\.3/);
 });
 
 it("keeps another gateway's 503 message without recommending Zen models", async () => {
   const f = (async () => new Response("Endpoint is unavailable", { status: 503 })) as unknown as typeof fetch;
-  const p = new OpenAiCompatibleProvider({ baseUrl: "https://gw.test/v1", apiKey: "k", model: "custom", maxCallsPerImport: 3, monthlyTokenBudget: 1000 }, f);
+  const p = new OpenAiCompatibleProvider({ baseUrl: "https://gw.test/v1", apiKey: "k", model: "custom", maxCallsPerRun: 20, monthlyTokenBudget: 1000 }, f);
   await expect(p.mapAccounts([{ key: "a0", code: "1", name: "Kas", typeHint: null }], [], "x")).rejects.toThrow("AI 503: Endpoint is unavailable");
 });

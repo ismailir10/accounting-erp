@@ -60,7 +60,7 @@ export async function setupProgress(
   const order: StepKey[] = ["import", "opening", "review", "close"];
   const current = order.find((k) => !done[k]) ?? null;
   const periodLabel = opts.period ? formatPeriod(opts.period.year, opts.period.month) : "";
-  const importHref = hasBanks ? `${base}/import` : `${base}/import?tab=ledger`;
+  const importHref = `${base}/import`;
   const href: Record<StepKey, string> = {
     import: importHref,
     opening: `${base}/opening`,
@@ -80,7 +80,7 @@ export async function setupProgress(
     if (!hasData && draft) next = { text: `Lanjutkan impor ${draft.fileName}: petakan akunnya lalu catat.`, href: `${base}/import/ledger/${draft.id}`, cta: "Lanjutkan impor" };
     else if (!hasData) next = hasBanks
       ? { text: "Unggah rekening koran pertama. Setelah itu saldo bank di Saldo Awal terisi otomatis.", href: importHref, cta: "Unggah rekening koran" }
-      : { text: "Unggah buku besar atau neraca dari sistem lama, petakan akunnya, lalu catat.", href: importHref, cta: "Impor buku besar" };
+      : { text: "Unggah rekening koran atau file pembukuan klien. Rekening baru ditambahkan dari file.", href: importHref, cta: "Unggah" };
     else next = { text: `Mutasi ${missing.map((m) => m.replace("Rekonsiliasi ", "")).join(", ")}${periodLabel ? ` untuk ${periodLabel}` : ""} belum diimpor.`, href: importHref, cta: "Impor mutasi" };
   } else if (current === "opening") {
     next = { text: `Isi saldo awal ${needsOpening.map((e) => e.shortName).join(" dan ")}. Saldo bank sudah terisi dari rekening koran, tinggal periksa.`, href: href.opening, cta: "Isi saldo awal" };

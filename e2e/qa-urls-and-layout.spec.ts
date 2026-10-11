@@ -40,7 +40,7 @@ test.describe("BUG-012: the import page fits a 390 px phone", () => {
   test("no horizontal page scroll", async ({ page }) => {
     const id = await addClient(page, { name: "QA Ponsel" });
     await page.goto(`/clients/${id}/import`);
-    await expect(page.getByRole("heading", { name: "Impor Mutasi" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Unggah", exact: true })).toBeVisible();
     const [scroll, client] = await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
     expect(scroll).toBeLessThanOrEqual(client + 1);
   });

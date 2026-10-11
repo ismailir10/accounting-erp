@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { smbcGiroDepositPdf } from "../tests/pdf-fixture";
+import { openManualImport } from "./qa-helpers";
 
 /**
  * An owner's SMBC giro statement lists a time deposit (production E2E 2026-09-30, Belifi): Saldo Awal proposes it on 1260 with its
@@ -10,6 +11,8 @@ test("Saldo Awal proposes the deposit a statement lists, with its source", async
   const clientList = page.getByRole("button", { name: /^Daftar klien \(\d+\)$/ });
   if ((await clientList.getAttribute("aria-expanded")) !== "true") await clientList.click();
   await page.getByRole("link", { name: "Tambah klien" }).click();
+  // Tambah klien starts from files; this walk fills the manual form.
+  await page.getByRole("link", { name: "Isi manual" }).click();
   await page.getByLabel("Nama klien").fill("Deposito Uji");
   await page.getByLabel("Bidang usaha").fill("perdagangan");
   await page.getByLabel("Nama lengkap").fill("PT Deposito Uji");
@@ -21,7 +24,8 @@ test("Saldo Awal proposes the deposit a statement lists, with its source", async
   await page.getByRole("button", { name: "Simpan klien" }).click();
 
   // A new client lands on the upload: Saldo Awal is prefilled from the statement afterwards.
-  await expect(page.getByRole("heading", { name: "Impor Mutasi" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Unggah", exact: true })).toBeVisible();
+  await openManualImport(page);
   await page.getByTestId("file-input").setInputFiles({ name: "smbc-mei-2026.pdf", mimeType: "application/pdf", buffer: smbcGiroDepositPdf() });
   await page.getByRole("button", { name: "Proses mutasi" }).click();
   await expect(page.getByTestId("import-result")).toContainText("Nyambung");

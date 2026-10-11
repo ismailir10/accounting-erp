@@ -91,7 +91,7 @@ describe("readStatement on an OpenAI-compatible gateway", async () => {
       const answer = { bank: "BCA", accountNumber: "1111111111", periodStart: "2026-08-01", periodEnd: "2026-08-31", opening: "1.000.000,00", closing: "", rows: [{ date: "2026-08-03", description: "SETORAN", debit: "", credit: "500.000,00", balance: "1.500.000,00" }] };
       return new Response(JSON.stringify({ choices: [{ message: { content: "```json\n" + JSON.stringify(answer) + "\n```" }, finish_reason: "stop" }], usage: { prompt_tokens: 900, completion_tokens: 120 }, model: "vision-1" }), { status: 200 });
     }) as unknown as typeof fetch;
-    const p = new OpenAiCompatibleProvider({ baseUrl: "https://gw.test/v1", apiKey: "k", model: "vision-1", maxCallsPerImport: 3, monthlyTokenBudget: 100_000 }, fakeFetch);
+    const p = new OpenAiCompatibleProvider({ baseUrl: "https://gw.test/v1", apiKey: "k", model: "vision-1", maxCallsPerRun: 20, monthlyTokenBudget: 100_000 }, fakeFetch);
     const png = encodePng(1, 1, 1, new Uint8Array([255]));
     const r = await p.readStatement({ images: [{ mime: "image/png", data: png }] });
     expect(r.transcript.rows).toEqual([{ date: "2026-08-03", description: "SETORAN", debit: "", credit: "500.000,00", balance: "1.500.000,00" }]);

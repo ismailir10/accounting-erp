@@ -20,7 +20,7 @@ test("a company lands on its own books, with no client layer in sight", async ({
   const sidebar = page.locator("[data-sidebar=sidebar]").first();
   await expect(sidebar).toContainText("PT Uji Perusahaan");
   await expect(sidebar).toContainText("Ringkasan");
-  await expect(sidebar).toContainText("Impor Mutasi");
+  await expect(sidebar).toContainText("Unggah");
   await expect(sidebar).not.toContainText(/klien/i);
 
   await page.goto("/");

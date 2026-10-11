@@ -72,6 +72,8 @@ jobs:
       APP_URL: http://localhost:3200
       AI_API_KEY: ""
       AI_MODEL: ""
+      # Test-only value (production sets its own): Unggah keeps PDF passwords encrypted with it (ADR 0018).
+      SETTINGS_SECRET: e2e-only-settings-secret-not-used-anywhere-else
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

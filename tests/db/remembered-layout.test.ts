@@ -5,6 +5,7 @@ import { importStatement } from "@/lib/import/pipeline";
 import { readGrid } from "@/lib/import/grid";
 import { suggestMapping } from "@/lib/import/mapped";
 import { forgetLayout } from "@/lib/import/layouts";
+import { checkFile } from "@/lib/inbox/check";
 import { UnreadableFileError } from "@/lib/import/types";
 import { createClient, createFirm } from "@/lib/setup";
 import { unknownCsv, unknownXlsx } from "../unknown-layout";
@@ -54,6 +55,14 @@ describe("a remembered Atur kolom layout", () => {
     const firm2 = await createFirm(db, "KJA Lain");
     const foreign = await db.$transaction((tx) => createClient(tx, firm2.id, { name: "Klien KJA Lain", industry: "retail", entities: [{ name: "PT Asing", shortName: "PT Asing", kind: "PT", banks: [{ bank: "BCA", number: "5555555555", label: "BCA" }] }] }));
     await expect(importStatement(db, { bankAccountId: foreign.entities[0].banks[0].id, fileName: "kas.csv", data: unknownCsv(8), provider: null })).rejects.toThrow(UnreadableFileError);
+  });
+
+  it("makes Unggah see next month's file of that layout as a bank statement (review of #146)", async () => {
+    const g = await makeGroup();
+    await mapAugust(g);
+    const item = await checkFile(db, { firmId: g.firm.id, clientId: g.client.id, batchId: "b1", name: "kas-september.csv", data: unknownCsv(9) });
+    expect(item).toMatchObject({ kind: "BANK", status: "CHECKED" });
+    expect((item.sections as { rows: number }[])[0].rows).toBe(5);
   });
 
   it("is never used for a file a reader knows", async () => {

@@ -43,7 +43,7 @@ export default async function BackofficeSettingsPage() {
           model: cfg.model || null,
           modelSource: cfg.modelSource,
           gatewayHost: new URL(cfg.baseUrl).host,
-          maxCallsPerImport: cfg.maxCallsPerImport,
+          maxCallsPerRun: cfg.maxCallsPerRun,
           monthlyTokensUsed: (used._sum.promptTokens ?? 0) + (used._sum.completionTokens ?? 0),
           defaultTokenBudget: aiConfig().monthlyTokenBudget,
           lastCall: lastCall && { at: formatDateTime(lastCall.at), ok: lastCall.ok, model: lastCall.model, note: lastCall.note },

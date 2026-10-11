@@ -93,7 +93,7 @@ describe("setupProgress", () => {
     expect(p.current).toBe("close");
   });
 
-  it("a client with no bank accounts starts with the ledger import and continues a draft", async () => {
+  it("a client with no bank accounts starts with Unggah (rekening come from the files) and continues a draft", async () => {
     const g = await db.$transaction(async (tx) => {
       const f = await tx.firm.create({ data: { name: "KJA Uji" } });
       const { client } = await createClient(tx, f.id, { name: "Klien Buku", industry: "jasa", entities: [{ name: "PT Buku", shortName: "PT Buku", kind: "PT", banks: [] }], rules: [] });
@@ -101,7 +101,7 @@ describe("setupProgress", () => {
     });
     const p = await setupProgress(db, g.client.id);
     expect(p.hasBanks).toBe(false);
-    expect(p.next).toMatchObject({ href: `/clients/${g.client.id}/import?tab=ledger`, cta: "Impor buku besar" });
+    expect(p.next).toMatchObject({ text: "Unggah rekening koran atau file pembukuan klien. Rekening baru ditambahkan dari file.", href: `/clients/${g.client.id}/import`, cta: "Unggah" });
     const draft = await db.ledgerImport.create({ data: { firmId: g.f.id, clientId: g.client.id, fileName: "neraca.xlsx", fileHash: "h", sheetName: "Neraca", mode: "NERACA", periodStart: dateOnly(2026, 7, 31), periodEnd: dateOnly(2026, 7, 31), rowCount: 3, data: {} } });
     expect((await setupProgress(db, g.client.id)).next).toMatchObject({ href: `/clients/${g.client.id}/import/ledger/${draft.id}`, cta: "Lanjutkan impor" });
     await db.ledgerImport.update({ where: { id: draft.id }, data: { status: "POSTED" } });

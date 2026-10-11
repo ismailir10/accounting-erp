@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createHmac } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
+import { openManualImport } from "./qa-helpers";
 
 /**
  * Support sessions (ADR 0017 §2, cycle 2026-10-09-trial-tenants-roles T18): a Buku admin enables two-step login, opens a firm's
@@ -72,6 +73,7 @@ test("a Buku admin with two-step login looks into a firm as its akuntan, read-on
   }
   expect((await page.request.get(`/clients/${id}/reports/export`)).status()).toBe(200);
   await page.goto(`/clients/${id}/import`);
+  await openManualImport(page);
   await expect(page.getByRole("button", { name: /Proses mutasi/ })).toBeDisabled();
   await expect(page.getByTestId("write-blocked").first()).toContainText("Mode dukungan hanya baca");
 

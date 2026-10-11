@@ -14,7 +14,10 @@ file to a closed month.
    of the description, and the client's name and business type. Lines matched by transfers, rules or memory are never sent.
    Leave the key empty for rules-only.
 5. The authenticated [evidence workspace](evidence-workspace.md) can send bounded source passages to AI for explicitly requested context proposals and question planning. This is broader than merchant/account-name classification above; source files and citations remain private.
-6. PDF passwords are used once to open the file. They're never stored or logged.
+6. PDF passwords are never logged, put in a URL or sent to the browser or an AI provider. On **Unggah** a password that opened a
+   file is kept for that client, encrypted with `SETTINGS_SECRET`, and tried on the next locked file; an admin clears them in
+   *Pengaturan klien → Kata sandi PDF* ([ADR 0018](adrs/0018-pdf-password-keyring.md)). A password typed on *Cara lain* or in
+   Dokumen is used once and not kept.
 
 ## 1. Check the file before importing (no database)
 ```bash
@@ -67,14 +70,14 @@ The difference goes to 3200 Saldo Laba. One opening entry per entity; later corr
 Jurnal Penyesuaian.
 
 ## 4. Import → review → close
-Same flow as the demo: **Impor Mutasi** (PDF asks for its password) → **Review** → **Laporan Keuangan** → **Tutup Buku**.
+Same flow as the demo: **Unggah** (drop all the client's files at once; a locked PDF asks its password once and the password is kept for this client, encrypted — an admin clears it in Pengaturan klien) → **Review** → **Laporan Keuangan** → **Tutup Buku**.
 The controls show whether the books match the bank:
 - *Rekonsiliasi* compares the statement's closing balance with the GL. It fails until Saldo Awal is posted.
 - *Kelengkapan mutasi* shows the continuity result.
 - *Kliring 1199* stays open until both sides of a transfer between own accounts are imported.
 
 ## 5. Ledger or Neraca from the client's old system (Jurnal, Accurate, Excel)
-**Impor → Buku besar / neraca**. XLSX, XLS or CSV. A ledger needs tanggal, kode/nama akun, debit, kredit (optional: entitas,
+**Unggah** (drop the file; it becomes a draft) or **Unggah → Cara lain → Buku besar / neraca**. XLSX, XLS or CSV. A ledger needs tanggal, kode/nama akun, debit, kredit (optional: entitas,
 no. bukti, mata uang, kurs, notes with `Rate: 1.31`). A Neraca needs kode/nama akun and saldo (Jurnal's export works as is). A Laba Rugi or arus kas export is refused with a message
 saying so: the year-to-date result is already in the Neraca's saldo laba.
 1. **Periksa file.** Nothing is posted yet. Choose the sheet if the file holds several tables.

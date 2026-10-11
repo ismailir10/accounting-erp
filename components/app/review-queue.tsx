@@ -19,6 +19,8 @@ import type { WithholdingKind } from "@/lib/generated/prisma/enums";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { accountantHints } from "@/lib/classify/hints";
+import type { AiRunView } from "@/lib/ai/run";
+import { AiRunStatus, useAiRun } from "@/components/app/ai-run-status";
 
 export type ReviewItem = {
   id: string;
@@ -119,6 +121,7 @@ export function ReviewQueue({
   simpleGuesses = 0,
   aiReady = true,
   canSetUpAi = false,
+  aiRun = null,
 }: {
   items: ReviewItem[];
   accounts: AccountOption[];
@@ -130,8 +133,12 @@ export function ReviewQueue({
   aiReady?: boolean;
   /** The member may set the AI key (admin): the banner links to Pengaturan. */
   canSetUpAi?: boolean;
+  /** The client's background AI run: while it runs, its progress replaces *Minta saran AI* (a second click would only join it). */
+  aiRun?: AiRunView | null;
 }) {
   const router = useRouter();
+  const ai = useAiRun(clientId, aiRun);
+  const aiRunning = ai.run?.status === "RUNNING";
   const [done, setDone] = useState<Set<string>>(new Set());
   // The active card is tracked by id, so refreshes and accepts elsewhere in the list never move it to another transaction.
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -275,8 +282,9 @@ export function ReviewQueue({
     const r = await suggestAgainAction(clientId, scope);
     setAsking(false);
     if (!r.ok) return void toast.error(r.error);
-    if (r.updated > 0) toast.success(`${r.updated} dari ${r.rows} transaksi mendapat usulan AI`, { description: r.note });
-    else toast.error(r.note ?? "AI belum memberi usulan untuk transaksi ini. Pilih akunnya langsung.");
+    // The progress line takes over from the button at once; it says the rest.
+    if (r.aiRun) ai.adopt(r.aiRun);
+    else toast.info("Tidak ada transaksi yang perlu ditanyakan ke AI.");
     router.refresh();
   };
 
@@ -349,11 +357,12 @@ export function ReviewQueue({
         {simpleGuesses > 0 && <span>Tebakan tidak diterima dengan Enter: pilih akunnya sendiri</span>}
         {savingNote}
       </div>
-      {simpleGuesses > 0 && clientId && (
+      {ai.run && ai.watched && <AiRunStatus run={ai.run} variant="line" className="rounded-lg border bg-card px-4 py-3" />}
+      {simpleGuesses > 0 && clientId && !aiRunning && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-review/40 bg-review-subtle px-4 py-3 text-sm" data-testid="simple-guesses">
           {aiReady ? (
             <>
-              <span>{simpleGuesses} transaksi hanya punya tebakan sederhana karena AI tidak memberi saran saat impor.</span>
+              <span>{simpleGuesses} transaksi belum punya saran AI.</span>
               <Button variant="outline" size="sm" disabled={asking} onClick={askAi}>
                 {asking && <Loader2 className="animate-spin" />} Minta saran AI untuk {simpleGuesses} transaksi
               </Button>

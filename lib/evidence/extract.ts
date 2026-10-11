@@ -322,7 +322,7 @@ function valueText(value: ExcelJS.CellValue, locator: string, issues: string[]):
 }
 
 /** Sheets the ledger import itself would read (`detectTables` + `readTable`), keyed by sheet name. */
-async function postableTables(name: string, data: Buffer): Promise<Map<string, EvidenceTable>> {
+export async function postableTables(name: string, data: Buffer): Promise<Map<string, EvidenceTable>> {
   const out = new Map<string, EvidenceTable>();
   let sheets: Awaited<ReturnType<typeof readSheets>>;
   try { sheets = await readSheets(name, data); } catch { return out; }

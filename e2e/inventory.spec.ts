@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openManualImport, openClientForm } from "./qa-helpers";
 
 /**
  * Persediaan (periodic method, accounting-rules 5i), end to end (synthetic): a trading client's June stock count is journaled to
@@ -12,7 +13,7 @@ const CSV = [
 ].join("\n");
 
 test("Persediaan: stock count journaled to 5190, shown in Laba Rugi and the close", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Toko Uji Persediaan");
   await page.getByLabel("Bidang usaha").fill("toko bahan bangunan");
   await page.getByLabel("Nama lengkap").fill("CV Uji Persediaan");
@@ -21,6 +22,7 @@ test("Persediaan: stock count journaled to 5190, shown in Laba Rugi and the clos
   await page.getByRole("button", { name: "Simpan klien" }).click();
   await page.waitForURL(/\/clients\/[^/]+\/import/);
   const base = page.url().replace(/\/import.*$/, "");
+  await openManualImport(page);
   await page.getByTestId("file-input").setInputFiles({ name: "bca-juni.csv", mimeType: "text/csv", buffer: Buffer.from(CSV) });
   await page.getByRole("button", { name: "Proses mutasi" }).click();
   await expect(page.getByTestId("import-result")).toContainText("Nyambung");

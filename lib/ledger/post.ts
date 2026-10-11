@@ -46,11 +46,10 @@ export type PostInput = {
 export async function getOrCreatePeriod(tx: Tx, firmId: string, clientId: string, date: Date) {
   const year = date.getUTCFullYear();
   const month = date.getUTCMonth() + 1;
-  return tx.period.upsert({
-    where: { clientId_year_month: { clientId, year, month } },
-    create: { firmId, clientId, year, month },
-    update: {},
-  });
+  // INSERT … ON CONFLICT DO NOTHING, then read: two imports of the same new month at once both get the one row (an upsert with an
+  // empty update reads then inserts, so the second one failed on the unique key).
+  await tx.period.createMany({ data: [{ firmId, clientId, year, month }], skipDuplicates: true });
+  return tx.period.findUniqueOrThrow({ where: { clientId_year_month: { clientId, year, month } } });
 }
 
 /** Merge lines on the same account+side and drop zero lines. Keeps entries compact. */

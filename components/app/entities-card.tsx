@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Plus } from "lucide-react";
@@ -171,7 +172,7 @@ export function EntitiesCard({ clientId, entities }: { clientId: string; entitie
               {open !== e.id && <Button size="sm" variant="outline" onClick={() => setOpen(e.id)}><Plus /> Tambah rekening</Button>}
             </div>
             {e.banks.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Belum ada rekening bank. Buku diisi dari file buku besar atau neraca.</p>
+              <p className="text-sm text-muted-foreground">Belum ada rekening bank. Unggah rekening korannya di <Link href={`/clients/${clientId}/import`} className="text-primary">Unggah</Link> — rekeningnya ditambahkan dari file.</p>
             ) : (
               <ul className="divide-y border text-sm">
                 {e.banks.map((b) => (

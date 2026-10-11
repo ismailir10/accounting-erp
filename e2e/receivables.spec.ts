@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { openManualImport, openClientForm } from "./qa-helpers";
 
 /**
  * Receivables and payables, end to end (synthetic): a fresh client imports August's statement → a sales invoice with PPN → its
@@ -25,7 +26,7 @@ async function newInvoice(page: Page, button: string, v: { party: string; number
 }
 
 test("receivables and payables: invoice, settle from the statement, aging equals the ledger", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Grup Uji Piutang");
   await page.getByLabel("Nama lengkap").fill("PT Piutang Uji");
   await page.getByLabel("Nama singkat").fill("PIU");
@@ -34,6 +35,7 @@ test("receivables and payables: invoice, settle from the statement, aging equals
   await page.waitForURL(/\/clients\/[^/]+\/import/);
   const base = page.url().replace(/\/import.*$/, "");
   await page.goto(`${base}/import`);
+  await openManualImport(page);
   await page.getByTestId("file-input").setInputFiles({ name: "bca-agustus.csv", mimeType: "text/csv", buffer: Buffer.from(CSV) });
   await page.getByRole("button", { name: "Proses mutasi" }).click();
   await expect(page.getByTestId("import-result")).toContainText("Nyambung");

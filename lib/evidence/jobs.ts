@@ -9,8 +9,10 @@ import { downloadDriveFile, DriveError, DRIVE_FOLDER_MIME, DRIVE_SHORTCUT_MIME, 
 
 type Folder = { id: string; path: string; resourceKey?: string; pageToken?: string; depth: number };
 type Cursor = { run: string; queue: Folder[]; visited: string[]; complete: boolean };
-const ignored = /^(\.git|\.next|\.claude|\.opencode|\.vscode|\.idea|\.cache|\.turbo|\.venv|venv|__pycache__|node_modules|src|scripts|dist|build|\.DS_Store|\.gitignore|AGENTS\.md|CLAUDE\.md|package(?:-lock)?\.json)$|\.(?:cjs|mjs|js|jsx|ts|tsx|py|sh)$/i;
-const backup = /(^|[ _.-])(backup[s]?|tmp|checkpoint|intermediate)([ _.-]|$)/i;
+/** System and code files a folder walk skips (Dokumen's inventory, the Unggah Drive listing). */
+export const ignored = /^(\.git|\.next|\.claude|\.opencode|\.vscode|\.idea|\.cache|\.turbo|\.venv|venv|__pycache__|node_modules|src|scripts|dist|build|\.DS_Store|\.gitignore|AGENTS\.md|CLAUDE\.md|package(?:-lock)?\.json)$|\.(?:cjs|mjs|js|jsx|ts|tsx|py|sh)$/i;
+/** Backup / temporary copies: Dokumen excludes them by default, the Unggah Drive listing skips them. */
+export const backup = /(^|[ _.-])(backup[s]?|tmp|checkpoint|intermediate)([ _.-]|$)/i;
 const fingerprintOf = (file: DriveFile) => file.version ?? file.md5Checksum ?? file.modifiedTime ?? "";
 const OBSOLETE = "Otomatis: konflik tidak lagi melibatkan versi sumber aktif.";
 const MAX_CONFLICT_COMPARISONS = 10_000;

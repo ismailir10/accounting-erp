@@ -259,7 +259,7 @@ async function mappableAccounts(db: Db | Tx, clientId: string): Promise<ClientAc
 
 /**
  * Fill `suggested*` on every unmapped source account of the client: deterministic first, then AI for the rest.
- * AI runs outside any transaction, one request per ≤40 accounts, capped by AI_MAX_CALLS_PER_IMPORT and the monthly budget.
+ * AI runs outside any transaction, one request per ≤15 accounts (AI_BATCH_SIZE), capped by AI_MAX_CALLS_PER_RUN and the monthly budget.
  */
 export async function suggestMappings(db: Db, args: { firmId: string; clientId: string; provider: AiProvider | null; useAi: boolean }) {
   const client = await db.client.findUniqueOrThrow({ where: { id: args.clientId, firmId: args.firmId } });
@@ -312,7 +312,7 @@ export async function suggestMappings(db: Db, args: { firmId: string; clientId: 
     if (queue.length && !args.provider) note = "AI tidak aktif: isi kunci di Pengaturan, atau petakan manual.";
     else if (queue.length) {
       const cfg = aiConfig();
-      for (let i = 0; !note && i < queue.length && calls < cfg.maxCallsPerImport; i += AI_BATCH_SIZE) {
+      for (let i = 0; !note && i < queue.length && calls < cfg.maxCallsPerRun; i += AI_BATCH_SIZE) {
         const batch = queue.slice(i, i + AI_BATCH_SIZE);
         const items: MapItem[] = batch.map((s, j) => ({ key: `a${j}`, code: s.code, name: s.name, typeHint: s.typeHint ?? inferType(s.code, s.name) }));
         try {

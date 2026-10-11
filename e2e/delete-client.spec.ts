@@ -1,13 +1,14 @@
 import { expect, test } from "@playwright/test";
+import { openClientForm } from "./qa-helpers";
 
 /** An admin removes a client entered by mistake: the typed name is the confirmation (staging E2E 2026-09-29, L11). */
 test("Hapus klien: typed name, then the client and its books are gone", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Klien Salah Ketik");
   await page.getByLabel("Nama lengkap").fill("PT Salah Ketik");
   await page.getByRole("button", { name: "Hapus rekening" }).click();
   await page.getByRole("button", { name: "Simpan klien" }).click();
-  await expect(page.getByRole("heading", { name: "Impor Buku Besar" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Unggah", exact: true })).toBeVisible();
   const base = new URL(page.url()).pathname.match(/\/clients\/[^/]+/)![0];
 
   await page.goto(`${base}/settings`);

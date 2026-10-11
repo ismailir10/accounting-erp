@@ -4,8 +4,17 @@ import { MockProvider } from "@/lib/ai/provider";
 import { importStatement } from "@/lib/import/pipeline";
 import { postJournal } from "@/lib/ledger/post";
 import { tradeBacking, UNBACKED_CONFIDENCE } from "@/lib/ai/unbacked";
-import { suggestAgainWithAi } from "@/lib/ai/retry";
+import { simpleGuessRows, suggestForRows } from "@/lib/ai/retry";
+import type { AiProvider } from "@/lib/ai/provider";
 import { dateOnly } from "@/lib/format";
+
+/** Review's old synchronous *Minta saran AI*, kept here to test the shared line update (the app now uses the background run). */
+async function suggestAgainWithAi(_db: typeof db, args: { clientId: string; entityIds: string[]; through: Date; provider: AiProvider | null }) {
+  const rows = await simpleGuessRows(_db, args);
+  if (!rows.length) return { rows: 0, updated: 0, calls: 0, cacheHits: 0, note: undefined as string | undefined };
+  const r = await suggestForRows(_db, { clientId: args.clientId, rows, provider: args.provider });
+  return { rows: rows.length, updated: r.updated, calls: r.calls, cacheHits: r.cacheHits, note: r.notes[0] };
+}
 
 const accountId = async (clientId: string, code: string) => (await db.account.findUniqueOrThrow({ where: { clientId_code: { clientId, code } } })).id;
 const post = async (entityId: string, clientId: string, dr: string, cr: string, amount: bigint, date = dateOnly(2026, 7, 31)) =>

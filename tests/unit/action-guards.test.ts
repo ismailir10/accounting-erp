@@ -19,6 +19,7 @@ const PUBLIC_ACTIONS: Record<string, string> = {
 const OTHER_GUARD: Record<string, string> = {
   "app/auth/callback/confirm/route.ts": "public email authentication before membership exists; same-origin POST, allowlisted token type and Auth verification (email-templates.test.ts, auth-links.spec.ts)",
   "app/kirim/[token]/upload/route.ts": "token-only client upload; lib/upload-links resolveUploadLink refuses a link of an organisation that is not ACTIVE",
+  "app/api/ai-run/route.ts": "server-to-server continuation of a background AI run; a short-lived HMAC token (lib/ai/run-token.ts) names one existing RUNNING run, and lib/ai/background continueRun refuses a run someone is working on or of an organisation that is not ACTIVE",
 };
 const GUARDS = /\b(requireCapability|requirePlatformAdmin)\(/;
 
@@ -61,8 +62,9 @@ describe("every server action reaches requireCapability", () => {
   const delegates = {
     evidenceActions: guarded(readFileSync(join(ROOT, "evidence-actions.ts"), "utf8")),
     googleActions: guarded(readFileSync(join(ROOT, "google-actions.ts"), "utf8")),
+    inboxActions: guarded(readFileSync(join(ROOT, "inbox-actions.ts"), "utf8")),
   };
-  it("finds the server-action modules", () => expect(serverModules.map(rel)).toEqual(expect.arrayContaining(["app/actions.ts", "app/evidence-actions.ts", "app/settings-actions.ts", "app/google-actions.ts", "app/workspace-actions.ts"])));
+  it("finds the server-action modules", () => expect(serverModules.map(rel)).toEqual(expect.arrayContaining(["app/actions.ts", "app/evidence-actions.ts", "app/settings-actions.ts", "app/google-actions.ts", "app/inbox-actions.ts", "app/workspace-actions.ts"])));
   for (const path of serverModules) {
     const name = rel(path);
     if (PUBLIC_ACTIONS[name]) continue;
