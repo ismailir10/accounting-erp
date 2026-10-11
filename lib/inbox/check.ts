@@ -2,6 +2,8 @@ import type { Db } from "@/lib/db";
 import type { UploadItem, UploadKind, UploadStatus } from "@/lib/generated/prisma/client";
 import { hash, json } from "@/lib/evidence/store";
 import { postableTables } from "@/lib/evidence/extract";
+import { readSheets } from "@/lib/ledger-import/read";
+import { companyFromTitleRows } from "@/lib/ledger-import/title";
 import { parseStatementSections } from "@/lib/import/parsers/index";
 import { PdfPasswordError } from "@/lib/import/parsers/pdf";
 import { ScanError, SourceAmountError, SourceCurrencyError, SourceDateError, StatementRepairError, UnreadableFileError, YearNeededError, type ParsedStatement } from "@/lib/import/types";
@@ -28,7 +30,15 @@ export type BankSection = {
   bankAccountId?: string;
 };
 /** One table of a ledger / Neraca file the ledger import would read. */
-export type LedgerSection = { sheet: string; mode: "LEDGER" | "NERACA"; rows: number; periodStart: string | null; periodEnd: string | null };
+export type LedgerSection = {
+  sheet: string;
+  mode: "LEDGER" | "NERACA";
+  rows: number;
+  periodStart: string | null;
+  periodEnd: string | null;
+  /** The distinct values of the ledger's entity column ("SKP", "CSP"): each is a company of the client, matched to its short name. */
+  entities?: string[];
+};
 
 /** What the Unggah page shows for one file: no bytes, no password. */
 export type InboxItem = {
@@ -91,7 +101,7 @@ function bankSection(st: ParsedStatement): BankSection {
 async function ledgerSections(name: string, data: Buffer): Promise<LedgerSection[]> {
   if (sniffFile(data) === "PDF") return [];
   const tables = await postableTables(name, data);
-  return [...tables].map(([sheet, t]) => ({ sheet, mode: t.mode, rows: t.rows, periodStart: t.periodStart, periodEnd: t.periodEnd }));
+  return [...tables].map(([sheet, t]) => ({ sheet, mode: t.mode, rows: t.rows, periodStart: t.periodStart, periodEnd: t.periodEnd, ...(t.entities.length ? { entities: t.entities } : {}) }));
 }
 
 const span = (starts: (string | null)[], ends: (string | null)[]) => {
@@ -202,7 +212,23 @@ export async function previewFile(db: Db, input: { firmId: string; name: string;
     if (!(e instanceof NeedsPasswordError)) throw e;
     result = locked(input.data, e);
   }
-  return { fileName, kind: result.kind, status: result.status, message: result.message, sections: result.sections };
+  const labelled = result.kind === "LEDGER" && (result.sections as LedgerSection[]).some((s) => s.entities?.length);
+  const companyName = result.kind === "BANK" || labelled ? null : await titleCompany(fileName, input.data);
+  return { fileName, kind: result.kind, status: result.status, message: result.message, sections: result.sections, ...(companyName ? { companyName } : {}) };
+}
+
+/** The company a spreadsheet's title rows name ("SANRAYA ADI NATTAYA / Balance Sheet"), for the card; null for anything else. */
+async function titleCompany(name: string, data: Buffer): Promise<string | null> {
+  if (sniffFile(data) === "PDF") return null;
+  try {
+    for (const sheet of (await readSheets(name, data)).slice(0, 3)) {
+      const found = companyFromTitleRows(sheet.rows);
+      if (found) return found;
+    }
+  } catch {
+    /* Not a readable spreadsheet: the outcome already says what it is. */
+  }
+  return null;
 }
 
 type CheckInput = { firmId: string; clientId: string; batchId: string; name: string; data: Buffer; password?: string; actorId?: string | null };

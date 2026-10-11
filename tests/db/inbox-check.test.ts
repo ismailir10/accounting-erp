@@ -123,7 +123,7 @@ describe("Unggah: check a dropped file", () => {
     ]);
     const item = await g.check("gl.xlsx", plain);
     expect(item).toMatchObject({ kind: "LEDGER", status: "CHECKED", periodStart: "2026-01-31", periodEnd: "2026-01-31" });
-    expect(item.sections).toEqual([{ sheet: "GL", mode: "LEDGER", rows: 2, periodStart: "2026-01-31", periodEnd: "2026-01-31" } satisfies LedgerSection]);
+    expect(item.sections).toEqual([{ sheet: "GL", mode: "LEDGER", rows: 2, periodStart: "2026-01-31", periodEnd: "2026-01-31", entities: ["PT Uji"] } satisfies LedgerSection]);
 
     const withBalance = await xlsx([
       ["Tanggal", "No. Bukti", "Akun", "Keterangan", "Debit", "Kredit", "Saldo"],

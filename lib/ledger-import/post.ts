@@ -405,6 +405,18 @@ export async function acceptCheck(db: Db, clientId: string, checkId: string) {
 }
 
 /** Source accounts this draft needs, with their mapping state (for the Pemetaan akun page). */
+/** Each source account's balance in the staged plan (`entityId|code` → debit-positive minor units), for the mapping table's hints. */
+export async function importBalances(db: Db, importId: string): Promise<Map<string, bigint>> {
+  const imp = await db.ledgerImport.findUniqueOrThrow({ where: { id: importId } });
+  const saved = imp.data as unknown as SavedPlan;
+  const balances = new Map<string, bigint>();
+  for (const e of saved.entries) {
+    const entityId = saved.entities[e.entityKey];
+    for (const l of e.lines) balances.set(`${entityId}|${l.code}`, (balances.get(`${entityId}|${l.code}`) ?? 0n) + BigInt(l.amount));
+  }
+  return balances;
+}
+
 export async function importSourceAccounts(db: Db, importId: string) {
   const imp = await db.ledgerImport.findUniqueOrThrow({ where: { id: importId } });
   const saved = imp.data as unknown as SavedPlan;

@@ -7,7 +7,7 @@ import { loadClientPage } from "@/lib/client-page";
 import type { SearchParams } from "@/lib/scope";
 import { formatDate } from "@/lib/format";
 import { FS_LINES, type FsLine } from "@/lib/coa/template";
-import { ACCEPTABLE_CHECKS, importSourceAccounts } from "@/lib/ledger-import/post";
+import { ACCEPTABLE_CHECKS, importBalances, importSourceAccounts } from "@/lib/ledger-import/post";
 import { NEW_ACCOUNT_FS_LINES } from "@/lib/ledger-import/mapping";
 import { setupProgress } from "@/lib/setup-progress";
 import { resolveAiConfig } from "@/lib/settings/ai";
@@ -30,8 +30,10 @@ export default async function LedgerImportPage({ params, searchParams }: { param
   const { client, base } = await loadClientPage(params, searchParams);
   const imp = await prisma.ledgerImport.findFirst({ where: { id: importId, clientId: client.id }, include: { checks: { orderBy: { id: "asc" } }, _count: { select: { entries: true } } } });
   if (!imp) notFound();
-  const [sources, accounts, ai] = await Promise.all([
+  const [sources, balances, accounts, ai] = await Promise.all([
     importSourceAccounts(prisma, imp.id),
+    // A Neraca's balances are balances; a ledger's net movement is not (cash paid out in a month is no "saldo kredit"), so only Neraca files get the hint.
+    imp.mode === "NERACA" ? importBalances(prisma, imp.id) : Promise.resolve(new Map<string, bigint>()),
     prisma.account.findMany({ where: { clientId: client.id, isBank: false, isSuspense: false, isClearing: false }, orderBy: { code: "asc" } }),
     resolveAiConfig(prisma),
   ]);
@@ -43,6 +45,8 @@ export default async function LedgerImportPage({ params, searchParams }: { param
   const openBlock = checks.filter((c) => c.severity === "BLOCK" && !c.accepted);
   const fixable = openBlock.filter((c) => ACCEPTABLE_CHECKS.includes(c.code));
   const hardBlock = openBlock.filter((c) => !ACCEPTABLE_CHECKS.includes(c.code));
+  // Entities the file names that the client doesn't have (the label is quoted in the check's message): the way on is adding them.
+  const unknownLabels = hardBlock.flatMap((c) => (c.code === "UNKNOWN_ENTITY" ? [/^Entitas "(.+?)" belum/.exec(c.message)?.[1] ?? []].flat() : []));
   const reviews = checks.filter((c) => c.severity === "REVIEW");
   const unmapped = sources.filter((s) => !s.accountId);
   const entities = [...new Set(sources.map((s) => s.entityId))].map((id) => client.entities.find((e) => e.id === id)!).filter(Boolean);
@@ -73,6 +77,10 @@ export default async function LedgerImportPage({ params, searchParams }: { param
             </span>
           ))}
           .
+        </NextStep>
+      ) : hardBlock.length && unknownLabels.length === hardBlock.length ? (
+        <NextStep href={`${base}/settings`} cta="Tambah perusahaan">
+          Tambahkan {unknownLabels.join(", ")} sebagai perusahaan klien, dengan nama singkat yang sama seperti di file, lalu unggah ulang.
         </NextStep>
       ) : hardBlock.length ? (
         <NextStep>Perbaiki {hardBlock.length} masalah di file lalu unggah ulang. Masalah ini tidak bisa diterima begitu saja.</NextStep>
@@ -127,7 +135,7 @@ export default async function LedgerImportPage({ params, searchParams }: { param
             locked={posted}
             aiActive={Boolean(ai.apiKey && ai.model)}
             fsLines={NEW_ACCOUNT_FS_LINES}
-            options={accounts.map((a) => ({ code: a.code, name: a.name, group: `${TYPE_LABEL[a.type]} · ${FS_LINES[a.fsLine as FsLine]?.label ?? a.fsLine}` }))}
+            options={accounts.map((a) => ({ code: a.code, name: a.name, group: `${TYPE_LABEL[a.type]} · ${FS_LINES[a.fsLine as FsLine]?.label ?? a.fsLine}`, normal: a.normalBalance }))}
             rows={sources.map((s) => ({
               id: s.id,
               entity: s.entity.shortName,
@@ -141,6 +149,8 @@ export default async function LedgerImportPage({ params, searchParams }: { param
               mappedCode: s.account?.code ?? null,
               mappedBy: s.mappedBy,
               typeHint: s.typeHint,
+              balance: balances.get(`${s.entityId}|${s.code}`)?.toString() ?? null,
+              currency: s.entity.functionalCurrency,
             }))}
           />
         </CardContent>

@@ -106,6 +106,85 @@ describe("Unggah: book the drop file by file", () => {
     expect(await g.next()).toEqual({ item: null, remaining: 0 });
   });
 
+  it("a workbook with several ledger sheets stages one draft per sheet instead of failing (Chickin, 2026-10-11)", async () => {
+    const g = await setup();
+    const wb = new ExcelJS.Workbook();
+    for (const [name, entity, code] of [["10_HC_GL_MASTER", "PT Uji", "10000"], ["20_OPCO_GL_MASTER", "PT Uji", "10001"]] as const) {
+      const ws = wb.addWorksheet(name);
+      for (const r of [
+        ["Entity", "Entry Date", "Account Code", "Account Name", "Currency", "Debit", "Credit", "Notes"],
+        [entity, d(2026, 1, 31), code, "Kas", "IDR", 1000, 0, ""],
+        [entity, d(2026, 1, 31), "31001", "Modal Saham", "IDR", 0, 1000, ""],
+      ])
+        ws.addRow(r);
+    }
+    await g.check("chickin.xlsx", Buffer.from(await wb.xlsx.writeBuffer()));
+    const r = await g.next();
+    expect(r.item).toMatchObject({ status: "DRAFT", message: "2 draf buku besar siap dipetakan: 10_HC_GL_MASTER, 20_OPCO_GL_MASTER." });
+    const drafts = await db.ledgerImport.findMany({ where: { clientId: g.client.id, status: "DRAFT" }, orderBy: { createdAt: "asc" } });
+    expect(drafts).toHaveLength(2);
+    expect(r.item!.ledgerImportId).toBe(drafts[0].id);
+  });
+
+  it("a multi-sheet file is booked only when every sheet is, and follows the sheets still to book (review of #151)", async () => {
+    const g = await setup();
+    const wb = new ExcelJS.Workbook();
+    for (const [name, code] of [["10_HC_GL_MASTER", "10000"], ["20_OPCO_GL_MASTER", "10001"]] as const) {
+      const ws = wb.addWorksheet(name);
+      for (const r of [
+        ["Entity", "Entry Date", "Account Code", "Account Name", "Currency", "Debit", "Credit", "Notes"],
+        ["PT Uji", d(2026, 1, 31), code, "Kas", "IDR", 1000, 0, ""],
+        ["PT Uji", d(2026, 1, 31), "31001", "Modal Saham", "IDR", 0, 1000, ""],
+      ])
+        ws.addRow(r);
+    }
+    await g.check("chickin.xlsx", Buffer.from(await wb.xlsx.writeBuffer()));
+    await g.next();
+    const drafts = await db.ledgerImport.findMany({ where: { clientId: g.client.id }, orderBy: { createdAt: "asc" } });
+    expect(drafts.map((x) => x.sheetName)).toEqual(["10_HC_GL_MASTER", "20_OPCO_GL_MASTER"]);
+    const line = async () => (await batchItems(db, g.scope)).items[0];
+
+    // The first sheet is posted: the file is not "Buku besar dibukukan" while the second is still a draft.
+    await db.ledgerImport.update({ where: { id: drafts[0].id }, data: { status: "POSTED" } });
+    expect(await line()).toMatchObject({ status: "DRAFT", ledgerImportId: drafts[1].id, message: "1 draf buku besar belum dicatat: 20_OPCO_GL_MASTER." });
+    // The first sheet's draft is discarded instead: the line follows the survivor (and handing the file over again adds no draft).
+    await db.ledgerImport.update({ where: { id: drafts[0].id }, data: { status: "DRAFT" } });
+    await db.ledgerImport.delete({ where: { id: drafts[0].id } });
+    expect(await line()).toMatchObject({ status: "DRAFT", ledgerImportId: drafts[1].id });
+    // Every sheet posted: booked.
+    await db.ledgerImport.update({ where: { id: drafts[1].id }, data: { status: "POSTED" } });
+    expect(await line()).toMatchObject({ status: "BOOKED", message: "Buku besar dibukukan." });
+  });
+
+  it("a Neraca sheet beside ledger sheets waits for them to be booked; the ledger sheets stage", async () => {
+    const g = await setup();
+    const wb = new ExcelJS.Workbook();
+    const gl = wb.addWorksheet("20_OPCO_GL_MASTER");
+    for (const r of [
+      ["Entity", "Entry Date", "Account Code", "Account Name", "Currency", "Debit", "Credit", "Notes"],
+      ["PT Uji", d(2026, 1, 31), "10000", "Kas", "IDR", 1000, 0, ""],
+      ["PT Uji", d(2026, 1, 31), "31001", "Modal Saham", "IDR", 0, 1000, ""],
+    ])
+      gl.addRow(r);
+    const bs = wb.addWorksheet("04_HC_2022_FOUNDATION");
+    for (const r of [
+      ["PT CONTOH"], ["Balance Sheet"], ["31/05/2026"], ["(in IDR)"], ["Date", null, "31/05/2026"], ["Assets"], ["Current Assets"], ["1-1000", "Bank", 900],
+      ["Total Current Assets", null, 900], ["Other Assets"], ["1-1810", "Deposit", 100], ["Total Assets", null, 1000], ["Liability & Equity"], ["Current Liability"],
+      ["2-2000", "Accounts Payable", 200], ["2-2100", "Loan from Bank", 100], ["Total Current Liability", null, 300], ["Long-term Liability"],
+      ["2-2744", "Others Payables-Related Parties", 400], ["2-2783", "Employee Benefits Liabilities", 50], ["Total Long-term Liability", null, 450], ["Equity"],
+      ["3-3000", "Share Capital", 250], ["Total Liability & Equity", null, 1000],
+    ])
+      bs.addRow(r);
+    await g.check("chickin.xlsx", Buffer.from(await wb.xlsx.writeBuffer()));
+    const r = await g.next();
+    expect(r.item?.status).toBe("DRAFT");
+    expect(r.item?.message).toMatch(/1 draf buku besar siap dipetakan: 20_OPCO_GL_MASTER\./);
+    // The Neraca waits for the ledger sheet of its file to be booked (its opening bridge is checked against the books when staged).
+    expect(r.item?.message).toMatch(/04_HC_2022_FOUNDATION: neraca dibukukan sesudah buku besarnya/);
+    expect(r.item?.message).not.toMatch(/perbaiki filenya/);
+    expect(await db.ledgerImport.count({ where: { clientId: g.client.id } })).toBe(1);
+  });
+
   it("books every section of a combined file that has a rekening, the new ones after the card", async () => {
     const g = await setup();
     await addBankAccount(db, g.firm.id, g.client.id, g.pt.entity.id, { bank: "SMBC", number: "90022152088", label: "" });

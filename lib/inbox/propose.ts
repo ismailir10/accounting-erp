@@ -10,7 +10,15 @@ import { accountDisplay, monthSpan } from "./view";
  */
 
 /** One dropped file as read without a client (lib/inbox/preview.ts): the same outcome an Unggah line has, nothing stored. */
-export type PreviewFile = { fileName: string; kind: UploadKind; status: UploadStatus; message: string | null; sections: BankSection[] | LedgerSection[] };
+export type PreviewFile = {
+  fileName: string;
+  kind: UploadKind;
+  status: UploadStatus;
+  message: string | null;
+  sections: BankSection[] | LedgerSection[];
+  /** The company a spreadsheet's title rows name (a Neraca, laba rugi or arus kas without an entity column). */
+  companyName?: string | null;
+};
 
 export type ProposedKind = "PT" | "CV" | "PERORANGAN";
 export type ProposedAccount = {
@@ -25,6 +33,8 @@ export type ProposedAccount = {
   isOverdraft: boolean;
   /** "Jun–Jul 2026". */
   months: string;
+  /** Months between its first and last statement that no file covers ("Jul 2026", "Jun–Jul 2026"): the saldo won't connect there. */
+  gaps: string[];
   fileNames: string[];
 };
 export type ProposedEntity = {
@@ -34,6 +44,8 @@ export type ProposedEntity = {
   kind: ProposedKind;
   /** No holder named it: its name follows the client name the user types. */
   fromClientName?: boolean;
+  /** A ledger's entity label is its short name (the rows are matched by it), kept when the name is edited. */
+  labelled?: boolean;
   banks: ProposedAccount[];
 };
 export type ClientProposal = {
@@ -80,6 +92,31 @@ export function shortNameOf(name: string, kind: ProposedKind): string {
   return w.join(" ");
 }
 
+/** Months strictly between the first and last statement that none covers, as runs ("Jul 2026", "Jun–Jul 2026"). Dates are `YYYY-MM-DD`. */
+function missingMonths(periods: (readonly [string, string])[]): string[] {
+  const index = (d: string) => (/^\d{4}-\d{2}/.test(d) ? Number(d.slice(0, 4)) * 12 + Number(d.slice(5, 7)) - 1 : null);
+  const covered = new Set<number>();
+  for (const [start, end] of periods) {
+    const a = index(start) ?? index(end);
+    const b = index(end) ?? a;
+    if (a === null || b === null) continue;
+    for (let m = a; m <= b; m++) covered.add(m);
+  }
+  if (covered.size < 2) return [];
+  const all = [...covered];
+  const first = Math.min(...all);
+  const last = Math.max(...all);
+  const runs: [number, number][] = [];
+  for (let m = first + 1; m < last; m++) {
+    if (covered.has(m)) continue;
+    const run = runs.at(-1);
+    if (run && run[1] === m - 1) run[1] = m;
+    else runs.push([m, m]);
+  }
+  const iso = (m: number) => `${Math.floor(m / 12)}-${String((m % 12) + 1).padStart(2, "0")}-01`;
+  return runs.map(([a, b]) => monthSpan(iso(a), iso(b)));
+}
+
 type Group = { key: string; holders: string[]; company: boolean; banks: ProposedAccount[] };
 
 /** The new client the files describe (Decision 1): holders grouped into entities by name, every Rupiah rekening under its holder. */
@@ -91,6 +128,9 @@ export function proposeClient(files: PreviewFile[]): ClientProposal {
   const documents: string[] = [];
   let numberless = false;
   let ledger = false;
+  // Companies the files name outside any bank statement: a ledger's entity labels ("SKP"), or a report's own title ("PT FKM").
+  const labels = new Map<string, string>();
+  const titled = new Map<string, string>();
 
   for (const f of files) {
     if (f.status === "NEEDS_PASSWORD") {
@@ -100,8 +140,13 @@ export function proposeClient(files: PreviewFile[]): ClientProposal {
     if (f.kind === "LEDGER") {
       ledger = true;
       documents.push(f.fileName);
-      continue;
+      for (const section of f.sections as LedgerSection[]) for (const label of section.entities ?? []) if (!labels.has(label.toLowerCase())) labels.set(label.toLowerCase(), label);
     }
+    if (f.kind !== "BANK" && f.companyName) {
+      const key = normalName(f.companyName);
+      if (key && !titled.has(key)) titled.set(key, f.companyName);
+    }
+    if (f.kind === "LEDGER") continue;
     if (f.kind !== "BANK") {
       documents.push(f.fileName);
       continue;
@@ -137,7 +182,7 @@ export function proposeClient(files: PreviewFile[]): ClientProposal {
         entry.isOverdraft ||= overdraft;
         if (!entry.fileNames.includes(f.fileName)) entry.fileNames.push(f.fileName);
       } else {
-        accounts.set(key, { key, bank: s.bank as BankCode, number: digits(s.number), display: accountDisplay(s.bank, s.number!), holder: s.holder, isOverdraft: overdraft, months: "", fileNames: [f.fileName] });
+        accounts.set(key, { key, bank: s.bank as BankCode, number: digits(s.number), display: accountDisplay(s.bank, s.number!), holder: s.holder, isOverdraft: overdraft, months: "", gaps: [], fileNames: [f.fileName] });
       }
       const span = spans.get(key) ?? { start: [], end: [] };
       span.start.push(s.periodStart);
@@ -153,6 +198,7 @@ export function proposeClient(files: PreviewFile[]): ClientProposal {
   for (const [key, a] of accounts) {
     const span = spans.get(key)!;
     a.months = monthSpan([...span.start].sort()[0] ?? null, [...span.end].sort().at(-1) ?? null);
+    a.gaps = missingMonths(span.start.map((start, i) => [start, span.end[i]] as const));
   }
 
   // Holders become entities: the same words in any order, legal-form words and punctuation ignored, are one entity.
@@ -178,12 +224,29 @@ export function proposeClient(files: PreviewFile[]): ClientProposal {
     const name = entityName(holder);
     return { key: g.key, name, shortName: shortNameOf(name, kind), kind, banks: g.banks };
   });
+  // A ledger's entity column names the companies exactly (its labels are the short names Unggah matches rows by); without one, the
+  // company a report's title names — unless a bank holder already is that company.
+  if (labels.size) {
+    for (const label of labels.values()) {
+      // A label that is a bank holder's company too (same words, legal form ignored) is that entity: its short name becomes the label.
+      const holder = entities.find((e) => e.key === normalName(label));
+      if (holder) Object.assign(holder, { shortName: label, labelled: true });
+      else entities.push({ key: `label:${label.toLowerCase()}`, name: label, shortName: label, kind: "PT", labelled: true, banks: [] });
+    }
+  } else {
+    for (const [key, title] of titled) {
+      if (groups.some((g) => g.key === key)) continue;
+      const name = entityName(title);
+      const kind = isCompanyName(title) ? companyKind(title) : "PT";
+      entities.push({ key: `title:${key}`, name, shortName: shortNameOf(name, kind), kind, banks: [] });
+    }
+  }
   const firstCompany = entities.find((e) => e.kind !== "PERORANGAN");
-  const firstNamed = firstCompany ?? entities[0];
+  const firstNamed = entities.find((e) => e.kind !== "PERORANGAN" && !e.key.startsWith("label:")) ?? entities.find((e) => !e.key.startsWith("label:"));
   const clientName = firstNamed?.name ?? "";
 
   // A rekening without a holder belongs to the client's company: the first one found, else one named after the client.
-  const readable = accounts.size > 0 || ledger || numberless || valas.size > 0;
+  const readable = accounts.size > 0 || ledger || numberless || valas.size > 0 || titled.size > 0;
   if (holderless.length && firstCompany) firstCompany.banks.push(...holderless);
   else if (holderless.length || (readable && !entities.length)) entities.push({ key: CLIENT_KEY, name: "", shortName: "", kind: "PT", fromClientName: true, banks: holderless });
 
