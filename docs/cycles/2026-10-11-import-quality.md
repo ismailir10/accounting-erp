@@ -43,6 +43,27 @@ is a load-bearing transient account (accounting-rules 9, 15a, 22); mapped lines 
 - [ ] T8 Re-walk the five production clients after merge; record.
 
 ## Implementation
+- **T1** `dataMonths` (lib/periods.ts) = activity months, else (nothing booked since) any journal month. The firm-level work period
+  (`resolveWorkspaceScope`) is a separate path and untouched, so the investor walk keeps "Agustus 2026".
+- **T2** `lib/ledger-import/title.ts` `companyFromTitleRows(rows)`: a legal-form line among the first 8 rows' title lines, else the first
+  line when a report title follows it; a title merged across columns repeats in each cell, so distinct texts are counted. `previewFile`
+  adds `PreviewFile.companyName` for spreadsheets that are not bank statements (and not ledgers with entity labels);
+  `LedgerSection.entities` carries the entity column's distinct labels (already read by `postableTables`). `proposeClient`: one company
+  per label (key `label:<l>`, short name = the label, which `entityForLabel` matches exactly at staging), else one per distinct title
+  company (key `title:<normalName>`), skipped when a bank holder is already that company. The card keeps a label's short name when its
+  name is edited.
+- **T3** `stageLedger` (lib/inbox/process.ts): when `stageImport` answers CHOOSE_SHEET, every candidate sheet is staged as its own draft
+  (the file hash includes the sheet name, so none can double a posted sheet); the item is DRAFT on the first, its message lists the
+  sheets and the refused ones with why. A Neraca sheet in a multi-company client says it needs one company (the inbox can't choose).
+  No schema change: the other drafts show in *Buku besar & neraca yang diimpor*.
+- **T4** UNKNOWN_ENTITY message names the short name to add; the ledger page's next step links to Pengaturan klien when every open
+  block is that; Unggah's setup banner says files are being booked while any line is CHECKED/PROCESSING.
+- **T5** `ProposedAccount.gaps` from the statements' period dates (`missingMonths`), shown under the rekening in `text-review`.
+- **T7** `importBalances` sums the staged plan's lines per `entityId|code`; the mapping table compares that to the chosen account's
+  `normalBalance` (`againstNature`, lib/ledger-import/nature.ts) and hints; not shown when the existing type-side hint already is.
+- Decided not to do: **1999 as a mapping target** (accounting-rules 9, 15a, 22: a permanent close blocker with no correction
+  proposal); **a guard on re-pointing a posted source account** (deliberate, recorded in Riwayat per ADR 0013); a bulk "terima semua
+  selisih" (a draft with several unbalanced journals is rare; each says its amount); the AR/AP suggestion (own cycle, cloud session).
 
 ## Verification
 
