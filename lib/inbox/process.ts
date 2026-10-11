@@ -115,23 +115,27 @@ async function stageLedger(db: Db, row: UploadItem, data: Buffer, input: Process
     evidenceVersionId: row.evidenceVersionId ?? undefined,
     entityId: entities.length === 1 ? entities[0].id : undefined,
   };
-  // The company the file's title rows name ("SANRAYA ADI NATTAYA / Balance Sheet"), read once and only when a Neraca asks for one.
-  let titled: Promise<string | undefined> | undefined;
-  const titleEntity = () =>
-    (titled ??= readSheets(row.fileName, data)
-      .then((sheets) => {
-        for (const sheet of sheets.slice(0, 3)) {
-          const found = matchEntity(entities, companyFromTitleRows(sheet.rows));
-          if (found) return found.id;
-        }
-        return undefined;
-      })
-      .catch(() => undefined));
+  // The company a sheet's title rows name ("SANRAYA ADI NATTAYA / Balance Sheet"). The workbook is read once, and only when a Neraca
+  // asks for a company; each sheet answers for itself, so two Neraca sheets titled for different companies go to their own. Without a
+  // sheet (a file with one table) the first sheets are tried.
+  let read: ReturnType<typeof readSheets> | undefined;
+  const titleEntity = async (sheet?: string) => {
+    try {
+      const sheets = await (read ??= readSheets(row.fileName, data));
+      for (const s of sheet ? sheets.filter((x) => x.name === sheet) : sheets.slice(0, 3)) {
+        const found = matchEntity(entities, companyFromTitleRows(s.rows));
+        if (found) return found.id;
+      }
+    } catch {
+      /* An unreadable workbook already failed staging with its own message. */
+    }
+    return undefined;
+  };
   const stage = async (sheet?: string) => {
     try {
       return await stageImport(db, { ...base, sheet });
     } catch (e) {
-      const id = entities.length > 1 && !base.entityId && NEEDS_ENTITY.test(failureMessage(e)) ? await titleEntity() : undefined;
+      const id = entities.length > 1 && !base.entityId && NEEDS_ENTITY.test(failureMessage(e)) ? await titleEntity(sheet) : undefined;
       if (!id) throw e;
       return stageImport(db, { ...base, sheet, entityId: id });
     }

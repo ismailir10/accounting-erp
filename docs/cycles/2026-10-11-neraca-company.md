@@ -19,7 +19,8 @@ A Neraca is usually the first file an accountant has, and its title already name
 ## Implementation
 - `stageLedger` (lib/inbox/process.ts): the entities now carry `name`/`shortName`; `stage(sheet?)` calls `stageImport` and, only on the
   "Pilih entitas untuk neraca" refusal for a client with several companies, reads the file's title rows once and retries with the matched
-  entity. Works for a single-sheet file and for each sheet of a multi-sheet one.
+  entity. Works for a single-sheet file and for each sheet of a multi-sheet one; each sheet answers from its own title (review of #152: a
+  workbook-wide cache sent two Neraca sheets titled for different companies to the first).
 
 ## Verification
 On the branch rebased onto #151 (`ccabdd6`): `npm run lint` clean, typecheck clean, the inbox, ledger-title and preview tests (14 files, 92 tests) pass. The full gate runs in CI.

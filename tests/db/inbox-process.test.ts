@@ -126,6 +126,32 @@ describe("Unggah: book the drop file by file", () => {
     expect(r.item!.ledgerImportId).toBe(drafts[0].id);
   });
 
+  it("each Neraca sheet of a workbook goes to the company its own title names (review of #152)", async () => {
+    const g = await setup();
+    const rows = (company: string) => [
+      [company], ["Balance Sheet"], ["31/05/2026"], ["(in IDR)"], ["Date", null, "31/05/2026"], ["Assets"], ["Current Assets"], ["1-1000", "Bank", 900],
+      ["Total Current Assets", null, 900], ["Other Assets"], ["1-1810", "Deposit", 100], ["Total Assets", null, 1000], ["Liability & Equity"], ["Current Liability"],
+      ["2-2000", "Accounts Payable", 200], ["2-2100", "Loan from Bank", 100], ["Total Current Liability", null, 300], ["Long-term Liability"],
+      ["2-2744", "Others Payables-Related Parties", 400], ["2-2783", "Employee Benefits Liabilities", 50], ["Total Long-term Liability", null, 450], ["Equity"],
+      ["3-3000", "Share Capital", 250], ["Total Liability & Equity", null, 1000],
+    ];
+    const wb = new ExcelJS.Workbook();
+    // makeGroup: PT Uji Sejahtera and Andi Wijaya. The first sheet names the owner, the second the PT: neither may take the other's company.
+    for (const [sheet, company] of [["NERACA_ANDI", "ANDI WIJAYA"], ["NERACA_PT", "PT UJI SEJAHTERA"]] as const) {
+      const ws = wb.addWorksheet(sheet);
+      for (const r of rows(company)) ws.addRow(r);
+    }
+    await g.check("dua-neraca.xlsx", Buffer.from(await wb.xlsx.writeBuffer()));
+    const r = await g.next();
+    expect(r.item).toMatchObject({ status: "DRAFT", message: "2 draf buku besar siap dipetakan: NERACA_ANDI, NERACA_PT." });
+    const byEntity = async (sheetName: string) => {
+      const imp = await db.ledgerImport.findFirstOrThrow({ where: { clientId: g.client.id, sheetName } });
+      return (imp.data as { entities: Record<string, string> }).entities[""];
+    };
+    expect(await byEntity("NERACA_ANDI")).toBe(g.owner.entity.id);
+    expect(await byEntity("NERACA_PT")).toBe(g.pt.entity.id);
+  });
+
   it("a multi-sheet file is booked only when every sheet is, and follows the sheets still to book (review of #151)", async () => {
     const g = await setup();
     const wb = new ExcelJS.Workbook();
