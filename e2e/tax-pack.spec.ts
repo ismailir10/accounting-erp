@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import ExcelJS from "exceljs";
+import { openClientForm } from "./qa-helpers";
 
 /**
  * Tax pack, end to end (synthetic): a company's year to September — revenue from an invoice, salaries by journal — then a fiscal
@@ -14,7 +15,7 @@ async function pickOption(page: Page, label: string, option: string | RegExp) {
 }
 
 test("tax pack: corrections, PPh badan with 31E, credits, current-tax journal", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Grup Uji Pajak");
   await page.getByLabel("Nama lengkap").fill("PT Pajak Uji");
   await page.getByLabel("Nama singkat").fill("PJK");

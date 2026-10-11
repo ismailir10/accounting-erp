@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { workbook, type FixtureCell } from "../tests/xls-fixture";
-import { openManualImport } from "./qa-helpers";
+import { openManualImport, openClientForm } from "./qa-helpers";
 
 /**
  * An accountant's working copy of a statement as a legacy .xls (synthetic): one sheet per month, dd/MM dates without a year,
@@ -18,7 +18,7 @@ const xls = workbook(
 );
 
 test("statement .xls: year question, three months in one import, how the file was read", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Grup Uji Excel Lama");
   await page.getByLabel("Nama lengkap").fill("PT Excel Lama Uji");
   await page.getByLabel("Nama singkat").fill("XLS");

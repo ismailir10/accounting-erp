@@ -66,7 +66,11 @@ describe("Unggah line wording", () => {
   });
 
   it("sums the drop up in one sentence", () => {
-    expect(batchSummary([{ status: "BOOKED" }, { status: "BOOKED" }, { status: "DRAFT" }, { status: "KEPT" }])).toBe("4 file selesai: 2 dibukukan, 1 draf buku besar, 1 disimpan di Dokumen.");
+    const s = (status: InboxItem["status"], message: string | null = null) => ({ status, message });
+    expect(batchSummary([s("BOOKED"), s("BOOKED"), s("DRAFT"), s("KEPT")])).toBe("4 file selesai: 2 dibukukan, 1 draf buku besar, 1 disimpan di Dokumen.");
+    // A file whose every row was already in the books isn't counted as newly booked; a combined file with one new account is.
+    const again = "Sudah dibukukan sebelumnya ke BCA ·3814 · Juni 2026 (31 baris sama, dilewati)";
+    expect(batchSummary([s("BOOKED", again), s("BOOKED", `${again}\nDibukukan ke BCA ·5566 · Juni 2026 · 3 baris`)])).toBe("2 file selesai: 1 dibukukan, 1 sudah dibukukan sebelumnya.");
   });
 });
 

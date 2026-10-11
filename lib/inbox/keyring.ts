@@ -31,11 +31,12 @@ async function stored(db: Db, scope: Scope) {
 /**
  * Opens a file with `tryOpen`: first without a password; when it is a locked PDF, with the offered password(s), then with each
  * stored one. `tryOpen` throws `PdfPasswordError` for a password that doesn't open the file; any other error is the caller's and
- * passes through. `usedOffered`: an offered password opened it (the caller adds it to the keyring).
+ * passes through. `usedOffered`: an offered password opened it (the caller adds it to the keyring). No scope (a client that doesn't
+ * exist yet, *Klien baru* from files): only the offered passwords are tried.
  */
 export async function openWithKeyring<T>(
   db: Db,
-  scope: Scope,
+  scope: Scope | null,
   tryOpen: (password?: string) => Promise<T>,
   opts: { offered?: string | readonly string[] } = {},
 ): Promise<{ result: T; usedKeyring: boolean; usedOffered: boolean }> {
@@ -52,7 +53,7 @@ export async function openWithKeyring<T>(
       if (!(e instanceof PdfPasswordError)) throw e;
     }
   }
-  for (const key of await stored(db, scope)) {
+  for (const key of scope ? await stored(db, scope) : []) {
     if (offered.includes(key.password)) continue;
     try {
       const result = await tryOpen(key.password);

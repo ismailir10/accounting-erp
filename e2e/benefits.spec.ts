@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { CENSUS_CSV, mortalityCsv } from "../tests/benefits-fixture";
+import { openClientForm } from "./qa-helpers";
 
 /**
  * Employee benefits (PSAK 219), end to end (synthetic table and census): upload the firm's mortality table → assumptions → import the census
@@ -7,7 +8,7 @@ import { CENSUS_CSV, mortalityCsv } from "../tests/benefits-fixture";
  * a December journal would move the firm's work period for the specs after this one; the December control is covered by the DB tests.
  */
 test("employee benefits: table, assumptions, census, valuation, journal", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Grup Uji Imbalan");
   await page.getByLabel("Nama lengkap").fill("PT Imbalan Uji");
   await page.getByLabel("Nama singkat").fill("IMB");

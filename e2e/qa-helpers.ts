@@ -5,9 +5,14 @@ let account = 7_000_100_000;
 /** A bank account number no other spec uses. */
 export const nextAccount = () => String(++account);
 
+/** Tambah klien's manual form (*Isi manual*): the page starts from the client's files (cycle 2026-10-10-new-client-from-files). */
+export async function openClientForm(page: Page) {
+  await page.goto("/clients/new?manual=1");
+}
+
 /** Tambah klien with one PT and one bank account; returns the client id (it lands on the import page). */
 export async function addClient(page: Page, v: { name: string; entity?: string; account?: string; npwp?: string }): Promise<string> {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill(v.name);
   await page.getByLabel("Nama lengkap").fill(v.entity ?? `PT ${v.name}`);
   if (v.npwp) await page.getByLabel(/^NPWP/).fill(v.npwp);

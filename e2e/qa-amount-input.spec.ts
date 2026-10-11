@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { addClient, nextAccount } from "./qa-helpers";
+import { addClient, nextAccount, openClientForm } from "./qa-helpers";
 
 /**
  * Typed input found by the end-to-end QA run (docs/qa/bugs): BUG-003 English thousands separators · 010 impossible amounts ·
@@ -56,7 +56,7 @@ test("the journal form refuses Rupiah decimals and negative amounts, and shows t
 });
 
 test("BUG-011: an NPWP of 19 digits is refused; 15 digits without separators are accepted and shown in the standard form", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("QA NPWP Panjang");
   await page.getByLabel("Nama lengkap").fill("PT QA NPWP Panjang");
   await page.getByLabel(/^NPWP/).fill("1234567890123456789");
@@ -72,7 +72,7 @@ test("BUG-011: an NPWP of 19 digits is refused; 15 digits without separators are
 
 test("BUG-005: rates are read by currency pair (0.745, 1.085, 105.234, 16.250) and a cross-rate is stored as typed", async ({ page }) => {
   // A client with a USD foreign entity, so the Kurs page has a form.
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("QA Kurs");
   await page.getByLabel("Nama lengkap").fill("PT QA Kurs");
   await page.getByLabel("Nomor rekening").fill(nextAccount());

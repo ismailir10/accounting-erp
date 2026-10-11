@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { openManualImport } from "./qa-helpers";
+import { openManualImport, openClientForm } from "./qa-helpers";
 
 /**
  * CKPN piutang (PSAK 109), end to end (synthetic): four sales invoices May–Aug 2026, a partial receipt in June and a full one in July →
@@ -30,7 +30,7 @@ async function settle(page: Page, number: string, receipt: string) {
 }
 
 test("CKPN: roll-rate matrix from the aging, allowance journal, close control", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Grup Uji CKPN");
   await page.getByLabel("Nama lengkap").fill("PT CKPN Uji");
   await page.getByLabel("Nama singkat").fill("CKP");

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { openClientForm } from "./qa-helpers";
 
 /**
  * Fixed-asset register, end to end (synthetic): a purchase journal on 1210 → Aset Tetap shows it as unregistered → Daftarkan
@@ -13,7 +14,7 @@ async function pickOption(page: Page, label: string, option: string | RegExp) {
 }
 
 test("fixed assets: register a purchase, depreciate, dispose at a gain", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Grup Uji Aset Tetap");
   await page.getByLabel("Nama lengkap").fill("PT Aset Uji");
   await page.getByLabel("Nama singkat").fill("ASET");

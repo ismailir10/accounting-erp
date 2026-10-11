@@ -1,8 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { openClientForm } from "./qa-helpers";
 
 /** Saldo Awal reads a typed amount back formatted when the field is left, like Jurnal Penyesuaian (production run 2026-10-09). */
 test("Saldo Awal: a typed amount reads back formatted, unreadable text stays for its message", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Saldo Rapi Uji");
   await page.getByLabel("Nama lengkap").fill("PT Saldo Rapi Uji");
   await page.getByLabel("Nomor rekening").fill("5550001112");

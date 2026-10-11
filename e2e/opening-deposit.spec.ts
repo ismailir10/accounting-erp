@@ -11,6 +11,8 @@ test("Saldo Awal proposes the deposit a statement lists, with its source", async
   const clientList = page.getByRole("button", { name: /^Daftar klien \(\d+\)$/ });
   if ((await clientList.getAttribute("aria-expanded")) !== "true") await clientList.click();
   await page.getByRole("link", { name: "Tambah klien" }).click();
+  // Tambah klien starts from files; this walk fills the manual form.
+  await page.getByRole("link", { name: "Isi manual" }).click();
   await page.getByLabel("Nama klien").fill("Deposito Uji");
   await page.getByLabel("Bidang usaha").fill("perdagangan");
   await page.getByLabel("Nama lengkap").fill("PT Deposito Uji");

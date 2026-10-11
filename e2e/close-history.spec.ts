@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { openClientForm } from "./qa-helpers";
 
 /**
  * Tutup bulan-bulan sebelumnya (lib/controls/history): a client with open months behind the one being closed checks them together and
@@ -22,7 +23,7 @@ async function accrual(page: Page, base: string, month: string, day: string) {
 }
 
 test("two open months before June are checked and closed together from June's Tutup Buku", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Klien Riwayat Uji");
   await page.getByLabel("Nama lengkap").fill("PT Riwayat Uji");
   await page.getByLabel("Nama singkat").fill("RIWAYAT");

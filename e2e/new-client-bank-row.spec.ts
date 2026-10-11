@@ -1,8 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { openClientForm } from "./qa-helpers";
 
 /** Tambah klien starts with one empty bank row: saving without touching it must not look like nothing happened. */
 test("Tambah klien: an untouched bank row is ignored, a half-filled one says what is missing", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Klien Baris Kosong");
   await page.getByLabel("Nama lengkap").fill("PT Baris Kosong");
 
@@ -10,7 +11,7 @@ test("Tambah klien: an untouched bank row is ignored, a half-filled one says wha
   await page.getByLabel("Nama rekening").fill("Giro utama");
   await page.getByRole("button", { name: "Simpan klien" }).click();
   await expect(page.getByText("Isi nomor rekening.").first()).toBeVisible();
-  await expect(page).toHaveURL(/\/clients\/new$/);
+  await expect(page).toHaveURL(/\/clients\/new\?manual=1$/);
 
   // Clearing the name leaves an empty row: it is ignored and the client is saved without a bank account.
   await page.getByLabel("Nama rekening").fill("");

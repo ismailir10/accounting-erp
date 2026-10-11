@@ -10,6 +10,7 @@ import { infraErrorMessage } from "@/lib/db-errors";
 import { itemView, type BankSection, type InboxItem } from "./check";
 import { NeedsPasswordError, openWithKeyring } from "./keyring";
 import { accountDisplay, planBatch, VALAS_BLOCKED } from "./plan";
+import { ALREADY_BOOKED } from "./view";
 
 /**
  * Books one file of a drop at a time (cycle 2026-10-10-unggah-inbox; the page calls this until nothing is left, so no request handles
@@ -38,7 +39,7 @@ export function failureMessage(e: unknown): string {
 /** "Dibukukan ke BCA ·3814 · Januari 2026 · 242 baris". */
 function bookedLine(display: string, s: ImportSummary) {
   const months = s.months.length > 1 ? `${s.months[0]}–${s.months.at(-1)}` : (s.months[0] ?? "");
-  if (s.rows > 0 && s.duplicates === s.rows) return `Sudah dibukukan sebelumnya ke ${display} · ${months} (${s.rows} baris sama, dilewati)`;
+  if (s.rows > 0 && s.duplicates === s.rows) return `${ALREADY_BOOKED} ke ${display} · ${months} (${s.rows} baris sama, dilewati)`;
   const dupes = s.duplicates ? ` (${s.duplicates} sudah ada, dilewati)` : "";
   return `Dibukukan ke ${display} · ${months} · ${s.rows} baris${dupes}${s.continuityOk ? "" : " · ada celah saldo"}`;
 }

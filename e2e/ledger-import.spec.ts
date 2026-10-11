@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import ExcelJS from "exceljs";
-import { openManualImport } from "./qa-helpers";
+import { openManualImport, openClientForm } from "./qa-helpers";
 
 /**
  * Ledger client, end to end (synthetic data): Tambah klien with an IDR company and an SGD holding (no bank accounts)
@@ -29,7 +29,7 @@ async function ledgerXlsx(): Promise<Buffer> {
 }
 
 test("ledger import: checks, mapping, post, Kurs, Gabungan in IDR, client accounts", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Grup Uji Buku Besar");
   await page.getByLabel("Nama lengkap").click();
   await page.getByLabel("Nama lengkap").pressSequentially("PT Satu Uji");

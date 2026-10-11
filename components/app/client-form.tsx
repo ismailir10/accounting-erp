@@ -31,11 +31,12 @@ const newBank = (): BankRow => ({ bank: "BCA", number: "", label: "", isOverdraf
 const defaultFramework = (kind: Kind): Framework => (kind === "PERORANGAN" ? "SAK_EMKM" : "SAK_EP");
 const newEntity = (kind: Kind): EntityRow => ({ name: "", shortName: "", kind, npwp: "", currency: "IDR", reportingFramework: defaultFramework(kind), banks: [newBank()] });
 
-export function ClientForm({ initial, evidenceIntakeId, onCreated }: { initial?: NewClientInput; evidenceIntakeId?: string; onCreated?: () => void } = {}) {
+/** `defaults`: what was typed before switching to this form (Tambah klien's *Isi manual*); the first company follows the name. */
+export function ClientForm({ initial, evidenceIntakeId, onCreated, defaults }: { initial?: NewClientInput; evidenceIntakeId?: string; onCreated?: () => void; defaults?: { name: string; industry: string } } = {}) {
   const router = useRouter();
-  const [name, setName] = useState(initial?.name ?? "");
-  const [industry, setIndustry] = useState(initial?.industry ?? "");
-  const [entities, setEntities] = useState<EntityRow[]>(initial?.entities.map(e => ({ ...e, currency: e.currency ?? "IDR", reportingFramework: e.reportingFramework ?? "SAK_EP", banks: e.banks.map(b => ({ ...b, isOverdraft: b.isOverdraft ?? false })) })) ?? [newEntity("PT")]);
+  const [name, setName] = useState(initial?.name ?? defaults?.name ?? "");
+  const [industry, setIndustry] = useState(initial?.industry ?? defaults?.industry ?? "");
+  const [entities, setEntities] = useState<EntityRow[]>(initial?.entities.map(e => ({ ...e, currency: e.currency ?? "IDR", reportingFramework: e.reportingFramework ?? "SAK_EP", banks: e.banks.map(b => ({ ...b, isOverdraft: b.isOverdraft ?? false })) })) ?? [{ ...newEntity("PT"), name: defaults?.name ?? "" }]);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   // The first entity's name follows the client name until the user types their own (the common case is one PT).

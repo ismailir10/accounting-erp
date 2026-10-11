@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { toBcaCsv, type StatementFile } from "../lib/demo/writers";
+import { openClientForm } from "./qa-helpers";
 
 /**
  * Dokumen → Unggah (docs/cycles/2026-10-11-dokumen-to-unggah.md): a BCA statement uploaded to a client's Dokumen collection offers one
@@ -27,7 +28,7 @@ const FILE = "bca-8833-mei-2026.csv";
 
 test("Dokumen: a client's rekening koran books through Unggah with one click and one card", async ({ page }) => {
   // A client without rekening yet.
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Klien Dokumen Uji");
   await page.getByLabel("Nama lengkap").fill("PT Dokumen Uji Sentosa");
   await page.getByRole("button", { name: "Simpan klien" }).click();

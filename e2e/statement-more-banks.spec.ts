@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { openManualImport } from "./qa-helpers";
+import { openManualImport, openClientForm } from "./qa-helpers";
 
 /**
  * A client at a bank outside the big four: pick it in the searchable bank field, see which banks Buku reads, import an MT940 file
@@ -25,6 +25,8 @@ test("pick a bank, import an MT940 from another bank, record the account at the 
   const clientList = page.getByRole("button", { name: /^Daftar klien \(\d+\)$/ });
   if ((await clientList.getAttribute("aria-expanded")) !== "true") await clientList.click();
   await page.getByRole("link", { name: "Tambah klien" }).click();
+  // Tambah klien starts from files; this walk fills the manual form.
+  await page.getByRole("link", { name: "Isi manual" }).click();
   await page.getByLabel("Nama klien").fill("Bank Lain Uji");
   await page.getByLabel("Nama lengkap").fill("PT Bank Lain Uji");
   await page.getByLabel("Nama singkat").fill("PT BLU");
@@ -62,7 +64,7 @@ test("pick a bank, import an MT940 from another bank, record the account at the 
 });
 
 test("the bank field is keyboard-first: typing searches without choosing, Enter chooses and the list stays closed", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   const bank = page.getByRole("combobox", { name: "Bank", exact: true });
   await expect(bank).toContainText("BCA");
   await bank.focus();

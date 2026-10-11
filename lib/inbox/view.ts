@@ -95,10 +95,16 @@ export function needsManualPath(item: Pick<InboxItem, "status" | "kind" | "messa
 export const OPEN_STATUSES: InboxItem["status"][] = ["CHECKED", "PROCESSING", "NEEDS_PASSWORD", "NEEDS_ACCOUNT"];
 
 /** "7 file selesai: 5 dibukukan, 1 draf buku besar, 1 disimpan di Dokumen." — the drop's outcome in one sentence. */
-export function batchSummary(items: Pick<InboxItem, "status">[]): string {
+/** How a booked file whose every row was already in the books starts its message (lib/inbox/process.ts). */
+export const ALREADY_BOOKED = "Sudah dibukukan sebelumnya";
+const alreadyBooked = (i: Pick<InboxItem, "status" | "message">) => i.status === "BOOKED" && !!i.message && i.message.split("\n").every((l) => l.startsWith(ALREADY_BOOKED));
+
+export function batchSummary(items: Pick<InboxItem, "status" | "message">[]): string {
   const count = (s: InboxItem["status"]) => items.filter((i) => i.status === s).length;
+  const already = items.filter(alreadyBooked).length;
   const parts = [
-    [count("BOOKED"), "dibukukan"],
+    [count("BOOKED") - already, "dibukukan"],
+    [already, "sudah dibukukan sebelumnya"],
     [count("DRAFT"), "draf buku besar"],
     [count("KEPT"), "disimpan di Dokumen"],
     [count("FAILED"), "gagal"],

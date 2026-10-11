@@ -27,6 +27,8 @@ test("add a client, set opening balance, import a locked PDF, bank reconciles", 
   const clientList = page.getByRole("button", { name: /^Daftar klien \(\d+\)$/ });
   if ((await clientList.getAttribute("aria-expanded")) !== "true") await clientList.click();
   await page.getByRole("link", { name: "Tambah klien" }).click();
+  // Tambah klien starts from files; this walk fills the manual form.
+  await page.getByRole("link", { name: "Isi manual" }).click();
   await page.getByLabel("Nama klien").fill("Toko Uji Coba");
   await page.getByLabel("Nama lengkap").fill("PT Toko Uji Coba");
   await page.getByLabel("Nama singkat").fill("PT Toko");

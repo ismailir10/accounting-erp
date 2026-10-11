@@ -9,6 +9,7 @@ import { sniffFile } from "@/lib/import/workbook";
 import type { RememberedLayout } from "@/lib/import/mapped";
 import { addPassword, NeedsPasswordError, openWithKeyring } from "./keyring";
 import { liveImports, liveOutcome } from "./live";
+import type { PreviewFile } from "./propose";
 import { storeFile } from "./store";
 
 /** One statement of a bank file as read (amounts in whole Rupiah as strings: JSON has no bigint). */
@@ -107,17 +108,22 @@ const ledgerOutcome = (sections: LedgerSection[], message: string | null): Outco
 /** A refusal that only a real bank statement produces: the reader's message is the answer (year, date order, amounts, currency). */
 const statementRefusal = (e: unknown) => e instanceof YearNeededError || e instanceof SourceDateError || e instanceof SourceAmountError || e instanceof SourceCurrencyError;
 
-/** Reads what a file is (bank / ledger / other), opening a locked PDF with the offered password or the client's keyring. Writes no item. */
-async function classify(db: Db, input: Omit<CheckInput, "batchId">): Promise<Outcome> {
-  const { name, data } = input;
-  // The firm's *Atur kolom* layouts (tried only when every reader refuses the file), as the import itself does: a recurring export the
-  // firm once mapped is a bank statement here too. Its rekening is asked in the card; booking reads it with that bank's layouts.
-  const layouts = (await db.statementLayout.findMany({ where: { firmId: input.firmId }, select: { id: true, label: true, signature: true, mapping: true } })).map((l) => ({
+/** The firm's *Atur kolom* layouts, tried only when every reader refuses a file, as the import itself does. */
+async function firmLayouts(db: Db, firmId: string) {
+  return (await db.statementLayout.findMany({ where: { firmId }, select: { id: true, label: true, signature: true, mapping: true } })).map((l) => ({
     ...l,
     mapping: l.mapping as unknown as RememberedLayout["mapping"],
   }));
-  // Non-password errors come back as values: a password that opened the file still opened it, whatever the reader says next.
-  const tryOpen = async (password?: string): Promise<{ sections: ParsedStatement[] } | { error: unknown }> => {
+}
+
+type Read = { sections: ParsedStatement[] } | { error: unknown };
+
+/**
+ * Reads a file with the readers, with or without a password. Only a password refusal throws (for `openWithKeyring`); other errors come
+ * back as values: a password that opened the file still opened it, whatever the reader says next.
+ */
+function opener(name: string, data: Buffer, layouts: Awaited<ReturnType<typeof firmLayouts>>) {
+  return async (password?: string): Promise<Read> => {
     try {
       return { sections: await parseStatementSections(name, data, { password, layouts }) };
     } catch (e) {
@@ -125,23 +131,10 @@ async function classify(db: Db, input: Omit<CheckInput, "batchId">): Promise<Out
       return { error: e };
     }
   };
-  let opened;
-  try {
-    opened = await openWithKeyring(db, { firmId: input.firmId, clientId: input.clientId }, tryOpen, { offered: input.password });
-  } catch (e) {
-    if (e instanceof NeedsPasswordError) return outcome(sniffFile(data) === "PDF" ? "BANK" : "OTHER", "NEEDS_PASSWORD", e.message);
-    throw e;
-  }
-  let note: string | null = null;
-  if (opened.usedOffered) {
-    try {
-      await addPassword(db, { firmId: input.firmId, clientId: input.clientId, password: input.password!, actorId: input.actorId });
-    } catch (e) {
-      note = e instanceof Error ? e.message : null;
-    }
-  }
-  const read = opened.result;
+}
 
+/** What an opened file is (bank / ledger / other), from what the readers made of it. */
+async function outcomeOf(name: string, data: Buffer, read: Read, note: string | null): Promise<Outcome> {
   if ("sections" in read) {
     // A ledger with a balance column reads as a generic statement too: a postable ledger table wins over the generic reader.
     if (read.sections.every((st) => st.format === "GENERIC")) {
@@ -167,6 +160,50 @@ async function classify(db: Db, input: Omit<CheckInput, "batchId">): Promise<Out
 
 /** An item's columns for what `classify` read. */
 const outcomeData = (r: Outcome) => ({ kind: r.kind, status: r.status, message: r.message, periodStart: r.periodStart, periodEnd: r.periodEnd, sections: json(r.sections) });
+
+const locked = (data: Buffer, e: NeedsPasswordError) => outcome(sniffFile(data) === "PDF" ? "BANK" : "OTHER", "NEEDS_PASSWORD", e.message);
+
+/** Reads what a file is (bank / ledger / other), opening a locked PDF with the offered password or the client's keyring. Writes no item. */
+async function classify(db: Db, input: Omit<CheckInput, "batchId">): Promise<Outcome> {
+  const { name, data } = input;
+  // The firm's layouts: a recurring export the firm once mapped is a bank statement here too. Its rekening is asked in the card;
+  // booking reads it with that bank's layouts.
+  const tryOpen = opener(name, data, await firmLayouts(db, input.firmId));
+  let opened;
+  try {
+    opened = await openWithKeyring(db, { firmId: input.firmId, clientId: input.clientId }, tryOpen, { offered: input.password });
+  } catch (e) {
+    if (e instanceof NeedsPasswordError) return locked(data, e);
+    throw e;
+  }
+  let note: string | null = null;
+  if (opened.usedOffered) {
+    try {
+      await addPassword(db, { firmId: input.firmId, clientId: input.clientId, password: input.password!, actorId: input.actorId });
+    } catch (e) {
+      note = e instanceof Error ? e.message : null;
+    }
+  }
+  return outcomeOf(name, data, opened.result, note);
+}
+
+/**
+ * *Klien baru* from files (cycle 2026-10-10-new-client-from-files): reads a dropped file for a client that doesn't exist yet. Nothing is
+ * stored and no keyring is read — a locked PDF opens only with the offered password. The page drops the same files into the new client's
+ * Unggah afterwards, where they are stored and read again.
+ */
+export async function previewFile(db: Db, input: { firmId: string; name: string; data: Buffer; password?: string }): Promise<PreviewFile> {
+  const fileName = input.name.trim().slice(0, 240) || "file";
+  const tryOpen = opener(fileName, input.data, await firmLayouts(db, input.firmId));
+  let result: Outcome;
+  try {
+    result = await outcomeOf(fileName, input.data, (await openWithKeyring(db, null, tryOpen, { offered: input.password })).result, null);
+  } catch (e) {
+    if (!(e instanceof NeedsPasswordError)) throw e;
+    result = locked(input.data, e);
+  }
+  return { fileName, kind: result.kind, status: result.status, message: result.message, sections: result.sections };
+}
 
 type CheckInput = { firmId: string; clientId: string; batchId: string; name: string; data: Buffer; password?: string; actorId?: string | null };
 

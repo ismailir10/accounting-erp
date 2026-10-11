@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { openManualImport } from "./qa-helpers";
+import { openManualImport, openClientForm } from "./qa-helpers";
 
 /** A forgotten bank account or owner is added after "Simpan klien", from the client's settings page; nothing has to be deleted and redone. */
 test("add a bank account and an owner to an existing client", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Klien Tambah Rekening");
   await page.getByLabel("Nama lengkap").fill("PT Tambah Rekening");
   await page.getByLabel("Nomor rekening").fill("5550009999");

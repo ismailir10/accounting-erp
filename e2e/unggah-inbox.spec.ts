@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { toBcaCsv, type StatementFile } from "../lib/demo/writers";
 import { makePdf, table } from "../tests/pdf-fixture";
+import { openClientForm } from "./qa-helpers";
 
 /**
  * Unggah, verify flow 1 (docs/cycles/2026-10-10-unggah-inbox.md): a client with no rekening yet gets its files in one drop — two months of a
@@ -38,7 +39,7 @@ const mandiri = makePdf(
 
 test("Unggah: a whole drop for a client without rekening — one password, one card, every file booked and kept", async ({ page }) => {
   // A client saved without a bank account (the empty bank row is ignored) lands on Unggah.
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Klien Unggah Uji");
   await page.getByLabel("Nama lengkap").fill("PT Unggah Uji Sentosa");
   await page.getByRole("button", { name: "Simpan klien" }).click();

@@ -13,7 +13,8 @@ import { evidenceEnabled } from "@/lib/evidence/config";
 import { downloadDriveFile, DriveError, getDriveFile, listDriveChildren, parseDriveFolderUrl } from "@/lib/evidence/drive";
 import { driveToken } from "@/lib/evidence/jobs";
 import { OnboardingError } from "@/lib/onboarding";
-import { adoptVersion, checkFile, type InboxItem } from "@/lib/inbox/check";
+import { adoptVersion, checkFile, previewFile, type InboxItem } from "@/lib/inbox/check";
+import type { PreviewFile } from "@/lib/inbox/propose";
 import { batchItems, confirmBatch, InboxError, planBatch, skipItems, unlockBatch, type ConfirmError, type InboxPlan } from "@/lib/inbox/plan";
 import { failureMessage, processNext } from "@/lib/inbox/process";
 import { clearKeyring, keyringSize, NeedsPasswordError } from "@/lib/inbox/keyring";
@@ -88,6 +89,23 @@ export async function inboxFromDocumentAction(intakeId: string, versionId: strin
     return { ok: true, href: item.batchId === batchId ? `${href}?lanjut=${batchId}` : href };
   } catch (e) {
     if (e instanceof Error && e.message === "Dokumen tidak ditemukan.") return { ok: false, error: e.message };
+    return fail(e);
+  }
+}
+
+/**
+ * *Klien baru* from files: one dropped file read for a client that doesn't exist yet — nothing stored, no keyring, only the offered
+ * password. The same guard as creating a client (`client.create`).
+ */
+export async function previewClientFileAction(form: FormData): Promise<Result<{ file: PreviewFile }>> {
+  try {
+    const { firm } = await requireCapability("client.create");
+    const file = form.get("file");
+    if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Pilih file untuk diunggah." };
+    if (file.size > MAX_UPLOAD_BYTES) return { ok: false, error: UPLOAD_TOO_BIG };
+    const password = String(form.get("password") ?? "").trim().slice(0, 200) || undefined;
+    return { ok: true, file: await previewFile(prisma, { firmId: firm.id, name: file.name, data: Buffer.from(await file.arrayBuffer()), password }) };
+  } catch (e) {
     return fail(e);
   }
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { openManualImport } from "./qa-helpers";
+import { openManualImport, openClientForm } from "./qa-helpers";
 
 /**
  * Lease register (PSAK 116), end to end (synthetic): an office lease of 24 × 10 jt paid monthly in arrears at 12 % a year, from June
@@ -15,7 +15,7 @@ const CSV = [
 ].join("\n");
 
 test("leases: register, commencement, monthly journals, payments, control", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Grup Uji Sewa");
   await page.getByLabel("Nama lengkap").fill("PT Sewa Uji");
   await page.getByLabel("Nama singkat").fill("SWU");

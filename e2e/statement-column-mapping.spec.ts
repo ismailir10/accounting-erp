@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { unknownCsv, unknownPdf } from "../tests/unknown-layout";
-import { openManualImport } from "./qa-helpers";
+import { openManualImport, openClientForm } from "./qa-helpers";
 
 /**
  * Atur kolom: a statement in a layout no reader knows is refused with a way forward; the accountant points at the columns once, proves the
@@ -8,7 +8,7 @@ import { openManualImport } from "./qa-helpers";
  * and August 2026 only (the firm's work period must not move past August for the specs after this one). Files are synthetic.
  */
 test("map an unknown CSV once, prove and import it; next month's file reads straight away", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Kolom Uji");
   await page.getByLabel("Nama lengkap").fill("PT Kolom Uji");
   await page.getByLabel("Nama singkat").fill("PT KU");
@@ -76,7 +76,7 @@ test("map an unknown CSV once, prove and import it; next month's file reads stra
 });
 
 test("map an unknown text PDF: columns cut at its header, Debet and Kredit apart", async ({ page }) => {
-  await page.goto("/clients/new");
+  await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Kolom PDF Uji");
   await page.getByLabel("Nama lengkap").fill("PT Kolom PDF Uji");
   await page.getByLabel("Nama singkat").fill("PT KPU");
