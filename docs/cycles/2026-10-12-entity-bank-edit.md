@@ -58,7 +58,7 @@ entities; no deletion of anything with posted entries (correct by Jurnal Penyesu
 
 ## Tasks
 - [x] T1 Domain `lib/clients/entities.ts` (usage, reasons, rename, edit, remove, audit) + E7 in `lib/onboarding.ts` + `tests/db/entity-edit.test.ts` — accept: E1–E5, E7 rules, refusals leave data untouched, books identical after rename.
-- [ ] T2 Server actions (role gate, tenant) + `tests/db/entity-edit-action.test.ts` — accept: akuntan edits, cannot remove; viewer refused; foreign client refused.
+- [x] T2 Server actions (role gate, tenant) + `tests/db/entity-edit-action.test.ts` — accept: akuntan edits, cannot remove; viewer refused; foreign client refused.
 - [ ] T3 UI in `entities-card.tsx` + settings page (reasons from the server) — accept: E6 walked in the browser.
 - [ ] T4 e2e (`e2e/add-entity.spec.ts`), README, accounting-rules note, full gate — accept: recorded in Verification.
 
@@ -70,6 +70,9 @@ entities; no deletion of anything with posted entries (correct by Jurnal Penyesu
   `removeEntity` write a `COMPANY_BANK` audit event (`lib/audit.ts`). `lib/onboarding.ts`: adding an entity keeps short names unique.
   `lib/inbox/plan.ts`: a new owner from Unggah whose first name is already a short name gets the full name, so the new rule never refuses
   it. Tests: `tests/db/entity-edit.test.ts` (26), one new case in `tests/db/inbox-plan.test.ts`.
+- T2: `app/actions.ts` — `renameEntityAction`, `updateBankAccountAction` (`client.create`), `removeBankAccountAction`, `removeEntityAction`
+  (`client.delete`, refusal "Hanya admin kantor yang dapat menghapus perusahaan atau rekening."); the member is the audit actor.
+  `tests/db/entity-edit-action.test.ts` drives them through the real guard (akuntan, viewer, admin, another organisation).
 
 ## Verification
 

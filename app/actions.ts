@@ -72,6 +72,7 @@ import { acceptCheck, LedgerImportError, postImport, stageImport } from "@/lib/l
 import { acceptMappings, MappingError, suggestMappings } from "@/lib/ledger-import/mapping";
 import { infraErrorMessage } from "@/lib/db-errors";
 import { deleteClient, DeleteClientError } from "@/lib/clients/delete";
+import { EntityEditError, removeBankAccount, removeEntity, renameEntity, updateBankAccount } from "@/lib/clients/entities";
 import { AccessError, requireCapability } from "@/lib/auth/session";
 import type { Capability } from "@/lib/auth/permissions";
 import { OrgError } from "@/lib/org";
@@ -87,7 +88,7 @@ type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; needs
 function fail(e: unknown): { ok: false; error: string; needsPassword?: boolean; needsYear?: boolean; yearGuess?: number | null } {
   if (e instanceof PdfPasswordError) return { ok: false, error: e.message, needsPassword: true };
   if (e instanceof YearNeededError) return { ok: false, error: e.message, needsYear: true, yearGuess: e.guess };
-  if (e instanceof DeleteClientError || e instanceof AccessError || e instanceof OrgError) return { ok: false, error: e.message };
+  if (e instanceof DeleteClientError || e instanceof EntityEditError || e instanceof AccessError || e instanceof OrgError) return { ok: false, error: e.message };
   if (e instanceof ParseError || e instanceof LedgerError || e instanceof CloseError || e instanceof OpeningError || e instanceof FindingError || e instanceof RemoveImportError || e instanceof MoneyError || e instanceof RateError || e instanceof RevaluationError || e instanceof LedgerImportError || e instanceof MappingError || e instanceof EntitySettingsError || e instanceof FormatError || e instanceof SubledgerError || e instanceof FakturError || e instanceof BupotError) return { ok: false, error: e.message };
   const infra = infraErrorMessage(e);
   console.error(e);
@@ -885,6 +886,69 @@ export async function addEntityAction(clientId: string, input: NewEntityInput): 
     return { ok: true, entityId: entity.id };
   } catch (e) {
     if (e instanceof OnboardingError) return { ok: false, error: e.message, fields: e.fields };
+    return fail(e);
+  }
+}
+
+const editFail = (e: unknown) => (e instanceof OnboardingError ? { ok: false as const, error: e.message, fields: e.fields } : fail(e));
+
+/** *Ubah* on a company/owner (Pengaturan klien): name, short name, NPWP. Labels only, so the role that may add an entity may fix one. */
+export async function renameEntityAction(clientId: string, entityId: string, input: { name: string; shortName: string; npwp: string }): Promise<Result> {
+  try {
+    const client = await clientFor("client.create", clientId);
+    const member = await getCurrentMember();
+    await renameEntity(prisma, { firmId: client.firmId, clientId: client.id, entityId, actorId: member.id, ...input });
+    revalidatePath("/", "layout");
+    return { ok: true };
+  } catch (e) {
+    return editFail(e);
+  }
+}
+
+/** *Ubah* on a rekening: name and bank any time, the number only while nothing was read for it. */
+export async function updateBankAccountAction(clientId: string, bankAccountId: string, input: { label: string; bank: NewEntityInput["banks"][number]["bank"]; number: string }): Promise<Result> {
+  try {
+    const client = await clientFor("client.create", clientId);
+    const member = await getCurrentMember();
+    await updateBankAccount(prisma, { firmId: client.firmId, clientId: client.id, bankAccountId, actorId: member.id, ...input });
+    revalidatePath("/", "layout");
+    return { ok: true };
+  } catch (e) {
+    return editFail(e);
+  }
+}
+
+/** Removal of something entered by mistake is for an admin, like *Hapus klien*; the refusal names what it is about. */
+async function removalClient(clientId: string) {
+  try {
+    const { member } = await requireCapability("client.delete", { clientId });
+    return { member, client: await getClientForMember(clientId) };
+  } catch (e) {
+    if (e instanceof AccessError && e.reason === "ROLE") throw new AccessError("Hanya admin kantor yang dapat menghapus perusahaan atau rekening.", "ROLE");
+    throw e;
+  }
+}
+
+/** *Hapus rekening*: only one nothing points to (lib/clients/entities.ts). */
+export async function removeBankAccountAction(clientId: string, bankAccountId: string): Promise<Result> {
+  try {
+    const { member, client } = await removalClient(clientId);
+    await removeBankAccount(prisma, { firmId: client.firmId, clientId: client.id, bankAccountId, actorId: member.id });
+    revalidatePath("/", "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** *Hapus perusahaan/pemilik*: only one nothing points to, and never the client's last. */
+export async function removeEntityAction(clientId: string, entityId: string): Promise<Result> {
+  try {
+    const { member, client } = await removalClient(clientId);
+    await removeEntity(prisma, { firmId: client.firmId, clientId: client.id, entityId, actorId: member.id });
+    revalidatePath("/", "layout");
+    return { ok: true };
+  } catch (e) {
     return fail(e);
   }
 }
