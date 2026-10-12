@@ -61,7 +61,7 @@ entities; no deletion of anything with posted entries (correct by Jurnal Penyesu
 - [x] T1 Domain `lib/clients/entities.ts` (usage, reasons, rename, edit, remove, audit) + E7 in `lib/onboarding.ts` + `tests/db/entity-edit.test.ts` — accept: E1–E5, E7 rules, refusals leave data untouched, books identical after rename.
 - [x] T2 Server actions (role gate, tenant) + `tests/db/entity-edit-action.test.ts` — accept: akuntan edits, cannot remove; viewer refused; foreign client refused.
 - [x] T3 UI in `entities-card.tsx` + settings page (reasons from the server) — accept: E6 walked in the browser.
-- [ ] T4 e2e (`e2e/add-entity.spec.ts`), README, accounting-rules note, full gate — accept: recorded in Verification.
+- [x] T4 e2e (`e2e/add-entity.spec.ts`), README, accounting-rules note, full gate — accept: recorded in Verification.
 
 ## Implementation
 - Plan: T1–T4 in order, by the driver (each builds on `lib/clients/entities.ts`; a fan-out would cost more than it saves). The draft #74
@@ -80,7 +80,32 @@ entities; no deletion of anything with posted entries (correct by Jurnal Penyesu
   Found while walking: the first `clientUsage` ran 44 Prisma queries; inside the removal's interactive transaction they run one after the
   other, and production's functions and database are not known to share a region, so a removal could hit the 5 s transaction timeout.
   It is now one `UNION ALL` statement (plus the entity read): 23.5 ms → 6.4 ms locally, 2 round trips instead of 44.
+- T4: `e2e/add-entity.spec.ts` — the existing test's buttons matched exactly (the new *Ubah PT Tambah Rekening* label contains "Tambah
+  rekening"), and a second test: a statement imported, two things added by mistake, number locked with its reason, the company's removal
+  refused with what is there, both renames saved, the empty rekening and owner removed, Riwayat shows the lines. README (Onboarding row) and
+  `accounting-rules` rule 3. Found in self-review: removal cleared control notes of **closed** months too; now such a note blocks removal.
 
 ## Verification
+Verified locally — 4e10fb9 (synthetic demo data only, MockProvider / no AI key).
+- Task gate: `npm run lint` clean · `npm run typecheck` clean · `npm test` → `Test Files 264 passed (264)`, `Tests 2159 passed (2159)` (on 9bea77f;
+  the later commits add one DB test, `tests/db/entity-edit.test.ts` 27 passed on 4e10fb9).
+- `npm run build && npm run demo:reset && npm run verify:books` → `ALL PASS — 1765 pemeriksaan saldo cocok dengan ground truth.` (on 4e10fb9).
+- `npm run test:e2e` (production build on :3200, on 9bea77f): `92 passed`, `4 failed` — all four environment-only: `auth-links` and `trial-signup`
+  compare link origins (the local auth stack had been started with `.env`'s `APP_URL` = :3000, `supabase/config.toml` `site_url = env(APP_URL)`),
+  `new-client-from-files` and `unggah-inbox` need `SETTINGS_SECRET` for the PDF keyring (empty in this `.env`). Rebuilt on 4e10fb9 with CI's
+  `APP_URL`, `SETTINGS_SECRET`, `EVIDENCE_ENABLED` and the auth stack restarted the way CI does: those four plus `add-entity` → all pass
+  (`6 passed` + `3 passed`).
+- Browser walk (dev server, admin of the demo firm, Grup Ayam Nusantara, `/clients/<id>/settings`): card at 1440 and 390 px, 0 px horizontal
+  overflow; Ubah on PT Ayam Nusantara Digital shows "Tidak bisa dihapus. Sudah ada 249 jurnal (termasuk saldo awal), 222 mutasi bank, 1 jadwal
+  penyesuaian, 68 faktur Coretax, 1 angsuran PPh 25, 12 impor rekening koran. …"; Ubah on BCA Giro shows the number locked with its reason and
+  "6 impor rekening koran, 184 mutasi bank, 185 baris jurnal"; an owner added by mistake → *Hapus pemilik* → confirm → removed, Riwayat
+  "Salah Input Uji dihapus". Console: only Playwright's own caret style on an unrelated input (hydration warning from the screenshot tool).
+- Accountant's check: a rename leaves Neraca Saldo, Laba Rugi, control statuses, journal totals and every row count identical, also in a locked
+  month (`tests/db/entity-edit.test.ts`); every refusal leaves the counts unchanged; a racing import makes the delete fail by foreign key with a message.
 
 ## Ship Notes
+- No migration, env var, dependency or AI call. Posted entries are never edited or deleted; a removal deletes only an empty bank account or
+  entity with its GL account and its open months' control notes. Every change is an `AuditEvent` (`COMPANY_BANK`).
+- Adding an entity now refuses a short name the client already has; Unggah's new owners fall back to the full name.
+- Deck: no change — no slide claims anything about editing companies or rekening.
+- Rollback: revert the merge commit; nothing stored depends on it.
