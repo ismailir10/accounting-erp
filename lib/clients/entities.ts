@@ -46,6 +46,7 @@ const BY_ENTITY: [label: string, table: string][] = [
   ["pemeriksaan impor buku besar", "ImportCheck"],
 ];
 const DRAFT = "draf impor buku besar";
+const LOCKED_NOTE = "catatan kontrol di bulan yang sudah ditutup";
 const BY_BANK: [label: string, table: string][] = [
   ["impor rekening koran", "StatementImport"],
   ["mutasi bank", "BankTransaction"],
@@ -102,6 +103,8 @@ export async function clientUsage(db: Db | Tx, clientId: string): Promise<Client
     Prisma.sql`SELECT 'c' AS k, s."accountCode" AS id, count(*)::int AS n FROM "BankTxSplit" s JOIN "BankTransaction" t ON t.id = s."bankTransactionId" WHERE t."bankAccountId" = ANY(${bankIds}::text[]) AND s."accountCode" = ANY(${codes}::text[]) GROUP BY 2`,
     Prisma.sql`SELECT 'r' AS k, "accountCode" AS id, count(*)::int AS n FROM "Rule" WHERE "clientId" = ${clientId} AND "accountCode" = ANY(${codes}::text[]) GROUP BY 2`,
     Prisma.sql`SELECT 'm' AS k, "accountCode" AS id, count(*)::int AS n FROM "Memory" WHERE "clientId" = ${clientId} AND "accountCode" = ANY(${codes}::text[]) GROUP BY 2`,
+    // A note on a control of a month already closed is part of that close: it stays, so the company or rekening it names stays too.
+    Prisma.sql`SELECT 'l' AS k, x.id, count(*)::int AS n FROM unnest(${[...entityIds, ...bankIds]}::text[]) AS x(id) JOIN "ControlAck" a ON strpos(a."controlKey", x.id) > 0 JOIN "Period" p ON p.id = a."periodId" AND p."clientId" = ${clientId} AND p.status = 'LOCKED' GROUP BY 2`,
     // A draft ledger import keeps its entity mapping in JSON until it is posted.
     Prisma.sql`SELECT 'd' AS k, e.id, count(*)::int AS n FROM unnest(${entityIds}::text[]) AS e(id) JOIN "LedgerImport" l ON l."clientId" = ${clientId} AND l.status = 'DRAFT' AND strpos(l.data::text, e.id) > 0 GROUP BY 2`,
   ];
@@ -112,12 +115,13 @@ export async function clientUsage(db: Db | Tx, clientId: string): Promise<Client
   const own = new Map(entityIds.map((id) => [id, [] as Usage]));
   const bankUsage = new Map(bankIds.map((id) => [id, [] as Usage]));
   // In the order the lists above are written, so the reason reads the same every time.
-  const rank = (k: string) => "edbgcrm".indexOf(k[0]) * 100 + (Number(k.slice(1)) || 0);
+  const rank = (k: string) => "edlbgcrm".indexOf(k[0]) * 100 + (Number(k.slice(1)) || 0);
   for (const r of [...rows].sort((a, b) => rank(a.k) - rank(b.k))) {
     const kind = r.k[0];
     const i = Number(r.k.slice(1));
     if (kind === "e") add(own.get(r.id)!, BY_ENTITY[i][0], r.n);
     else if (kind === "d") add(own.get(r.id)!, DRAFT, r.n);
+    else if (kind === "l") add((own.get(r.id) ?? bankUsage.get(r.id))!, LOCKED_NOTE, r.n);
     else if (kind === "b") add(bankUsage.get(r.id)!, BY_BANK[i][0], r.n);
     else if (kind === "g") add(bankUsage.get(glToBank.get(r.id)!)!, BY_GL[i][0], r.n);
     else add(bankUsage.get(codeToBank.get(r.id)!)!, BY_CODE[kind as keyof typeof BY_CODE], r.n);
@@ -219,7 +223,7 @@ export async function updateBankAccount(db: Db, input: Actor & { bankAccountId: 
   });
 }
 
-/** Close acknowledgements keyed by a company or bank account ("<control>:<id>"): an empty one has none worth keeping. */
+/** Close notes keyed by a company or bank account ("<control>:<id>") in open months: an empty one has none worth keeping (a closed month's block removal). */
 const dropAcks = (tx: Tx, clientId: string, ids: string[]) => tx.controlAck.deleteMany({ where: { period: { clientId }, OR: ids.map((id) => ({ controlKey: { contains: id } })) } });
 
 /** E3: a bank account nothing points to, with its GL account (the code is free for the next add). */

@@ -27,8 +27,8 @@ What an accountant needs to be true:
   confirmed as its statement); afterwards the field is locked with the reason. PRK never changes (it decides the GL account type).
 - **E3 Hapus rekening (admin):** only when nothing points to it or its GL account: statement imports, bank rows, OCR drafts, document
   selections, journal lines, ledger source-account mappings, tax credits, fiscal corrections, invoices, schedules, fixed assets, bank rows or
-  splits classified to its code, client rules or remembered choices filing to its code. Deletes the bank account, its GL account and the close
-  acknowledgements keyed by it. The freed code is reused by the next add.
+  splits classified to its code, client rules or remembered choices filing to its code, a control note in a month already closed. Deletes the
+  bank account, its GL account and the open months' control notes keyed by it. The freed code is reused by the next add.
 - **E4 Hapus perusahaan/pemilik (admin):** only when the client keeps another entity and nothing points to it: journals (incl. Saldo Awal),
   bank rows and imports, source accounts, schedules, proposals, fixed assets, invoices, tax years, CKPN, leases, employees and benefits,
   stock counts, subledger imports, findings, report comments, Coretax faktur and bukti potong, PPh 25 instalments, document selections,
@@ -50,7 +50,8 @@ entities; no deletion of anything with posted entries (correct by Jurnal Penyesu
 2. NPWP is edited with the name (a legal rename usually corrects it).
 3. A rename in a locked month is allowed: it changes labels on reports, never numbers.
 4. The bank is editable after imports (a label, consistent with *Catat sebagai &lt;bank&gt;*); only the number locks.
-5. Audit events for a removed entity keep its id (history is append-only); they don't block removal.
+5. Audit events for a removed entity keep its id (history is append-only); they don't block removal. A control note in a **closed** month
+   does (it is part of that close); notes in open months are cleared with it.
 6. The foreign keys are the last line of defence: a delete that races a concurrent import fails with a message and removes nothing.
 
 **Acceptance:** every refusal leaves every row count unchanged; a rename leaves Neraca Saldo, Laba Rugi, Neraca and close controls identical

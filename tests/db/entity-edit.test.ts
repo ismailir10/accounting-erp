@@ -261,6 +261,18 @@ describe("remove a company or owner", () => {
     expect((await db.controlAck.findMany()).map((a) => a.controlKey)).toEqual([`sanity:${g.pt.entity.id}`]);
   });
 
+  it("a note on a control in a month already closed keeps it: the close record stays whole", async () => {
+    const g = await makeGroup();
+    const extra = await addEntity(db, g.firm.id, g.client.id, { name: "CV Tutup", shortName: "CV T", kind: "CV", npwp: "", banks: [{ bank: "BCA", number: "8888888888", label: "", isOverdraft: false }] });
+    const bank = await db.bankAccount.findFirstOrThrow({ where: { entityId: extra.id } });
+    const july = await db.period.create({ data: { firmId: g.firm.id, clientId: g.client.id, year: 2026, month: 7, status: "LOCKED", lockedAt: new Date() } });
+    await db.controlAck.create({ data: { periodId: july.id, controlKey: `continuity:${bank.id}`, note: "Rekening belum aktif" } });
+    expect(labels(await bankUsage(g, bank.id))).toEqual(["catatan kontrol di bulan yang sudah ditutup"]);
+    await expect(removeBankAccount(db, { ...ids(g), bankAccountId: bank.id })).rejects.toThrow("Sudah ada 1 catatan kontrol di bulan yang sudah ditutup.");
+    await expect(removeEntity(db, { ...ids(g), entityId: extra.id })).rejects.toThrow(/catatan kontrol di bulan yang sudah ditutup/);
+    expect(await db.controlAck.count()).toBe(1);
+  });
+
   it("refuses one with posted entries — even only a Saldo Awal — and lists what is there; nothing changes", async () => {
     const g = await booked();
     const before = await snapshot(g);
