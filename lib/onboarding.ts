@@ -30,10 +30,10 @@ export type NewClientInput = {
 };
 
 type EntityInput = NewClientInput["entities"][number];
-type BankInput = EntityInput["banks"][number];
+export type BankInput = EntityInput["banks"][number];
 
 /** One bank row: a blank row is skipped (null); otherwise the cleaned account, with problems keyed under `bt`. `seen` holds the numbers already taken. */
-function cleanBank(b: BankInput, bt: string, fields: Record<string, string>, seen: Map<string, string>, duplicate = "Nomor ini sudah dimasukkan di atas.") {
+export function cleanBank(b: BankInput, bt: string, fields: Record<string, string>, seen: Map<string, string>, duplicate = "Nomor ini sudah dimasukkan di atas.") {
   if (isBlankBankRow(b)) return null;
   if (!(BANK_CODES as readonly string[]).includes(b.bank)) fields[`${bt}.bank`] = "Pilih bank.";
   const number = b.number.replace(/[\s.\-]/g, "");
@@ -104,10 +104,11 @@ const limitReached = (field: string) => (e: unknown): never => {
   throw e;
 };
 
-const TAKEN = "Nomor ini sudah dipakai rekening lain di klien ini.";
+export const TAKEN = "Nomor ini sudah dipakai rekening lain di klien ini.";
+export const SHORT_NAME_TAKEN = "Nama singkat ini sudah dipakai perusahaan lain di klien ini.";
 
 /** Bank numbers of the client, so an added account can't repeat one (the form rule for a new client is the same). */
-async function takenNumbers(db: Db, clientId: string) {
+export async function takenNumbers(db: Db, clientId: string) {
   const banks = await db.bankAccount.findMany({ where: { entity: { clientId } }, select: { number: true } });
   return new Map(banks.map((b) => [b.number, "bank"] as const));
 }
@@ -129,6 +130,9 @@ export async function addEntity(db: Db, firmId: string, clientId: string, input:
   if (!client) throw new OnboardingError({ entity: "Klien tidak ditemukan." });
   const fields: Record<string, string> = {};
   const spec = cleanEntity(input, "entity", fields, await takenNumbers(db, clientId), TAKEN);
+  // The ledger import matches a file's entity column by short name, so it stays unique on the client (a rename checks the same).
+  const shorts = (await db.entity.findMany({ where: { clientId }, select: { shortName: true } })).map((e) => e.shortName.trim().toLowerCase());
+  if (shorts.includes(spec.shortName.toLowerCase())) fields["entity.shortName"] = SHORT_NAME_TAKEN;
   if (Object.keys(fields).length) throw new OnboardingError(fields);
   return db.$transaction(async (tx) => (await createEntity(tx, firmId, clientId, spec, await freeGlCodes(tx, clientId))).entity).catch(limitReached("entity"));
 }

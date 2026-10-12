@@ -163,6 +163,23 @@ describe("Unggah plan: rekening from the files", () => {
     expect(plan.ready).toBe(false);
   });
 
+  it("a new owner whose first name another entity already uses as its short name gets the full name (short names stay unique)", async () => {
+    const g = await setup();
+    await g.fake("andi-s.pdf", [section({ bank: "BNI", number: "5000000007", holder: "ANDI SUSANTO" })]);
+    await g.fake("andi-p.pdf", [section({ bank: "BNI", number: "5000000008", holder: "ANDI PRATAMA" })]);
+    const { errors } = await confirmBatch(db, {
+      ...g.scope,
+      accounts: [
+        { bank: "BNI", number: "5000000007", target: { newOwner: { name: "Andi Susanto" } } },
+        { bank: "BNI", number: "5000000008", target: { newOwner: { name: "Andi Pratama" } } },
+      ],
+      numberless: [],
+    });
+    expect(errors).toEqual([]);
+    const owners = await db.entity.findMany({ where: { clientId: g.client.id, kind: "PERORANGAN" }, orderBy: { name: "asc" } });
+    expect(owners.map((o) => [o.name, o.shortName])).toEqual([["Andi Pratama", "Andi Pratama"], ["Andi Susanto", "Andi Susanto"], ["Andi Wijaya", "Andi"]]);
+  });
+
   it("refuses another client's entity or rekening before writing anything", async () => {
     const g = await setup();
     await g.fake("baru.pdf", [section({ number: "5000000003" })]);

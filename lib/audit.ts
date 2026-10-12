@@ -5,7 +5,7 @@ import type { Prisma } from "@/lib/generated/prisma/client";
  * Riwayat perubahan (ADR 0013): who changed what in a client's books or decisions, written in the same transaction as the change.
  * Append-only (a DB trigger refuses updates). Amounts in `before` / `after` are strings (bigint stays exact through JSON).
  */
-export type AuditKind = "CLASSIFY" | "UNPAIR" | "IMPORT_REMOVED" | "CONTROL_NOTE" | "MAPPING" | "FINDING_RESOLVED" | "REPORT_FORMAT" | "FISCAL_YEAR" | "SUBLEDGER" | "DOCUMENT_VOID" | "ADVANCE" | "REPORT_EXPORT" | "MODULES" | "UPLOAD_LINK" | "REPORT_COMMENT" | "FAKTUR" | "BUKTI_POTONG" | "PPH25" | "HISTORY_CLOSE";
+export type AuditKind = "CLASSIFY" | "UNPAIR" | "IMPORT_REMOVED" | "CONTROL_NOTE" | "MAPPING" | "FINDING_RESOLVED" | "REPORT_FORMAT" | "FISCAL_YEAR" | "SUBLEDGER" | "DOCUMENT_VOID" | "ADVANCE" | "REPORT_EXPORT" | "MODULES" | "UPLOAD_LINK" | "REPORT_COMMENT" | "FAKTUR" | "BUKTI_POTONG" | "PPH25" | "HISTORY_CLOSE" | "COMPANY_BANK";
 
 export const AUDIT_KIND_LABEL: Record<AuditKind, string> = {
   CLASSIFY: "Klasifikasi mutasi",
@@ -27,6 +27,7 @@ export const AUDIT_KIND_LABEL: Record<AuditKind, string> = {
   BUKTI_POTONG: "Bukti potong Coretax",
   PPH25: "Angsuran PPh 25",
   HISTORY_CLOSE: "Tutup buku bersama",
+  COMPANY_BANK: "Perusahaan & rekening",
 };
 
 export async function recordEvent(
