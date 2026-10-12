@@ -85,6 +85,11 @@ entities; no deletion of anything with posted entries (correct by Jurnal Penyesu
   refused with what is there, both renames saved, the empty rekening and owner removed, Riwayat shows the lines. README (Onboarding row) and
   `accounting-rules` rule 3. Found in self-review: removal cleared control notes of **closed** months too; now such a note blocks removal.
 
+- Review of #153 (three races, each with a test that fails on the previous code): a company removal now re-reads its rekening inside the
+  transaction under the entity's row lock (a rekening added meanwhile went with the entity but left its GL account behind); removals of one
+  client are serialised on the client row (two admins could each remove one of the last two companies); a number change re-checks under the
+  rekening's row lock (an import committing between check and update kept the new number).
+
 ## Verification
 Verified locally — 4e10fb9 (synthetic demo data only, MockProvider / no AI key).
 - Task gate: `npm run lint` clean · `npm run typecheck` clean · `npm test` → `Test Files 264 passed (264)`, `Tests 2159 passed (2159)` (on 9bea77f;

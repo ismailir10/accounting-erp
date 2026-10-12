@@ -328,6 +328,44 @@ describe("remove a company or owner", () => {
   });
 });
 
+describe("concurrent writes (review of #153)", () => {
+  beforeEach(resetDb);
+
+  /** `db` whose next transaction first lets `meanwhile` commit on another connection: what a second member does a moment earlier. */
+  const after = (meanwhile: () => Promise<unknown>) =>
+    new Proxy(db, {
+      get: (target, key) =>
+        key === "$transaction" ? async (fn: unknown, opts?: object) => (await meanwhile(), (target.$transaction as (f: unknown, o?: object) => unknown)(fn, opts)) : Reflect.get(target, key),
+    }) as typeof db;
+  const orphans = () => db.account.count({ where: { isBank: true, bankAccounts: { none: {} } } });
+
+  it("two admins removing the last two companies at once: one is removed, the client keeps the other", async () => {
+    const g = await makeGroup();
+    const results = await Promise.allSettled([removeEntity(db, { ...ids(g), entityId: g.pt.entity.id }), removeEntity(db, { ...ids(g), entityId: g.owner.entity.id })]);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(String((results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason)).toContain("Klien harus punya minimal satu perusahaan atau pemilik.");
+    expect(await db.entity.count({ where: { clientId: g.client.id } })).toBe(1);
+    expect(await orphans()).toBe(0);
+  });
+
+  it("a rekening added while a company is being removed goes with it, GL account included — none is left behind", async () => {
+    const g = await makeGroup();
+    const extra = await addEntity(db, g.firm.id, g.client.id, { name: "CV Baru", shortName: "CV B", kind: "CV", npwp: "", banks: [] });
+    const racing = after(() => addBankAccount(db, g.firm.id, g.client.id, extra.id, { bank: "BCA", number: "7777000011", label: "", isOverdraft: false }));
+    expect(await removeEntity(racing, { ...ids(g), entityId: extra.id })).toEqual({ name: "CV Baru", bankAccounts: 1 });
+    expect(await db.bankAccount.count({ where: { number: "7777000011" } })).toBe(0);
+    expect(await orphans()).toBe(0);
+  });
+
+  it("a statement imported just before a number change keeps the number", async () => {
+    const g = await makeGroup();
+    const ba = g.pt.banks[1];
+    const racing = after(() => importStatement(db, { bankAccountId: ba.id, fileName: "mandiri.csv", data: csv("05/08/2026;SETORAN;0;1000000;1000000"), provider: null }));
+    expect(await fieldsOf(updateBankAccount(racing, { ...ids(g), bankAccountId: ba.id, label: "Mandiri Giro", bank: "MANDIRI", number: "9999999999" }))).toHaveProperty(["bank.number"]);
+    expect((await db.bankAccount.findUniqueOrThrow({ where: { id: ba.id } })).number).toBe("2222222222");
+  });
+});
+
 describe("tenant isolation", () => {
   beforeEach(resetDb);
 

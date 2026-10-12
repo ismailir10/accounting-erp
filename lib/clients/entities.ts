@@ -209,13 +209,18 @@ export async function updateBankAccount(db: Db, input: Actor & { bankAccountId: 
   const clean = cleanBank({ bank: input.bank, number: input.number, label: input.label, isOverdraft: ba.isOverdraft }, "bank", fields, taken, TAKEN);
   if (!clean && !Object.keys(fields).length) fields["bank.number"] = "Isi nomor rekening.";
   if (Object.keys(fields).length || !clean) throw new OnboardingError(fields);
-  if (clean.number !== ba.number && numberLocked((await clientUsage(db, input.clientId)).banks.get(ba.id) ?? [])) {
-    throw new OnboardingError({ "bank.number": "Rekening koran rekening ini sudah dibaca, jadi nomornya tetap (file berikutnya dicocokkan dengan nomor ini). Ubah nama atau banknya saja, atau tambahkan rekening baru." });
-  }
   const before = { label: ba.label, bank: ba.bank, number: ba.number };
   const after = { label: clean.label, bank: clean.bank, number: clean.number };
   if (JSON.stringify(before) === JSON.stringify(after)) return ba;
   return db.$transaction(async (tx) => {
+    if (clean.number !== ba.number) {
+      // Checked under the account's row lock: a statement being imported for it takes a key-share lock on the same row, so it either
+      // committed before this check (and the number stays) or waits until the new number is in.
+      await tx.$queryRaw`SELECT id FROM "BankAccount" WHERE id = ${ba.id} FOR UPDATE`;
+      if (numberLocked((await clientUsage(tx, input.clientId)).banks.get(ba.id) ?? [])) {
+        throw new OnboardingError({ "bank.number": "Rekening koran rekening ini sudah dibaca, jadi nomornya tetap (file berikutnya dicocokkan dengan nomor ini). Ubah nama atau banknya saja, atau tambahkan rekening baru." });
+      }
+    }
     const updated = await tx.bankAccount.update({ where: { id: ba.id }, data: after });
     await tx.account.update({ where: { id: ba.accountId }, data: { name: glName(clean.label, ba.entity.shortName) } });
     await recordEvent(tx, { clientId: input.clientId, entityId: ba.entity.id, kind: "COMPANY_BANK", subject: `bankAccount:${ba.id}`, summary: `Rekening ${ba.label} diubah${ba.label !== clean.label ? ` menjadi ${clean.label}` : ""}`, before, after, actorId: input.actorId });
@@ -245,16 +250,21 @@ export async function removeBankAccount(db: Db, input: Actor & { bankAccountId: 
 
 /** E4: a company/owner nothing points to, with its empty bank accounts; the client keeps at least one. */
 export async function removeEntity(db: Db, input: Actor & { entityId: string }) {
-  const entity = await db.entity.findFirst({ where: { id: input.entityId, clientId: input.clientId, firmId: input.firmId }, select: { id: true, name: true, shortName: true, kind: true, bankAccounts: { select: { id: true, accountId: true, label: true } } } });
+  const entity = await db.entity.findFirst({ where: { id: input.entityId, clientId: input.clientId, firmId: input.firmId }, select: { id: true, name: true, shortName: true, kind: true } });
   if (!entity) throw new EntityEditError("Perusahaan tidak ditemukan di klien ini.");
   return db
     .$transaction(async (tx) => {
+      // The client's row serialises removals (two admins can't each remove one of the last two) without holding back other writes to the
+      // client; the entity's row holds back a rekening being added to it (its insert takes a key-share lock on it), so the bank accounts
+      // read next are all there are.
+      await tx.$queryRaw`SELECT id FROM "Client" WHERE id = ${input.clientId} FOR NO KEY UPDATE`;
+      await tx.$queryRaw`SELECT id FROM "Entity" WHERE id = ${entity.id} FOR UPDATE`;
       if ((await tx.entity.count({ where: { clientId: input.clientId } })) < 2) throw new EntityEditError(LAST_ENTITY);
       const reason = blockedReason("entity", (await clientUsage(tx, input.clientId)).entities.get(entity.id) ?? []);
       if (reason) throw new EntityEditError(reason);
-      const banks = entity.bankAccounts;
+      const banks = await tx.bankAccount.findMany({ where: { entityId: entity.id }, select: { id: true, accountId: true, label: true } });
       await dropAcks(tx, input.clientId, [entity.id, ...banks.map((b) => b.id)]);
-      await tx.bankAccount.deleteMany({ where: { entityId: entity.id } });
+      await tx.bankAccount.deleteMany({ where: { id: { in: banks.map((b) => b.id) } } });
       await tx.account.deleteMany({ where: { id: { in: banks.map((b) => b.accountId) } } });
       await tx.entity.delete({ where: { id: entity.id } });
       await recordEvent(tx, {
