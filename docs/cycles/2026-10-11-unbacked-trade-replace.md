@@ -106,7 +106,7 @@ no dependency, no real AI call, no auth/PII change).
 - T2: `tests/db/ai-unbacked.test.ts` — old assertions now 4100 / 6190, date-aware case (later receipt keeps 1130), Belifi-like fixture (3 + 1 customer receipts, 1 supplier payment, no invoices) with `acceptSimilar` booking the group to 4100 and 1130 untouched.
 - T2 note: the DB tests landed in the T1 commit (they only pass with it).
 - T3: `.agents/skills/accounting-rules/SKILL.md` rule 14 — replace, not keep.
-- T4: `prisma/migrations/20261011130000_unbacked_trade_replace/migration.sql` (data only: NEEDS_REVIEW AI lines with the old "Belum ada … tercatat" reason, where the chart has the fallback account; idempotent) and `tests/db/unbacked-migration.test.ts`.
+- T4: `prisma/migrations/20261011130000_unbacked_trade_replace/migration.sql` (data only: NEEDS_REVIEW AI lines with the old "Belum ada … tercatat" reason, where the chart has the fallback account and the entity's trade accounts still hold nothing by the line's date — a receivable booked after the import backs the AI's account again, review of PR #150; idempotent) and `tests/db/unbacked-migration.test.ts`.
 
 ## Verification
 ### Verified locally — d407e87, 2026-10-11 (re-gated after merging main at 1bf8122)

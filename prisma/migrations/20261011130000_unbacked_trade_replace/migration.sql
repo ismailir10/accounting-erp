@@ -2,7 +2,9 @@
 -- hold were kept on that account at 55% with "Belum ada … tercatat" appended (lib/ai/unbacked.ts, before this change). The same rule now
 -- replaces the account with the simple guess's (4100 / 6190, a person's 4910 / 3300, lib/classify/fallback.ts). Apply it to those lines.
 -- Only NEEDS_REVIEW rows with the old reason text, only where the client's chart has the fallback account (a bank or suspense account never
--- qualifies). Accepted lines and their journals are not touched; the statement is unchanged. Idempotent: the new reason no longer matches.
+-- qualifies) and only while the entity's books still hold nothing to settle by the line's own date (lib/ai/unbacked.ts `tradeBacking`): an invoice
+-- or journal entered since the import, dated on or before the line, backs the AI's 1130 / 2110 again, so that line is left as it is.
+-- Accepted lines and their journals are not touched; the statement is unchanged. Idempotent: the new reason no longer matches.
 UPDATE "BankTransaction" t
 SET "suggestedCode" = g."code",
     "taxTag" = NULL,
@@ -22,5 +24,9 @@ WHERE e."id" = t."entityId"
         ELSE '6190' END
   AND t."status" = 'NEEDS_REVIEW'
   AND t."method" = 'AI'
-  AND ((t."direction" = 'IN' AND a."fsLine" = 'PIUTANG_USAHA' AND t."reason" LIKE '%Belum ada piutang usaha tercatat untuk entitas ini%')
-    OR (t."direction" = 'OUT' AND a."fsLine" = 'UTANG_USAHA' AND t."reason" LIKE '%Belum ada utang usaha tercatat untuk entitas ini%'));
+  AND ((t."direction" = 'IN' AND a."fsLine" = 'PIUTANG_USAHA' AND t."reason" LIKE '%Belum ada piutang usaha tercatat untuk entitas ini%'
+        AND COALESCE((SELECT SUM(l."debit" - l."credit") FROM "JournalLine" l JOIN "Account" ta ON ta."id" = l."accountId"
+                      WHERE l."entityId" = t."entityId" AND ta."fsLine" = 'PIUTANG_USAHA' AND l."date" <= t."date"), 0) <= 0)
+    OR (t."direction" = 'OUT' AND a."fsLine" = 'UTANG_USAHA' AND t."reason" LIKE '%Belum ada utang usaha tercatat untuk entitas ini%'
+        AND COALESCE((SELECT SUM(l."credit" - l."debit") FROM "JournalLine" l JOIN "Account" ta ON ta."id" = l."accountId"
+                      WHERE l."entityId" = t."entityId" AND ta."fsLine" = 'UTANG_USAHA' AND l."date" <= t."date"), 0) <= 0));

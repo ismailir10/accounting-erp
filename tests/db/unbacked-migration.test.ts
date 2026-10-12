@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { db, makeGroup, resetDb } from "../helpers";
 import { importStatement } from "@/lib/import/pipeline";
 import { reviewTransaction } from "@/lib/review";
+import { postJournal } from "@/lib/ledger/post";
+import { dateOnly } from "@/lib/format";
 
 const sql = readFileSync("prisma/migrations/20261011130000_unbacked_trade_replace/migration.sql", "utf8");
 const OLD_IN = "Pelunasan piutang usaha · Belum ada piutang usaha tercatat untuk entitas ini: periksa apakah ini penjualan tunai.";
@@ -57,5 +59,21 @@ describe("data migration: replace unbacked trade suggestions already in Review",
     await db.account.update({ where: { clientId_code: { clientId: g.client.id, code: "4100" } }, data: { code: "4199" } });
     await db.$executeRawUnsafe(sql);
     expect(await db.bankTransaction.findUniqueOrThrow({ where: { id: setia.id } })).toMatchObject({ suggestedCode: "1130", reason: OLD_IN });
+  });
+
+  it("leaves a line alone when a receivable dated by then was booked after the import (the AI's account is valid again)", async () => {
+    const g = await makeGroup();
+    await importStatement(db, { bankAccountId: g.pt.banks[0].id, fileName: "agu.csv", data: file, provider: null });
+    const [setia, lama] = await db.bankTransaction.findMany({ where: { bankAccountId: g.pt.banks[0].id }, orderBy: { rowNumber: "asc" } });
+    for (const l of [setia, lama]) await db.bankTransaction.update({ where: { id: l.id }, data: { method: "AI", suggestedCode: "1130", confidence: 0.55, reason: OLD_IN } });
+    const id = async (code: string) => (await db.account.findUniqueOrThrow({ where: { clientId_code: { clientId: g.client.id, code } } })).id;
+    // a receivable entered after the import, dated 5 Aug: it backs both receipts (5 and 6 Aug)
+    await db.$transaction(async (tx) =>
+      postJournal(tx, { entityId: g.pt.entity.id, date: dateOnly(2026, 8, 5), kind: "ADJUSTMENT", memo: "uji", lines: [{ accountId: await id("1130"), debit: 9_000_000n }, { accountId: await id("4100"), credit: 9_000_000n }] }),
+    );
+    await db.$executeRawUnsafe(sql);
+    const after = await db.bankTransaction.findMany({ where: { id: { in: [setia.id, lama.id] } }, orderBy: { rowNumber: "asc" } });
+    expect(after.map((t) => t.suggestedCode)).toEqual(["1130", "1130"]);
+    expect(after.map((t) => t.reason)).toEqual([OLD_IN, OLD_IN]);
   });
 });
