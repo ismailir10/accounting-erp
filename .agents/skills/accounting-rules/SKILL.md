@@ -43,7 +43,9 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
 3. **Posted entries are immutable.** Corrections = new entry. The database refuses changing a line's amounts, account, entity, date or
    entry and an entry's entity, period, date or kind (memo, source refs and links may change). Two named exceptions, both admin only and logged: deleting a client (rule 25)
    and **removing a whole import** (ADR 0013, `lib/imports/remove.ts`: open months only, a written reason, refused while an invoice
-   settlement, fixed asset or schedule rests on it; the `AuditEvent` keeps what was removed). Bank lines change via `postBankTransaction()`,
+   settlement, fixed asset or schedule rests on it; the `AuditEvent` keeps what was removed). Removing a company/owner or a bank account
+   (`lib/clients/entities.ts`, admin only) is **not** an exception: it is refused while any entry, bank row, import, draft, register, tax
+   record, or rule/memory/split filing to its code points to it; renaming one changes labels only. Bank lines change via `postBankTransaction()`,
    which posts a **RECLASS of the difference** on the classification side only; the bank side never changes.
    A **split line** (*Pecah transaksi*, `BankTxSplit`, `lib/review.ts` `splitTransaction`) has one classification leg per part:
    - the parts add up exactly to the bank amount, or the split is refused naming the gap;
