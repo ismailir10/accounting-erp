@@ -5,10 +5,13 @@ import { importStatement, type ImportSummary } from "@/lib/import/pipeline";
 import { ParseError } from "@/lib/import/types";
 import { LedgerError } from "@/lib/ledger/post";
 import { LedgerImportError, stageImport } from "@/lib/ledger-import/post";
+import { readSheets } from "@/lib/ledger-import/read";
+import { companyFromTitleRows } from "@/lib/ledger-import/title";
 import { MoneyError } from "@/lib/money";
 import { infraErrorMessage } from "@/lib/db-errors";
 import { itemView, type BankSection, type InboxItem } from "./check";
 import { NeedsPasswordError, openWithKeyring } from "./keyring";
+import { matchEntity } from "./names";
 import { accountDisplay, planBatch, VALAS_BLOCKED } from "./plan";
 import { ALREADY_BOOKED } from "./view";
 
@@ -98,8 +101,11 @@ async function bookBank(db: Db, row: UploadItem, data: Buffer, input: ProcessInp
   return { status: "KEPT", message: notes.length ? message : "Disimpan di Dokumen." };
 }
 
+/** A Neraca belongs to one company; a client with several is asked which unless the file's own title names one of them. */
+const NEEDS_ENTITY = /Pilih entitas untuk neraca/;
+
 async function stageLedger(db: Db, row: UploadItem, data: Buffer, input: ProcessInput): Promise<Result> {
-  const entities = await db.entity.findMany({ where: { firmId: input.firmId, clientId: input.clientId }, select: { id: true } });
+  const entities = await db.entity.findMany({ where: { firmId: input.firmId, clientId: input.clientId }, select: { id: true, name: true, shortName: true } });
   const base = {
     firmId: input.firmId,
     clientId: input.clientId,
@@ -109,8 +115,33 @@ async function stageLedger(db: Db, row: UploadItem, data: Buffer, input: Process
     evidenceVersionId: row.evidenceVersionId ?? undefined,
     entityId: entities.length === 1 ? entities[0].id : undefined,
   };
+  // The company a sheet's title rows name ("SANRAYA ADI NATTAYA / Balance Sheet"). The workbook is read once, and only when a Neraca
+  // asks for a company; each sheet answers for itself, so two Neraca sheets titled for different companies go to their own. Without a
+  // sheet (a file with one table) the first sheets are tried.
+  let read: ReturnType<typeof readSheets> | undefined;
+  const titleEntity = async (sheet?: string) => {
+    try {
+      const sheets = await (read ??= readSheets(row.fileName, data));
+      for (const s of sheet ? sheets.filter((x) => x.name === sheet) : sheets.slice(0, 3)) {
+        const found = matchEntity(entities, companyFromTitleRows(s.rows));
+        if (found) return found.id;
+      }
+    } catch {
+      /* An unreadable workbook already failed staging with its own message. */
+    }
+    return undefined;
+  };
+  const stage = async (sheet?: string) => {
+    try {
+      return await stageImport(db, { ...base, sheet });
+    } catch (e) {
+      const id = entities.length > 1 && !base.entityId && NEEDS_ENTITY.test(failureMessage(e)) ? await titleEntity(sheet) : undefined;
+      if (!id) throw e;
+      return stageImport(db, { ...base, sheet, entityId: id });
+    }
+  };
   try {
-    const staged = await stageImport(db, base);
+    const staged = await stage();
     if (staged.status === "STAGED") return { status: "DRAFT", message: LEDGER_DRAFT, ledgerImportId: staged.importId };
     // Several tables: each sheet is its own draft (a sheet's hash includes its name, so none can double a posted one). A sheet that
     // can't stage says why on the line; the others still do. A draft's checks against the books (an opening bridge, rows before an
@@ -125,7 +156,7 @@ async function stageLedger(db: Db, row: UploadItem, data: Buffer, input: Process
         continue;
       }
       try {
-        const one = await stageImport(db, { ...base, sheet: c.sheet });
+        const one = await stage(c.sheet);
         if (one.status === "STAGED") {
           drafts.push({ sheet: c.sheet, importId: one.importId });
           if (c.mode === "LEDGER") ledgerDrafts++;
@@ -145,7 +176,7 @@ async function stageLedger(db: Db, row: UploadItem, data: Buffer, input: Process
 /** Why one sheet of a multi-sheet file didn't stage: a Neraca belongs to one company, which the inbox can't choose for a group. */
 function sheetRefusal(e: unknown, mode: "LEDGER" | "NERACA"): string {
   const message = failureMessage(e);
-  if (mode === "NERACA" && /Pilih entitas untuk neraca/.test(message)) return "neraca untuk satu perusahaan: unggah lewat Cara lain → Impor buku besar dan pilih perusahaannya.";
+  if (mode === "NERACA" && NEEDS_ENTITY.test(message)) return "neraca untuk satu perusahaan: unggah lewat Cara lain → Impor buku besar dan pilih perusahaannya.";
   return message;
 }
 
