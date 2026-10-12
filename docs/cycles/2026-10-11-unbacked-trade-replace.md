@@ -109,10 +109,10 @@ no dependency, no real AI call, no auth/PII change).
 - T4: `prisma/migrations/20261011130000_unbacked_trade_replace/migration.sql` (data only: NEEDS_REVIEW AI lines with the old "Belum ada … tercatat" reason, where the chart has the fallback account and the entity's trade accounts still hold nothing by the line's date — a receivable booked after the import backs the AI's account again, review of PR #150; idempotent) and `tests/db/unbacked-migration.test.ts`.
 
 ## Verification
-### Verified locally — d407e87, 2026-10-11 (re-gated after merging main at 1bf8122)
-- Gate: `npm run lint && npm run typecheck && npm test` → Test Files 256 passed, Tests 2101 passed (d407e87); after merging main (1bf8122): lint 0, typecheck 0, Test Files 262 passed (262), Tests 2126 passed (2126).
+### Verified locally — b4ad42d, 2026-10-11 (re-gated after merging main at 027bf72; history later rewritten to drop commit trailers, trees identical: tested SHAs were 8ef6b54 → c0f1090 and equivalents)
+- Gate: `npm run lint && npm run typecheck && npm test` → Test Files 256 passed, Tests 2101 passed (b4ad42d); after merging main (027bf72): lint 0, typecheck 0, Test Files 262 passed (262), Tests 2126 passed (2126).
 - Books: `npm run demo:reset && npm run verify:books` → ALL PASS — 1765 pemeriksaan saldo cocok dengan ground truth (both heads).
-- Build: `npm run build` ok (d407e87). e2e (`PW_CHROMIUM=/opt/pw-browsers/chromium npm run test:e2e`, production build on :3200, local Supabase Auth): 87 passed, 5 failed for environment reasons (local `.env` had `APP_URL` on :3000 and no `SETTINGS_SECRET`; CI sets `APP_URL=http://localhost:3200` and a test `SETTINGS_SECRET`). Re-ran those 5 specs (auth-links, new-client-from-files, public-site, trial-signup, unggah-inbox) with the CI values: 9 passed.
+- Build: `npm run build` ok (b4ad42d). e2e (`PW_CHROMIUM=/opt/pw-browsers/chromium npm run test:e2e`, production build on :3200, local Supabase Auth): 87 passed, 5 failed for environment reasons (local `.env` had `APP_URL` on :3000 and no `SETTINGS_SECRET`; CI sets `APP_URL=http://localhost:3200` and a test `SETTINGS_SECRET`). Re-ran those 5 specs (auth-links, new-client-from-files, public-site, trial-signup, unggah-inbox) with the CI values: 9 passed.
 - App: production build on http://localhost:3200, demo admin (admin@buku.local), MockProvider only (`AI_API_KEY` empty, 0 real calls).
 - Walked: Belifi-like client "Uji Belifi (hapus)" (PT, BCA ·3814, Agu 2026: 6 + 3 customer transfers, 2 supplier payments, no invoices, AI mock answering 1130 / 2110) → `/clients/<id>/review?period=2026-08`:
   - every receipt shows *4100 Penjualan* at 55% with "AI mengusulkan 1130 Piutang Usaha, tetapi tidak ada piutang usaha tercatat untuk entitas ini: dianggap penjualan tunai (4100 Penjualan)."; payments show *6190 Beban Umum Lain-lain* with the utang usaha reason; Tebakan filter 0;
@@ -122,7 +122,7 @@ no dependency, no real AI call, no auth/PII change).
 - Screenshots: review-desktop.png, review-phone.png, review-after-accept.png (scratchpad, not committed; local dummy data).
 - Highlight: review-desktop.png (not uploaded: `scripts/pr-screenshots.sh` needs the `gh` CLI, which this session lacks).
 - Rounds: 1 — fixed: none needed.
-- Not checked: e2e and the browser walk were not re-run on 1bf8122 (the merge of main); CI e2e with the `e2e` label covers it. The T4 migration was tested against `buku_test` through `$executeRawUnsafe`, not via `prisma migrate deploy` on a copy of production data.
+- Not checked: e2e and the browser walk were not re-run on 027bf72 (the merge of main); CI e2e with the `e2e` label covers it. The T4 migration was tested against `buku_test` through `$executeRawUnsafe`, not via `prisma migrate deploy` on a copy of production data.
 
 ## Ship Notes
 - **Migration:** `20261011130000_unbacked_trade_replace` — data only, no schema change. Updates `BankTransaction` rows that are `NEEDS_REVIEW`, method `AI`, carry the old "Belum ada piutang/utang usaha tercatat" reason and whose client chart has 4100 / 6190 (4910 / 3300 for PERORANGAN). Accepted lines and journals are untouched; idempotent. Production write on deploy (merge to `main`).
