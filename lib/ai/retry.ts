@@ -2,7 +2,7 @@ import { isClassifiable } from "@/lib/coa/template";
 import type { Db } from "@/lib/db";
 import type { AiProvider } from "@/lib/ai/provider";
 import { aiScope, suggestWithAi } from "@/lib/ai/classify";
-import { demoteUnbacked, tradeBacking, type TradeBacking } from "@/lib/ai/unbacked";
+import { accountLookup, demoteUnbacked, tradeBacking, type TradeBacking } from "@/lib/ai/unbacked";
 import { isSimpleGuess } from "@/lib/classify/fallback";
 import { isGenericKey } from "@/lib/import/normalize";
 import type { Classification } from "@/lib/classify/types";
@@ -58,7 +58,7 @@ export async function suggestForRows(
   const accounts = (await db.account.findMany({ where: { clientId: client.id }, orderBy: { code: "asc" } })).filter(isClassifiable);
   const kinds = new Map((await db.entity.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.entityId))] } }, select: { id: true, kind: true } })).map((e) => [e.id, e.kind]));
   const backings = new Map<string, (asOf: Date) => TradeBacking>();
-  const fsLineOf = (code: string) => accounts.find((a) => a.code === code)?.fsLine;
+  const accountOf = accountLookup(accounts);
   // One pass per kind of books: a person's lines are asked about as a person's (lib/ai/classify.ts aiScope).
   for (const kind of new Set(rows.map((r) => kinds.get(r.entityId)!))) {
     const group = rows.filter((r) => kinds.get(r.entityId) === kind);
@@ -71,7 +71,7 @@ export async function suggestForRows(
         if (!found) continue;
         // Same demotion as at import: a receivable/payable the entity's books don't hold (lib/ai/unbacked.ts).
         if (!backings.has(r.entityId)) backings.set(r.entityId, await tradeBacking(db, r.entityId));
-        const s = demoteUnbacked(found, r.direction, fsLineOf, backings.get(r.entityId)!(r.date));
+        const s = demoteUnbacked(found, r.direction, kinds.get(r.entityId)!, accountOf, backings.get(r.entityId)!(r.date));
         // Only while it is still waiting: a line accepted meanwhile keeps the accountant's decision.
         const res = await db.bankTransaction.updateMany({
           where: { id: r.id, status: "NEEDS_REVIEW", method: "HEURISTIC" },
