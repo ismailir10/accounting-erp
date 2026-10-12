@@ -97,7 +97,7 @@ no dependency, no real AI call, no auth/PII change).
 - [x] T2 DB tests: Belifi-like fixture, group *serupa* bulk accept, date-aware backing, *Minta saran AI* path; update old assertions — accept: `npm test` green (deps: T1, reuse: `tests/helpers.ts`, `lib/review.ts` writer)
 - [x] T3 `accounting-rules` rule 14 sentence updated — accept: states replace-not-keep, links `lib/ai/unbacked.ts` (deps: T1)
 - [x] T4 Data migration for existing Review rows — accept: a db test applies it to a seeded old-style row (deps: T1)
-- [ ] T5 Gates and verify-local: `npm run lint && npm run typecheck && npm test`, `npm run build && npm run demo:reset && npm run verify:books` (ALL PASS), local browser walk of Review — accept: `Verified locally — <sha>` recorded (deps: T1–T3)
+- [x] T5 Gates and verify-local: `npm run lint && npm run typecheck && npm test`, `npm run build && npm run demo:reset && npm run verify:books` (ALL PASS), local browser walk of Review — accept: `Verified locally — <sha>` recorded (deps: T1–T3)
 
 ## Implementation
 - Plan: T1–T5 sequential, all inline (one small slice in `lib/ai`, each task needs the previous one's signature; a worker would need the whole plan as context). Reviews done by the driver on the diff.
