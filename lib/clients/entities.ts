@@ -1,4 +1,5 @@
 import type { Db, Tx } from "@/lib/db";
+import { Prisma } from "@/lib/generated/prisma/client";
 import { recordEvent } from "@/lib/audit";
 import { cleanBank, normalizeNpwp, OnboardingError, takenNumbers, TAKEN, SHORT_NAME_TAKEN, type BankInput } from "@/lib/onboarding";
 
@@ -15,19 +16,56 @@ export class EntityEditError extends Error {}
 
 export type Usage = { label: string; n: number }[];
 
-type Counted = { _count: { _all: number } };
-
-/** groupBy rows → id → count. */
-function tally<K extends string>(key: K, rows: (Counted & Record<K, string | null>)[]): Map<string, number> {
-  return new Map(rows.flatMap((r) => (r[key] ? [[r[key]!, r._count._all] as const] : [])));
-}
-
-/** Counts of one thing grouped on several columns (an invoice's two accounts), added up. */
-function sum(...maps: Map<string, number>[]): Map<string, number> {
-  const m = new Map<string, number>();
-  for (const one of maps) for (const [k, n] of one) m.set(k, (m.get(k) ?? 0) + n);
-  return m;
-}
+/**
+ * What can point at a company/owner (by `entityId`), a bank account (by `bankAccountId`), its GL account (by account id) or its code
+ * (a bank row or split filed to it, a client rule or remembered choice that would file to it — the code would point at the next account
+ * added). Labels are the words the reason uses; table and column names are fixed identifiers, never input.
+ */
+const BY_ENTITY: [label: string, table: string][] = [
+  ["jurnal (termasuk saldo awal)", "JournalEntry"],
+  ["mutasi bank", "BankTransaction"],
+  ["akun dari impor buku besar", "SourceAccount"],
+  ["jadwal penyesuaian", "AdjustmentSchedule"],
+  ["usulan jurnal", "ProposedEntry"],
+  ["aset tetap", "FixedAsset"],
+  ["faktur", "Invoice"],
+  ["tahun pajak", "TaxYear"],
+  ["pengaturan CKPN", "CkpnSetting"],
+  ["sewa", "Lease"],
+  ["karyawan", "Employee"],
+  ["pengaturan imbalan kerja", "BenefitSetting"],
+  ["posting imbalan kerja", "BenefitPosting"],
+  ["stok opname", "InventoryCount"],
+  ["rekonsiliasi subledger", "SubledgerImport"],
+  ["temuan", "Finding"],
+  ["catatan laporan", "ReportComment"],
+  ["faktur Coretax", "CoretaxFaktur"],
+  ["bukti potong Coretax", "CoretaxBupot"],
+  ["angsuran PPh 25", "TaxInstalment"],
+  ["dokumen yang dikonfirmasi untuk perusahaan ini", "EvidenceSelection"],
+  ["pemeriksaan impor buku besar", "ImportCheck"],
+];
+const DRAFT = "draf impor buku besar";
+const BY_BANK: [label: string, table: string][] = [
+  ["impor rekening koran", "StatementImport"],
+  ["mutasi bank", "BankTransaction"],
+  ["draf rekening koran hasil baca", "OcrDraft"],
+  ["dokumen yang dikonfirmasi sebagai rekening koran ini", "EvidenceSelection"],
+];
+const BY_GL: [label: string, table: string, column: string][] = [
+  ["baris jurnal", "JournalLine", "accountId"],
+  ["pemetaan akun dari impor buku besar", "SourceAccount", "accountId"],
+  ["kredit pajak", "TaxCredit", "accountId"],
+  ["koreksi fiskal", "FiscalCorrection", "accountId"],
+  ["faktur", "Invoice", "counterAccountId"],
+  ["faktur", "Invoice", "arApAccountId"],
+  ["jadwal penyesuaian", "AdjustmentSchedule", "debitAccountId"],
+  ["jadwal penyesuaian", "AdjustmentSchedule", "creditAccountId"],
+  ["jadwal penyesuaian", "AdjustmentSchedule", "sourceAccountId"],
+  ["aset tetap", "FixedAsset", "assetAccountId"],
+  ["aset tetap", "FixedAsset", "accumulatedAccountId"],
+];
+const BY_CODE = { c: "mutasi yang diklasifikasikan ke akun ini", r: "aturan klasifikasi ke akun ini", m: "pilihan yang diingat ke akun ini" } as const;
 
 const add = (usage: Usage, label: string, n: number | undefined) => {
   if (!n) return;
@@ -42,8 +80,8 @@ const NUMBER_READ = new Set(["impor rekening koran", "mutasi bank", "draf rekeni
 export type ClientUsage = { entities: Map<string, Usage>; banks: Map<string, Usage> };
 
 /**
- * What points at every company/owner and bank account of a client (empty = removable), in one query per table. The settings page and the
- * removal (inside its transaction) read the same function, so the reason shown is the reason enforced.
+ * What points at every company/owner and bank account of a client (empty = removable), in one round trip: the settings page shows it
+ * and the removal re-runs it inside its transaction, so the reason shown is the reason enforced.
  */
 export async function clientUsage(db: Db | Tx, clientId: string): Promise<ClientUsage> {
   const entities = await db.entity.findMany({ where: { clientId }, select: { id: true, bankAccounts: { select: { id: true, accountId: true, account: { select: { code: true } } } } } });
@@ -52,120 +90,44 @@ export async function clientUsage(db: Db | Tx, clientId: string): Promise<Client
   const bankIds = banks.map((b) => b.id);
   const glIds = banks.map((b) => b.accountId);
   const codes = banks.map((b) => b.account.code);
-  const byEntity = { entityId: { in: entityIds } };
-  const byBank = { bankAccountId: { in: bankIds } };
-  const all = { _all: true } as const;
-  const onClient = { bankAccount: { entity: { clientId } } };
-
-  const [
-    entries, rows, sources, schedules, proposals, assets, invoices, taxYears, ckpn, leases, employees, benefitSettings, benefitPostings, stock,
-    subledgers, findings, comments, faktur, bupot, instalments, selections, checks, drafts,
-    imports, bankRows, ocr, bankSelections, lines, sourceMaps, credits, corrections, invCounter, invArAp, schDebit, schCredit, schSource, faAsset, faAccum,
-    classified, suggested, splits, rules, memories,
-  ] = await Promise.all([
-    db.journalEntry.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.bankTransaction.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.sourceAccount.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.adjustmentSchedule.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.proposedEntry.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.fixedAsset.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.invoice.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.taxYear.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.ckpnSetting.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.lease.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.employee.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.benefitSetting.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.benefitPosting.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.inventoryCount.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.subledgerImport.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.finding.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.reportComment.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.coretaxFaktur.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.coretaxBupot.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.taxInstalment.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.evidenceSelection.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
-    db.importCheck.groupBy({ by: ["entityId"], where: byEntity, _count: all }),
+  const count = (key: string, table: string, column: string, ids: string[]) =>
+    Prisma.sql`SELECT ${key} AS k, ${Prisma.raw(`"${column}"`)} AS id, count(*)::int AS n FROM ${Prisma.raw(`"${table}"`)} WHERE ${Prisma.raw(`"${column}"`)} = ANY(${ids}::text[]) GROUP BY 2`;
+  const parts = [
+    ...BY_ENTITY.map(([, table], i) => count(`e${i}`, table, "entityId", entityIds)),
+    ...BY_BANK.map(([, table], i) => count(`b${i}`, table, "bankAccountId", bankIds)),
+    ...BY_GL.map(([, table, column], i) => count(`g${i}`, table, column, glIds)),
+    // By code, within this client: its bank rows and their splits, its own rules and remembered choices (firm rules are templates).
+    Prisma.sql`SELECT 'c' AS k, "accountCode" AS id, count(*)::int AS n FROM "BankTransaction" WHERE "bankAccountId" = ANY(${bankIds}::text[]) AND "accountCode" = ANY(${codes}::text[]) GROUP BY 2`,
+    Prisma.sql`SELECT 'c' AS k, "suggestedCode" AS id, count(*)::int AS n FROM "BankTransaction" WHERE "bankAccountId" = ANY(${bankIds}::text[]) AND "suggestedCode" = ANY(${codes}::text[]) GROUP BY 2`,
+    Prisma.sql`SELECT 'c' AS k, s."accountCode" AS id, count(*)::int AS n FROM "BankTxSplit" s JOIN "BankTransaction" t ON t.id = s."bankTransactionId" WHERE t."bankAccountId" = ANY(${bankIds}::text[]) AND s."accountCode" = ANY(${codes}::text[]) GROUP BY 2`,
+    Prisma.sql`SELECT 'r' AS k, "accountCode" AS id, count(*)::int AS n FROM "Rule" WHERE "clientId" = ${clientId} AND "accountCode" = ANY(${codes}::text[]) GROUP BY 2`,
+    Prisma.sql`SELECT 'm' AS k, "accountCode" AS id, count(*)::int AS n FROM "Memory" WHERE "clientId" = ${clientId} AND "accountCode" = ANY(${codes}::text[]) GROUP BY 2`,
     // A draft ledger import keeps its entity mapping in JSON until it is posted.
-    db.ledgerImport.findMany({ where: { clientId, status: "DRAFT" }, select: { data: true } }),
-
-    db.statementImport.groupBy({ by: ["bankAccountId"], where: byBank, _count: all }),
-    db.bankTransaction.groupBy({ by: ["bankAccountId"], where: byBank, _count: all }),
-    db.ocrDraft.groupBy({ by: ["bankAccountId"], where: { clientId, ...byBank }, _count: all }),
-    db.evidenceSelection.groupBy({ by: ["bankAccountId"], where: byBank, _count: all }),
-    db.journalLine.groupBy({ by: ["accountId"], where: { accountId: { in: glIds } }, _count: all }),
-    db.sourceAccount.groupBy({ by: ["accountId"], where: { accountId: { in: glIds } }, _count: all }),
-    db.taxCredit.groupBy({ by: ["accountId"], where: { accountId: { in: glIds } }, _count: all }),
-    db.fiscalCorrection.groupBy({ by: ["accountId"], where: { accountId: { in: glIds } }, _count: all }),
-    db.invoice.groupBy({ by: ["counterAccountId"], where: { counterAccountId: { in: glIds } }, _count: all }),
-    db.invoice.groupBy({ by: ["arApAccountId"], where: { arApAccountId: { in: glIds } }, _count: all }),
-    db.adjustmentSchedule.groupBy({ by: ["debitAccountId"], where: { debitAccountId: { in: glIds } }, _count: all }),
-    db.adjustmentSchedule.groupBy({ by: ["creditAccountId"], where: { creditAccountId: { in: glIds } }, _count: all }),
-    db.adjustmentSchedule.groupBy({ by: ["sourceAccountId"], where: { sourceAccountId: { in: glIds } }, _count: all }),
-    db.fixedAsset.groupBy({ by: ["assetAccountId"], where: { assetAccountId: { in: glIds } }, _count: all }),
-    db.fixedAsset.groupBy({ by: ["accumulatedAccountId"], where: { accumulatedAccountId: { in: glIds } }, _count: all }),
-    // By code: a bank row or split filed to the account, a client rule or a remembered choice that would file to it.
-    db.bankTransaction.groupBy({ by: ["accountCode"], where: { ...onClient, accountCode: { in: codes } }, _count: all }),
-    db.bankTransaction.groupBy({ by: ["suggestedCode"], where: { ...onClient, suggestedCode: { in: codes } }, _count: all }),
-    db.bankTxSplit.groupBy({ by: ["accountCode"], where: { bankTransaction: onClient, accountCode: { in: codes } }, _count: all }),
-    db.rule.groupBy({ by: ["accountCode"], where: { clientId, accountCode: { in: codes } }, _count: all }),
-    db.memory.groupBy({ by: ["accountCode"], where: { clientId, accountCode: { in: codes } }, _count: all }),
-  ]);
-
-  const e = (rows: (Counted & { entityId: string | null })[]) => tally("entityId", rows);
-  const ownLists: [string, Map<string, number>][] = [
-    ["jurnal (termasuk saldo awal)", e(entries)],
-    ["mutasi bank", e(rows)],
-    ["akun dari impor buku besar", e(sources)],
-    ["draf impor buku besar", new Map(entityIds.map((id) => [id, drafts.filter((d) => JSON.stringify(d.data).includes(id)).length]))],
-    ["jadwal penyesuaian", e(schedules)],
-    ["usulan jurnal", e(proposals)],
-    ["aset tetap", e(assets)],
-    ["faktur", e(invoices)],
-    ["tahun pajak", e(taxYears)],
-    ["pengaturan CKPN", e(ckpn)],
-    ["sewa", e(leases)],
-    ["karyawan", e(employees)],
-    ["pengaturan imbalan kerja", e(benefitSettings)],
-    ["posting imbalan kerja", e(benefitPostings)],
-    ["stok opname", e(stock)],
-    ["rekonsiliasi subledger", e(subledgers)],
-    ["temuan", e(findings)],
-    ["catatan laporan", e(comments)],
-    ["faktur Coretax", e(faktur)],
-    ["bukti potong Coretax", e(bupot)],
-    ["angsuran PPh 25", e(instalments)],
-    ["dokumen yang dikonfirmasi untuk perusahaan ini", e(selections)],
-    ["pemeriksaan impor buku besar", e(checks)],
+    Prisma.sql`SELECT 'd' AS k, e.id, count(*)::int AS n FROM unnest(${entityIds}::text[]) AS e(id) JOIN "LedgerImport" l ON l."clientId" = ${clientId} AND l.status = 'DRAFT' AND strpos(l.data::text, e.id) > 0 GROUP BY 2`,
   ];
-  const gl = new Map(banks.map((b) => [b.accountId, b.id]));
-  const code = new Map(banks.map((b) => [b.account.code, b.id]));
-  const toBank = (from: Map<string, string>, counts: Map<string, number>): Map<string, number> => new Map([...counts].map(([k, n]) => [from.get(k)!, n]));
-  const bankLists: [string, Map<string, number>][] = [
-    ["impor rekening koran", tally("bankAccountId", imports)],
-    ["mutasi bank", tally("bankAccountId", bankRows)],
-    ["draf rekening koran hasil baca", tally("bankAccountId", ocr)],
-    ["dokumen yang dikonfirmasi sebagai rekening koran ini", tally("bankAccountId", bankSelections)],
-    ["baris jurnal", toBank(gl, tally("accountId", lines))],
-    ["pemetaan akun dari impor buku besar", toBank(gl, tally("accountId", sourceMaps))],
-    ["kredit pajak", toBank(gl, tally("accountId", credits))],
-    ["koreksi fiskal", toBank(gl, tally("accountId", corrections))],
-    ["faktur", toBank(gl, sum(tally("counterAccountId", invCounter), tally("arApAccountId", invArAp)))],
-    ["jadwal penyesuaian", toBank(gl, sum(tally("debitAccountId", schDebit), tally("creditAccountId", schCredit), tally("sourceAccountId", schSource)))],
-    ["aset tetap", toBank(gl, sum(tally("assetAccountId", faAsset), tally("accumulatedAccountId", faAccum)))],
-    ["mutasi yang diklasifikasikan ke akun ini", toBank(code, sum(tally("accountCode", classified), tally("suggestedCode", suggested), tally("accountCode", splits)))],
-    ["aturan klasifikasi ke akun ini", toBank(code, tally("accountCode", rules))],
-    ["pilihan yang diingat ke akun ini", toBank(code, tally("accountCode", memories))],
-  ];
+  const rows = entityIds.length ? await db.$queryRaw<{ k: string; id: string; n: number }[]>`${Prisma.join(parts, " UNION ALL ")}` : [];
 
+  const glToBank = new Map(banks.map((b) => [b.accountId, b.id]));
+  const codeToBank = new Map(banks.map((b) => [b.account.code, b.id]));
+  const own = new Map(entityIds.map((id) => [id, [] as Usage]));
   const bankUsage = new Map(bankIds.map((id) => [id, [] as Usage]));
-  for (const [label, counts] of bankLists) for (const [id, n] of counts) add(bankUsage.get(id)!, label, n);
+  // In the order the lists above are written, so the reason reads the same every time.
+  const rank = (k: string) => "edbgcrm".indexOf(k[0]) * 100 + (Number(k.slice(1)) || 0);
+  for (const r of [...rows].sort((a, b) => rank(a.k) - rank(b.k))) {
+    const kind = r.k[0];
+    const i = Number(r.k.slice(1));
+    if (kind === "e") add(own.get(r.id)!, BY_ENTITY[i][0], r.n);
+    else if (kind === "d") add(own.get(r.id)!, DRAFT, r.n);
+    else if (kind === "b") add(bankUsage.get(r.id)!, BY_BANK[i][0], r.n);
+    else if (kind === "g") add(bankUsage.get(glToBank.get(r.id)!)!, BY_GL[i][0], r.n);
+    else add(bankUsage.get(codeToBank.get(r.id)!)!, BY_CODE[kind as keyof typeof BY_CODE], r.n);
+  }
 
   const entityUsage = new Map<string, Usage>();
   for (const ent of entities) {
-    const usage: Usage = [];
-    for (const [label, counts] of ownLists) add(usage, label, counts.get(ent.id));
+    const usage = own.get(ent.id)!;
     // Its bank accounts add only what the entity's own counts can't show: their rows are the entity's rows, their journal lines its journals.
-    const hasEntries = usage.some((u) => u.label === "jurnal (termasuk saldo awal)");
+    const hasEntries = usage.some((u) => u.label === BY_ENTITY[0][0]);
     for (const b of ent.bankAccounts) {
       for (const u of bankUsage.get(b.id)!) {
         if (u.label === "mutasi bank" || (u.label === "baris jurnal" && hasEntries)) continue;

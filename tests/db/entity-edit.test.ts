@@ -225,8 +225,8 @@ describe("remove a bank account", () => {
   it("if data lands between the check and the delete, the foreign keys stop it and it says so (nothing is cascaded)", async () => {
     const g = await booked(); // the BCA account has statements, rows and journal lines
     const before = await snapshot(g);
-    // A transaction whose usage queries all read "empty", as they would a moment before a concurrent import committed.
-    const blind = (tx: object) => new Proxy(tx, { get: (t, k) => { const v = Reflect.get(t, k); return v && typeof v === "object" && "groupBy" in v ? new Proxy(v, { get: (m, f) => (f === "groupBy" ? async () => [] : Reflect.get(m, f)) }) : v; } });
+    // A transaction whose usage query reads "empty", as it would a moment before a concurrent import committed.
+    const blind = (tx: object) => new Proxy(tx, { get: (t, k) => (k === "$queryRaw" ? async () => [] : Reflect.get(t, k)) });
     const racing = new Proxy(db, {
       get: (target, key) => (key === "$transaction" ? (fn: (tx: unknown) => unknown, opts?: object) => (target.$transaction as (f: unknown, o?: object) => unknown)((tx: object) => fn(blind(tx)), opts) : Reflect.get(target, key)),
     });

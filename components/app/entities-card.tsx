@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Plus } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -14,14 +14,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { BankPicker } from "@/components/app/bank-picker";
 import { bankName } from "@/lib/banks";
 import type { BankCode } from "@/lib/generated/prisma/enums";
-import { addBankAccountAction, addEntityAction } from "@/app/actions";
+import { addBankAccountAction, addEntityAction, removeBankAccountAction, removeEntityAction, renameEntityAction, updateBankAccountAction } from "@/app/actions";
 import { CURRENCIES, CURRENCY_CODES } from "@/lib/fx/currency";
 
 type Bank = BankCode;
 type Kind = "PT" | "CV" | "BADAN_USAHA_ASING" | "PERORANGAN";
 const KIND_LABEL: Record<Kind, string> = { PT: "PT", CV: "CV", BADAN_USAHA_ASING: "Badan usaha asing", PERORANGAN: "Perorangan (pemilik)" };
 
-export type EntityView = { id: string; name: string; kind: Kind; banks: { id: string; label: string; number: string; code: string; isOverdraft: boolean }[] };
+/** `blocked`: why it can't be removed (the server's own check), null when it can. `numberLocked`: a statement was read for the account. */
+export type BankView = { id: string; label: string; bank: Bank; number: string; code: string; isOverdraft: boolean; numberLocked: boolean; blocked: string | null };
+export type EntityView = { id: string; name: string; shortName: string; npwp: string; kind: Kind; blocked: string | null; banks: BankView[] };
 
 /** Fields of one bank account (bank, number, name, PRK). `prefix` is the error-key path the server reports under. */
 function BankFields({ value, onChange, errors, prefix }: { value: { bank: Bank; number: string; label: string; isOverdraft: boolean }; onChange: (v: { bank: Bank; number: string; label: string; isOverdraft: boolean }) => void; errors: Record<string, string>; prefix: string }) {
@@ -74,6 +76,144 @@ function AddBank({ clientId, entity, onDone }: { clientId: string; entity: Entit
         <Button size="sm" onClick={save} disabled={busy}>{busy ? "Menyimpan…" : "Simpan rekening"}</Button>
         <Button size="sm" variant="ghost" onClick={onDone} disabled={busy}>Batal</Button>
       </div>
+    </div>
+  );
+}
+
+type Saved = { ok: true } | { ok: false; error: string; fields?: Record<string, string> };
+
+/**
+ * The end of an edit form: *Hapus …* with a second click to confirm, or why it can't be removed. Only for an admin; the reason comes
+ * from the same check the removal runs.
+ */
+function RemovePart({ what, name, blocked, canRemove, remove, onDone }: { what: string; name: string; blocked: string | null; canRemove: boolean; remove: () => Promise<Saved>; onDone: () => void }) {
+  const router = useRouter();
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  if (!canRemove) return null;
+  if (blocked) return <p className="border-t pt-3 text-sm text-muted-foreground">Tidak bisa dihapus. {blocked}</p>;
+  async function go() {
+    setBusy(true);
+    try {
+      const r = await remove();
+      if (!r.ok) return void toast.error(r.error);
+      toast.success(`${name} dihapus`);
+      onDone();
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+      {confirming ? (
+        <>
+          <span className="text-sm">Hapus {name}? Belum ada pembukuan di sini, jadi tidak ada angka yang berubah.</span>
+          <Button size="sm" variant="destructive" onClick={go} disabled={busy}>{busy ? "Menghapus…" : `Ya, hapus ${what}`}</Button>
+          <Button size="sm" variant="ghost" onClick={() => setConfirming(false)} disabled={busy}>Batal</Button>
+        </>
+      ) : (
+        <Button size="sm" variant="ghost" className="text-fail" onClick={() => setConfirming(true)}><Trash2 /> Hapus {what}</Button>
+      )}
+    </div>
+  );
+}
+
+/** *Ubah* on a company/owner: the names and NPWP (labels only), then the removal part. */
+function EditEntity({ clientId, entity, canRemove, onDone }: { clientId: string; entity: EntityView; canRemove: boolean; onDone: () => void }) {
+  const router = useRouter();
+  const [name, setName] = useState(entity.name);
+  const [shortName, setShortName] = useState(entity.shortName);
+  const [npwp, setNpwp] = useState(entity.npwp);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const id = `edit-${entity.id}`;
+  async function save() {
+    setBusy(true);
+    try {
+      const r = await renameEntityAction(clientId, entity.id, { name, shortName, npwp });
+      if (!r.ok) {
+        setErrors(r.fields ?? {});
+        return void toast.error(r.error);
+      }
+      toast.success("Perubahan disimpan");
+      onDone();
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+  const clear = () => setErrors({});
+  return (
+    <div className="space-y-4 border-t pt-4" data-testid={`edit-entity-${entity.id}`}>
+      <div className="grid gap-4 sm:grid-cols-4">
+        <Field className="sm:col-span-2">
+          <FieldLabel htmlFor={`${id}-name`}>Nama lengkap</FieldLabel>
+          <Input id={`${id}-name`} value={name} aria-invalid={!!errors.name} onChange={(e) => { setName(e.target.value); clear(); }} />
+          <FieldError>{errors.name}</FieldError>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor={`${id}-short`}>Nama singkat</FieldLabel>
+          <Input id={`${id}-short`} value={shortName} aria-invalid={!!errors.shortName} onChange={(e) => { setShortName(e.target.value); clear(); }} placeholder="Sama dengan nama lengkap" />
+          <FieldError>{errors.shortName}</FieldError>
+        </Field>
+        {entity.kind !== "BADAN_USAHA_ASING" && (
+          <Field>
+            <FieldLabel htmlFor={`${id}-npwp`}>NPWP (opsional)</FieldLabel>
+            <Input id={`${id}-npwp`} value={npwp} aria-invalid={!!errors.npwp} onChange={(e) => { setNpwp(e.target.value); clear(); }} placeholder="15 atau 16 angka" />
+            <FieldError>{errors.npwp}</FieldError>
+          </Field>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">Nama hanya label: tidak ada jurnal atau angka yang berubah. Nama akun bank di buku besar ikut nama singkat.</p>
+      <div className="flex gap-2">
+        <Button size="sm" onClick={save} disabled={busy}>{busy ? "Menyimpan…" : "Simpan perubahan"}</Button>
+        <Button size="sm" variant="ghost" onClick={onDone} disabled={busy}>Batal</Button>
+      </div>
+      <RemovePart what={entity.kind === "PERORANGAN" ? "pemilik" : "perusahaan"} name={entity.name} blocked={entity.blocked} canRemove={canRemove} remove={() => removeEntityAction(clientId, entity.id)} onDone={onDone} />
+    </div>
+  );
+}
+
+/** *Ubah* on a rekening: name and bank any time; the number only until a statement was read for it. */
+function EditBank({ clientId, bank, canRemove, onDone }: { clientId: string; bank: BankView; canRemove: boolean; onDone: () => void }) {
+  const router = useRouter();
+  const [value, setValue] = useState({ bank: bank.bank, number: bank.number, label: bank.label });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const id = `edit-bank-${bank.id}`;
+  async function save() {
+    setBusy(true);
+    try {
+      const r = await updateBankAccountAction(clientId, bank.id, value);
+      if (!r.ok) {
+        setErrors(r.fields ?? {});
+        return void toast.error(r.error);
+      }
+      toast.success("Rekening disimpan");
+      onDone();
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+  const set = (v: Partial<typeof value>) => { setValue({ ...value, ...v }); setErrors({}); };
+  return (
+    <div className="space-y-3 bg-muted/30 px-3 py-3" data-testid={`edit-bank-${bank.id}`}>
+      <div className="grid gap-2 sm:grid-cols-[10rem_1fr_1fr]">
+        <BankPicker value={value.bank} onChange={(v) => set({ bank: v })} />
+        <div className="space-y-1">
+          <Input id={`${id}-number`} aria-label="Nomor rekening" inputMode="numeric" value={value.number} disabled={bank.numberLocked} aria-invalid={!!errors["bank.number"]} onChange={(e) => set({ number: e.target.value })} />
+          <FieldError>{errors["bank.number"]}</FieldError>
+          {bank.numberLocked && <p className="text-xs text-muted-foreground">Nomor tetap: rekening korannya sudah dibaca dan file berikutnya dicocokkan dengan nomor ini.</p>}
+        </div>
+        <Input aria-label="Nama rekening" value={value.label} onChange={(e) => set({ label: e.target.value })} placeholder={`Nama (opsional), mis. ${bankName(value.bank)} Giro`} />
+      </div>
+      <div className="flex gap-2">
+        <Button size="sm" onClick={save} disabled={busy}>{busy ? "Menyimpan…" : "Simpan rekening"}</Button>
+        <Button size="sm" variant="ghost" onClick={onDone} disabled={busy}>Batal</Button>
+      </div>
+      <RemovePart what="rekening" name={bank.label} blocked={bank.blocked} canRemove={canRemove} remove={() => removeBankAccountAction(clientId, bank.id)} onDone={onDone} />
     </div>
   );
 }
@@ -152,14 +292,16 @@ function AddEntity({ clientId, onDone }: { clientId: string; onDone: () => void 
   );
 }
 
-/** The client's companies/owners and their bank accounts, with the two ways to add to them after "Simpan klien". */
-export function EntitiesCard({ clientId, entities }: { clientId: string; entities: EntityView[] }) {
-  const [open, setOpen] = useState<string | null>(null); // "entity" or the id of the entity getting a bank account
+/** The client's companies/owners and their bank accounts: add to them, fix a name or number, remove what was entered by mistake. */
+export function EntitiesCard({ clientId, entities, canEdit, canRemove }: { clientId: string; entities: EntityView[]; canEdit: boolean; canRemove: boolean }) {
+  // One form open at a time: "entity" (add), "bank:<entity id>" (add a rekening), "edit:<entity id>", "edit-bank:<bank id>".
+  const [open, setOpen] = useState<string | null>(null);
+  const close = () => setOpen(null);
   return (
     <Card data-testid="entities-card">
       <CardHeader>
         <CardTitle>Perusahaan & rekening</CardTitle>
-        <CardDescription>Ada perusahaan, pemilik atau rekening bank yang belum dimasukkan? Tambahkan di sini. Yang sudah ada tidak berubah. Rekening yang ditambahkan setelah Saldo Awal dicatat: saldo awalnya diisi lewat Jurnal Penyesuaian.</CardDescription>
+        <CardDescription>Ada perusahaan, pemilik atau rekening bank yang belum dimasukkan? Tambahkan di sini. Salah ketik nama atau nomor? Pilih Ubah. Rekening yang ditambahkan setelah Saldo Awal dicatat: saldo awalnya diisi lewat Jurnal Penyesuaian.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
         {entities.map((e) => (
@@ -167,30 +309,42 @@ export function EntitiesCard({ clientId, entities }: { clientId: string; entitie
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
                 <div className="font-medium">{e.name}</div>
-                <div className="text-xs text-muted-foreground">{KIND_LABEL[e.kind]}</div>
+                <div className="text-xs text-muted-foreground">{KIND_LABEL[e.kind]}{e.shortName !== e.name ? ` · ${e.shortName}` : ""}{e.npwp ? ` · NPWP ${e.npwp}` : ""}</div>
               </div>
-              {open !== e.id && <Button size="sm" variant="outline" onClick={() => setOpen(e.id)}><Plus /> Tambah rekening</Button>}
+              {canEdit && (
+                <div className="flex flex-wrap gap-2">
+                  {open !== `edit:${e.id}` && <Button size="sm" variant="ghost" aria-label={`Ubah ${e.name}`} onClick={() => setOpen(`edit:${e.id}`)}><Pencil /> Ubah</Button>}
+                  {open !== `bank:${e.id}` && <Button size="sm" variant="outline" onClick={() => setOpen(`bank:${e.id}`)}><Plus /> Tambah rekening</Button>}
+                </div>
+              )}
             </div>
+            {open === `edit:${e.id}` && <EditEntity clientId={clientId} entity={e} canRemove={canRemove} onDone={close} />}
             {e.banks.length === 0 ? (
               <p className="text-sm text-muted-foreground">Belum ada rekening bank. Unggah rekening korannya di <Link href={`/clients/${clientId}/import`} className="text-primary">Unggah</Link> — rekeningnya ditambahkan dari file.</p>
             ) : (
               <ul className="divide-y border text-sm">
                 {e.banks.map((b) => (
-                  <li key={b.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-3 py-2">
-                    <span className="min-w-0 truncate">{b.label}{b.isOverdraft ? " · PRK" : ""}</span>
-                    <span className="num text-muted-foreground">{b.number} · {b.code}</span>
+                  <li key={b.id}>
+                    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-3 py-2">
+                      <span className="min-w-0 truncate">{b.label}{b.isOverdraft ? " · PRK" : ""}</span>
+                      <span className="flex items-center gap-2">
+                        <span className="num text-muted-foreground">{b.number} · {b.code}</span>
+                        {canEdit && open !== `edit-bank:${b.id}` && <Button size="xs" variant="ghost" aria-label={`Ubah rekening ${b.label}`} onClick={() => setOpen(`edit-bank:${b.id}`)}><Pencil /> Ubah</Button>}
+                      </span>
+                    </div>
+                    {open === `edit-bank:${b.id}` && <EditBank clientId={clientId} bank={b} canRemove={canRemove} onDone={close} />}
                   </li>
                 ))}
               </ul>
             )}
-            {open === e.id && <AddBank clientId={clientId} entity={e} onDone={() => setOpen(null)} />}
+            {open === `bank:${e.id}` && <AddBank clientId={clientId} entity={e} onDone={close} />}
           </div>
         ))}
-        {open === "entity" ? (
-          <AddEntity clientId={clientId} onDone={() => setOpen(null)} />
+        {canEdit && (open === "entity" ? (
+          <AddEntity clientId={clientId} onDone={close} />
         ) : (
           <Button variant="outline" onClick={() => setOpen("entity")}><Plus /> Tambah perusahaan atau pemilik</Button>
-        )}
+        ))}
       </CardContent>
     </Card>
   );

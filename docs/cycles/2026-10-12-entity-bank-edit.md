@@ -59,7 +59,7 @@ entities; no deletion of anything with posted entries (correct by Jurnal Penyesu
 ## Tasks
 - [x] T1 Domain `lib/clients/entities.ts` (usage, reasons, rename, edit, remove, audit) + E7 in `lib/onboarding.ts` + `tests/db/entity-edit.test.ts` — accept: E1–E5, E7 rules, refusals leave data untouched, books identical after rename.
 - [x] T2 Server actions (role gate, tenant) + `tests/db/entity-edit-action.test.ts` — accept: akuntan edits, cannot remove; viewer refused; foreign client refused.
-- [ ] T3 UI in `entities-card.tsx` + settings page (reasons from the server) — accept: E6 walked in the browser.
+- [x] T3 UI in `entities-card.tsx` + settings page (reasons from the server) — accept: E6 walked in the browser.
 - [ ] T4 e2e (`e2e/add-entity.spec.ts`), README, accounting-rules note, full gate — accept: recorded in Verification.
 
 ## Implementation
@@ -73,6 +73,12 @@ entities; no deletion of anything with posted entries (correct by Jurnal Penyesu
 - T2: `app/actions.ts` — `renameEntityAction`, `updateBankAccountAction` (`client.create`), `removeBankAccountAction`, `removeEntityAction`
   (`client.delete`, refusal "Hanya admin kantor yang dapat menghapus perusahaan atau rekening."); the member is the audit actor.
   `tests/db/entity-edit-action.test.ts` drives them through the real guard (akuntan, viewer, admin, another organisation).
+- T3: `components/app/entities-card.tsx` — *Ubah* on each company and rekening opens an inline form; it ends with *Hapus …* (second click
+  confirms, "no figure changes") or, when something points to it, "Tidak bisa dihapus." and the reason. The list rows carry no disabled
+  buttons. Viewers see no Ubah/Tambah. Settings page computes `clientUsage` once, only on the *Perusahaan & laporan* tab.
+  Found while walking: the first `clientUsage` ran 44 Prisma queries; inside the removal's interactive transaction they run one after the
+  other, and production's functions and database are not known to share a region, so a removal could hit the 5 s transaction timeout.
+  It is now one `UNION ALL` statement (plus the entity read): 23.5 ms → 6.4 ms locally, 2 round trips instead of 44.
 
 ## Verification
 
