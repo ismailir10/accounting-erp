@@ -165,6 +165,9 @@ new dependencies or migrations, new financial implementation, and paid AI calls.
   production release. Local fixture services are disposable; no paid calls.
 
 ## Ship Notes
+- Release PR: [#154](https://github.com/ismailir10/accounting-erp/pull/154).
+- Both pinned synthetic highlight images render on the public PR page and match
+  the inspected local capture bytes. No original client files were uploaded.
 - No schema, migration, dependency or deployment configuration change is included.
 - No deck change: both public decks already describe per-entity currency and
   ledger-based FX; these changes repair those existing capabilities.
