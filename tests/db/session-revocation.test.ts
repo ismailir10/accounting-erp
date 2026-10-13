@@ -95,15 +95,22 @@ async function expectDownloads(session: Pick<OpenedSession, "download">) {
   }
 }
 
-async function expectDenied(session: OpenedSession, reason: "SIGNED_OUT" | "CLOSED" | "CLIENT") {
+async function expectDenied(session: OpenedSession, reason: "SIGNED_OUT" | "CLOSED" | "CLIENT", answerError?: string) {
   expect(auth.userId).toBe(session.member.userId);
   const redirect = reason === "SIGNED_OUT" ? "/login" : "/akses-ditutup";
   const pageError = reason === "CLIENT" ? "NEXT_HTTP_ERROR_FALLBACK;404" : `NEXT_REDIRECT;replace;${redirect};307;`;
   await expect(session.documents()).rejects.toMatchObject({ digest: pageError });
   // Reuse the exact version and locator returned by the answer before revocation.
   await expect(session.source()).rejects.toMatchObject({ digest: pageError });
-  expect(await loadEvidenceAction(session.intake.id)).toMatchObject({ ok: false });
-  expect(await askWorkspaceAction(session.question)).toMatchObject({ ok: false });
+  const error = {
+    SIGNED_OUT: "Masuk terlebih dahulu.",
+    CLOSED: "Akses ruang kerja ini ditutup. Hubungi Buku.",
+    CLIENT: "Klien tidak ditemukan",
+  }[reason];
+  expect(await loadEvidenceAction(session.intake.id)).toEqual({ ok: false, error });
+  expect(await askWorkspaceAction(session.question)).toEqual({
+    ok: false, error: answerError ?? (reason === "CLIENT" ? "Cakupan tidak ditemukan dalam kantor Anda." : error),
+  });
   const exportsBefore = await db.auditEvent.count({ where: { kind: "REPORT_EXPORT" } });
   for (const [path, handler] of downloads) {
     if (reason === "CLIENT") {
@@ -161,7 +168,7 @@ describe("subsequent requests from an already-authorized session", () => {
   it("loses the admin's implicit client access when demoted without an assignment", async () => {
     const session = await openSession("ADMIN");
     await db.firmMember.update({ where: { id: session.member.id }, data: { role: "VIEWER" } });
-    await expectDenied(session, "CLIENT");
+    await expectDenied(session, "CLIENT", "Peran Peninjau hanya dapat melihat dan mengunduh laporan.");
   });
 
   it("keeps assigned viewer reads/downloads but denies new answers after a role downgrade", async () => {

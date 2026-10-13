@@ -66,8 +66,16 @@ existing user-facing retrieval surfaces tested here.
 ## Verification
 - Baseline auth regression: 2 files, 14 tests passed.
 - Targeted new suite: 1 file, 7 tests passed (10.80 seconds).
-- Lint and typecheck passed. Repository Vitest gate passed: 267 files,
-  2,441 tests (429.43 seconds); includes the new suite.
+- Initial candidate `acce6aa9cf6f9cf5013a86715cf114d0cb0b3d0b`: lint and
+  typecheck passed; repository Vitest gate passed with 267 files,
+  2,441 tests (429.43 seconds), including the new suite.
+- Review follow-up: match the exact document-reload and answer refusal messages
+  for each access change, including the distinct scope and viewer-role refusals.
+  Rerun: lint/typecheck passed; affected auth suites passed with 3 files,
+  21 tests (15.04 seconds).
+- Exact candidate CI and independent review evidence are recorded on
+  [PR #156](https://github.com/ismailir10/accounting-erp/pull/156). Skipped jobs
+  are not passing gates; browser/E2E verification remains outside this check.
 - The fixture retains its source version after refusal; denied downloads create
   no additional export audit events. Downloads return nonempty attachments with
   `Cache-Control: no-store` while permitted.
