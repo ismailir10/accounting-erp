@@ -13,12 +13,12 @@ export function ScopeBar({ entities, periods, entity, period, allowCombined = tr
   const set = (key: string, value: string | null) => {
     const p = new URLSearchParams(params.toString());
     if (value) p.set(key, value);
+    else p.delete(key);
     if (key === "entity") {
       const clientId = pathname.match(/^\/clients\/([^/]+)/)?.[1];
       if (value && value !== "combined") p.set("scope", `entity:${value}`);
       else if (clientId) p.set("scope", `client:${clientId}`);
     }
-    else p.delete(key);
     router.push(`${pathname}?${p.toString()}`);
   };
   const entityOptions = entities.length > 1 && allowCombined ? [{ value: "combined", label: "Gabungan Grup" }, ...entities] : entities;
