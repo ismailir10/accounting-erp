@@ -24,6 +24,21 @@ describe("evidence extraction", () => {
     expect(unit.facts).toContainEqual({ key: "fiscalYearEnd", value: "01-31", locator: "baris 3" });
   });
 
+  it("a multi-entity ledger table counts its rows per entity and currency (cycle 2026-10-12-ledger-entity-currency)", async () => {
+    const { postableTables } = await import("@/lib/evidence/extract");
+    const rows = [
+      ["Entitas", "Tanggal", "Kode Akun", "Nama Akun", "Mata Uang", "Debit", "Kredit"],
+      ["HOLD", new Date(Date.UTC(2025, 0, 31)), "1-100", "Kas", "USD", 100, 0],
+      ["HOLD", new Date(Date.UTC(2025, 0, 31)), "3-100", "Modal", "USD", 0, 100],
+      ["HOLD", new Date(Date.UTC(2025, 1, 28)), "1-100", "Kas", "SGD", 50, 0],
+      ["HOLD", new Date(Date.UTC(2025, 1, 28)), "3-100", "Modal", "SGD", 0, 50],
+      ["OPA", new Date(Date.UTC(2025, 0, 31)), "1-100", "Kas", "IDR", 1000, 0],
+      ["OPA", new Date(Date.UTC(2025, 0, 31)), "4-100", "Penjualan", "IDR", 0, 1000],
+    ];
+    const tables = await postableTables("gl.xlsx", await workbook({ GL: rows }));
+    expect(tables.get("GL")).toMatchObject({ mode: "LEDGER", entities: ["HOLD", "OPA"], entityCurrencies: { HOLD: { USD: 2, SGD: 2 }, OPA: { IDR: 2 } } });
+  });
+
   it("handles leap-day year ends without skipping a day", async () => {
     const { units: [unit] } = await extractEvidence("report.txt", Buffer.from("Financial statements\nYear ended 29 February 2024\nUSD\nRevenue: 100"));
     expect(unit.periodStart).toBe("2023-03-01");

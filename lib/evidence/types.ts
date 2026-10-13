@@ -32,6 +32,9 @@ export type EvidenceTable = {
   periodEnd: string | null;
   /** Distinct row currencies (ledger rows with a currency column). Absent on older extractions. */
   currencies?: string[];
+  /** Ledger rows per entity label and currency ({ HOLDCO: { USD: 700, SGD: 300 } }): an entity whose rows aren't mostly Rupiah has its
+   *  bookkeeping currency asked, never assumed (cycle 2026-10-12-ledger-entity-currency). Rows without a currency aren't counted. */
+  entityCurrencies?: Record<string, Record<string, number>>;
 };
 export type EvidenceUnit = {
   key: string;

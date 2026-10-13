@@ -40,7 +40,7 @@ describe("formatRupiah", () => {
   });
 });
 
-import { centsToMinor, formatMoney, parseCents, parseMinor, roundEntry } from "@/lib/money";
+import { centsToMinor, formatMoney, parseCents, parseMinor, parseSubSen, roundEntry } from "@/lib/money";
 
 describe("parseCents / parseMinor", () => {
   it("parses strings and spreadsheet floats to sen", () => {
@@ -63,6 +63,34 @@ describe("parseCents / parseMinor", () => {
     expect(centsToMinor(-150n, "IDR")).toBe(-2n);
     expect(centsToMinor(4497n, "USD")).toBe(4497n);
     expect(parseMinor("12,750.00", "JPY")).toBe(12_750n);
+  });
+});
+
+describe("one rounding of a sub-sen source amount (rule 6a; readiness finding F1, 2026-10-12)", () => {
+  it("keeps the source amount exactly when it has digits beyond sen", () => {
+    expect(parseSubSen(1234.497123)).toBe(1_234_497_123n); // a spreadsheet float with six real decimals
+    expect(parseSubSen("1234.4951")).toBe(1_234_495_100n); // ("1234.495" alone reads as a thousands group, as before)
+    expect(parseSubSen(-1234.497123)).toBe(-1_234_497_123n);
+    expect(parseSubSen(1234.5)).toBeUndefined(); // sen are enough
+    expect(parseSubSen(93375132.07000001)).toBeUndefined(); // float noise only
+    expect(parseSubSen("1.234,497")).toBe(1_234_497_000n);
+    expect(parseSubSen("abc")).toBeUndefined();
+    expect(parseCents(1234.497123)).toBe(123450n); // sen are unchanged
+  });
+
+  it("roundEntry rounds the exact source amount once (no-sen and sen currencies alike)", () => {
+    expect(roundEntry([123450n, -123450n], "IDR").rounded).toEqual([1235n, -1235n]); // sen only: a real half rounds up
+    expect(roundEntry([123450n, -123450n], "IDR", [1_234_497_000n, -1_234_497_000n]).rounded).toEqual([1234n, -1234n]); // before: rounded twice
+    expect(roundEntry([123450n], "JPY", [1_234_497_000n]).rounded).toEqual([1234n]);
+    expect(roundEntry([123450n, -123450n], "SGD", [1_234_497_000n, -1_234_497_000n]).rounded).toEqual([123450n, -123450n]);
+    expect(roundEntry([123449n], "IDR", [1_234_494_000n]).rounded).toEqual([1234n]);
+    // The residue still goes to one 7190 line: 1.234,497 + 765,503 = 2.000,000.
+    const r = roundEntry([123450n, 76550n, -200000n], "IDR", [1_234_497_000n, 765_503_000n, undefined]);
+    expect(r.rounded).toEqual([1234n, 766n, -2000n]);
+    expect(r.rounding).toBe(0n);
+    // A sen currency: 0,505 − 10 + 9,495 = 0 in the source → 0,51 − 10,00 + 9,50 and −0,01 to 7190, not a 0,01 imbalance.
+    const u = roundEntry([51n, -1000n, 950n], "USD", [505_000n, undefined, 9_495_000n]);
+    expect(u).toEqual({ rounded: [51n, -1000n, 950n], rounding: -1n, total: 0n });
   });
 });
 

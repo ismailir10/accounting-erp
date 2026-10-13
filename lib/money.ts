@@ -71,11 +71,31 @@ function detectDecimalSeparator(s: string, lastDot: number, lastComma: number): 
  * Throws on anything that isn't a number — callers turn that into a BLOCK check.
  */
 export function parseCents(input: string | number | bigint | null | undefined): bigint {
+  return parseScaled(input, 2);
+}
+
+/**
+ * The source amount exactly, in **micro-units** (10^-6 of a unit, signed), when it has digits beyond sen; else `undefined`.
+ * Six decimals is the documented input precision (a spreadsheet float is read through `toFixed(6)`). Rule 6a rounds this amount
+ * once to the entity currency (`roundEntry`): rounding the sen value again would round twice (1.234,497 → 1.234,50 → 1.235, where
+ * the source rounds to 1.234), and a total taken over sen values can miss the residue that belongs on 7190.
+ */
+export function parseSubSen(input: string | number | bigint | null | undefined): bigint | undefined {
+  try {
+    const micro = parseScaled(input, 6);
+    return micro % 10_000n === 0n ? undefined : micro;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Parse to 10^-`places` units (sen at 2, micro-units at 6), rounding further digits half away from zero. */
+function parseScaled(input: string | number | bigint | null | undefined, places: number): bigint {
   if (input === null || input === undefined) return 0n;
-  if (typeof input === "bigint") return input * 100n;
+  if (typeof input === "bigint") return input * 10n ** BigInt(places);
   if (typeof input === "number") {
     if (!Number.isFinite(input)) throw new Error(`Nominal tidak valid: ${input}`);
-    return parseCents(input.toFixed(6));
+    return parseScaled(input.toFixed(6), places);
   }
   let s = input.trim().replace(/\s|Rp\.?|IDR|SGD|USD/gi, "");
   if (s === "" || s === "-") return 0n;
@@ -99,8 +119,8 @@ export function parseCents(input: string | number | bigint | null | undefined): 
   }
   intPart = intPart.replace(/[.,]/g, "");
   if (!/^\d*$/.test(intPart) || !/^\d*$/.test(frac) || (intPart === "" && frac === "")) throw new Error(`Nominal tidak valid: "${input}"`);
-  const scaled = BigInt((intPart || "0") + frac.padEnd(Math.max(frac.length, 2), "0"));
-  const value = frac.length > 2 ? divRound(scaled, 10n ** BigInt(frac.length - 2)) : scaled;
+  const scaled = BigInt((intPart || "0") + frac.padEnd(Math.max(frac.length, places), "0"));
+  const value = frac.length > places ? divRound(scaled, 10n ** BigInt(frac.length - places)) : scaled;
   return negative ? -value : value;
 }
 
@@ -170,15 +190,24 @@ export function parseMoney(input: string, currency: string): bigint {
 }
 
 /**
- * Rule 6a: round each signed sen amount to the currency's minor unit and report the residue that one line on
- * 7190 Selisih Pembulatan must carry so the rounded entry sums to the rounded total. Nothing is spread silently.
- * Returns `rounded[i]` (signed minor units) and `rounding` (signed, debit-positive) with Σrounded + rounding = round(Σcents).
+ * Rule 6a: round each signed source amount **once**, half away from zero, to the currency's minor unit and report the residue that one
+ * line on 7190 Selisih Pembulatan must carry so the rounded entry sums to the rounded total. Nothing is spread silently.
+ * `cents[i]` is the amount in sen; `exact[i]`, when given, is the same amount in micro-units (`parseSubSen`) and wins — the line and
+ * the total are then rounded from the source as written, not from its sen.
+ * Returns `rounded[i]` (signed minor units) and `rounding` (signed, debit-positive) with Σrounded + rounding = `total` = round(Σ source).
  */
-export function roundEntry(cents: bigint[], currency: string): { rounded: bigint[]; rounding: bigint; total: bigint } {
-  const rounded = cents.map((c) => centsToMinor(c, currency));
-  const total = centsToMinor(cents.reduce((s, c) => s + c, 0n), currency);
+export function roundEntry(cents: bigint[], currency: string, exact?: (bigint | undefined)[]): { rounded: bigint[]; rounding: bigint; total: bigint } {
+  const micro = cents.map((c, i) => exact?.[i] ?? c * 10_000n);
+  const rounded = micro.map((m) => microToMinor(m, currency));
+  const total = microToMinor(micro.reduce((s, m) => s + m, 0n), currency);
   const rounding = total - rounded.reduce((s, r) => s + r, 0n);
   return { rounded, rounding, total };
+}
+
+/** Micro-units (10^-6) → minor units of `currency`, rounded once, half away from zero. */
+export function microToMinor(micro: bigint, currency: string): bigint {
+  const e = exponentOf(currency);
+  return e >= 6 ? micro * 10n ** BigInt(e - 6) : divRound(micro, 10n ** BigInt(6 - e));
 }
 
 const nf = new Intl.NumberFormat("id-ID");

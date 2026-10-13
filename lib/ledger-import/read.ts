@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import { dateOnly } from "@/lib/format";
-import { parseCents } from "@/lib/money";
+import { parseCents, parseSubSen } from "@/lib/money";
 import { normalizeLedgerRate } from "@/lib/fx/currency";
 import { dateParts, dayMonthEvidence, MONTHS, readCsv, type DayMonthOrder } from "@/lib/import/parsers/common";
 import { ParseError } from "@/lib/import/types";
@@ -158,6 +158,19 @@ export function cellText(c: RawCell | undefined): string {
 
 function isBlank(c: RawCell | undefined) {
   return cellText(c) === "";
+}
+
+/** The cell's amount in micro-units when it has digits beyond sen (`parseSubSen`), else undefined. */
+function cellSubSen(c: RawCell | undefined): bigint | undefined {
+  return typeof c === "number" || typeof c === "string" ? parseSubSen(c) : undefined;
+}
+
+/** debit − credit exactly in micro-units, when either side has digits beyond sen; else undefined. */
+function exactOf(debit: RawCell | undefined, credit: RawCell | undefined, debitCents: bigint, creditCents: bigint): bigint | undefined {
+  const d = cellSubSen(debit);
+  const k = cellSubSen(credit);
+  if (d === undefined && k === undefined) return undefined;
+  return (d ?? debitCents * 10_000n) - (k ?? creditCents * 10_000n);
 }
 
 /** Signed sen, or an error string when the cell isn't a number. Blank = 0. */
@@ -581,6 +594,10 @@ export function readLedger(sheet: RawSheet, t: TableCandidate): { rows: LedgerRo
       voucher: cellText(get("voucher")) || null,
       errors,
       ...(negative ? { negative: true, raw } : {}),
+      ...(() => {
+        const exact = exactOf(debitCell, creditCell, raw.debit, raw.credit);
+        return exact === undefined ? {} : { exact };
+      })(),
     });
   }
   return { rows, totals, ...(dateOrder ? { dateOrder } : {}) };
@@ -702,7 +719,14 @@ export function readNeraca(sheet: RawSheet, t: TableCandidate): { date: Date | n
       // Presentation sign → debit-positive: assets as shown; liabilities & equity flipped.
       const debitPositive = c.amount === undefined ? cents : section === "LIABILITAS" || section === "EKUITAS" ? -cents : cents;
       const typeHint: AccountType | null = section === "LIABILITAS" && SECTION_EQUITY.test(nameCell) ? "EKUITAS" : section;
+      const exact = typeof raw !== "bigint" ? undefined : c.amount !== undefined ? cellSubSen(amountCell) : (() => {
+        const d = cellCents(row[c.debit!]);
+        const k = cellCents(row[c.credit!]);
+        return typeof d === "bigint" && typeof k === "bigint" ? exactOf(row[c.debit!], row[c.credit!], d, k) : undefined;
+      })();
       rows.push({
+        // Same sign rule as the amount.
+        ...(exact === undefined ? {} : { exact: c.amount !== undefined && (section === "LIABILITAS" || section === "EKUITAS") ? -exact : exact }),
         ref: at(r),
         row: r + 1,
         code: hasCode ? codeCell : `${NO_CODE_PREFIX}${label}`,
@@ -777,12 +801,18 @@ export function readTb(sheet: RawSheet, t: TableCandidate): { date: Date | null;
       continue;
     }
     const values: TbRow["values"] = {};
+    const exact: NonNullable<TbRow["exact"]> = {};
     const errors: string[] = [];
     for (const [g, s] of groups) {
       const parts = s.balance !== undefined ? [cellCents(row[s.balance])] : [cellCents(row[s.debit!]), cellCents(row[s.credit!])];
       const bad = parts.find((p): p is string => typeof p === "string");
-      if (bad) errors.push(`${TB_GROUP_LABEL[g]} bukan angka: ${bad}`);
-      else values[g] = parts.length === 1 ? (parts[0] as bigint) : (parts[0] as bigint) - (parts[1] as bigint);
+      if (bad) {
+        errors.push(`${TB_GROUP_LABEL[g]} bukan angka: ${bad}`);
+        continue;
+      }
+      values[g] = parts.length === 1 ? (parts[0] as bigint) : (parts[0] as bigint) - (parts[1] as bigint);
+      const x = s.balance !== undefined ? cellSubSen(row[s.balance]) : exactOf(row[s.debit!], row[s.credit!], parts[0] as bigint, parts[1] as bigint);
+      if (x !== undefined) exact[g] = x;
     }
     const ref = `${sheet.name}!${r + 1}`;
     if (/^(total|jumlah)\b/i.test(label) && !hasCode) {
@@ -790,7 +820,7 @@ export function readTb(sheet: RawSheet, t: TableCandidate): { date: Date | null;
       continue;
     }
     if (!hasCode && !errors.length && Object.values(values).every((v) => v === 0n)) continue;
-    const tbRow: TbRow = { ref, row: r + 1, code: hasCode ? codeCell : `${NO_CODE_PREFIX}${label}`, name: hasCode ? nameCell || codeCell : label, coded: hasCode, values, errors };
+    const tbRow: TbRow = { ref, row: r + 1, code: hasCode ? codeCell : `${NO_CODE_PREFIX}${label}`, name: hasCode ? nameCell || codeCell : label, coded: hasCode, values, ...(Object.keys(exact).length ? { exact } : {}), errors };
     if (section) sections.set(tbRow, guessEquity(label, section) ?? section);
     rows.push(tbRow);
   }
@@ -804,7 +834,11 @@ export function readTb(sheet: RawSheet, t: TableCandidate): { date: Date | null;
     const turned = rows.reduce((sum, r) => sum + (credit(r) ? -(r.values[g] ?? 0n) : (r.values[g] ?? 0n)), 0n);
     if (raw !== 0n && turned === 0n) {
       flipped.push(g);
-      for (const r of rows) if (credit(r) && r.values[g] !== undefined) r.values[g] = -r.values[g]!;
+      for (const r of rows) {
+        if (!credit(r)) continue;
+        if (r.values[g] !== undefined) r.values[g] = -r.values[g]!;
+        if (r.exact?.[g] !== undefined) r.exact[g] = -r.exact[g]!;
+      }
     }
   }
   const title = titlePeriod(sheet, t.headerRow);

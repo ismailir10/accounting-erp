@@ -25,6 +25,11 @@ export type ManagementNoteProps = {
  * approves for the management report. Nothing reaches the report without the click.
  */
 export function ManagementNoteCard(p: ManagementNoteProps) {
+  // A draft belongs to one report; changing scope also discards pending AI responses.
+  return <ManagementNoteEditor key={`${p.clientId}:${p.entityId}:${p.year}:${p.month}`} {...p} />;
+}
+
+function ManagementNoteEditor(p: ManagementNoteProps) {
   const router = useRouter();
   const [draft, setDraft] = useState<{ text: string; source: "AI" | "ACCOUNTANT"; foreign: string[]; edited: boolean } | null>(null);
   const [busy, setBusy] = useState(false);

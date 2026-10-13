@@ -38,6 +38,8 @@ export type LedgerSection = {
   periodEnd: string | null;
   /** The distinct values of the ledger's entity column ("SKP", "CSP"): each is a company of the client, matched to its short name. */
   entities?: string[];
+  /** Rows per entity label and currency, when the ledger has a currency column (see `EvidenceTable.entityCurrencies`). */
+  entityCurrencies?: Record<string, Record<string, number>>;
 };
 
 /** What the Unggah page shows for one file: no bytes, no password. */
@@ -97,11 +99,25 @@ function bankSection(st: ParsedStatement): BankSection {
   };
 }
 
+/** Only entities with a non-Rupiah row carry their counts (all they're for is asking a bookkeeping currency): a Rupiah ledger's preview is unchanged. */
+function foreignEntities(counts: Record<string, Record<string, number>> | undefined): Pick<LedgerSection, "entityCurrencies"> {
+  const foreign = Object.entries(counts ?? {}).filter(([, byCurrency]) => Object.keys(byCurrency).some((c) => c !== "IDR"));
+  return foreign.length ? { entityCurrencies: Object.fromEntries(foreign) } : {};
+}
+
 /** Tables the ledger import would read; none for PDFs and for files that aren't spreadsheets or CSV tables. */
 async function ledgerSections(name: string, data: Buffer): Promise<LedgerSection[]> {
   if (sniffFile(data) === "PDF") return [];
   const tables = await postableTables(name, data);
-  return [...tables].map(([sheet, t]) => ({ sheet, mode: t.mode, rows: t.rows, periodStart: t.periodStart, periodEnd: t.periodEnd, ...(t.entities.length ? { entities: t.entities } : {}) }));
+  return [...tables].map(([sheet, t]) => ({
+    sheet,
+    mode: t.mode,
+    rows: t.rows,
+    periodStart: t.periodStart,
+    periodEnd: t.periodEnd,
+    ...(t.entities.length ? { entities: t.entities } : {}),
+    ...foreignEntities(t.entityCurrencies),
+  }));
 }
 
 const span = (starts: (string | null)[], ends: (string | null)[]) => {

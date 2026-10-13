@@ -36,7 +36,17 @@ export type TbLayout = {
   dates: Partial<Record<TbGroup, Date>>;
 };
 /** One TB account row: signed sen per group, debit-positive. */
-export type TbRow = { ref: string; row: number; code: string; name: string; coded: boolean; values: Partial<Record<TbGroup, bigint>>; errors: string[] };
+export type TbRow = {
+  ref: string;
+  row: number;
+  code: string;
+  name: string;
+  coded: boolean;
+  values: Partial<Record<TbGroup, bigint>>;
+  /** A group's value exactly, in micro-units, when the file wrote it beyond sen (`parseSubSen`): rule 6a rounds this once. */
+  exact?: Partial<Record<TbGroup, bigint>>;
+  errors: string[];
+};
 export type TbRead = {
   layout: TbLayout;
   rows: TbRow[];
@@ -67,6 +77,8 @@ export type LedgerRow = {
   negative?: boolean;
   /** As written, when `negative`: a file total sums the columns as written. */
   raw?: { debit: bigint; credit: bigint };
+  /** The signed amount (debit − credit) exactly, in micro-units, when the file wrote it beyond sen (`parseSubSen`): rule 6a rounds this once. */
+  exact?: bigint;
 };
 
 /** A grand-total row of a ledger file (Total/Jumlah, no date): compared with the rows. Signed sen. */
@@ -79,6 +91,8 @@ export type NeracaRow = {
   name: string;
   /** Signed sen, debit-positive (assets +, liabilities/equity −, contra accounts flipped by their sign). */
   amount: bigint;
+  /** `amount` exactly, in micro-units, when the file wrote it beyond sen (`parseSubSen`): rule 6a rounds this once. */
+  exact?: bigint;
   typeHint: AccountType | null;
   /** Current / non-current from the file's sub-heading ("Long-term Liability"); null for equity or unknown. */
   termHint: AccountTerm | null;
