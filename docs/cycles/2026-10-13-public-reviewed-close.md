@@ -59,6 +59,8 @@ Any non-public code change, new dependency, production action or private-data us
       phone reading; regenerate PDFs and verify the changed surfaces.
 - [x] T2 Record the exact claim changes, source audit and verification; publish a
       draft PR with synthetic highlight screenshots.
+- [x] T3 Fix public PDF link annotations after the parent review found local
+      export-server links; regenerate downloads and verify canonical targets.
 
 ## Implementation
 - Plan: sequential and inline; the copy, navigation and evidence share the same
@@ -310,6 +312,43 @@ pass (25 unit/artifact, 9 browser), lint/typecheck/build pass, 62 deck captures 
 no browser errors or page/body overflow. Highlights named above were captured
 against this final runtime. The subsequent record update changes documentation
 only. Full existing suite passed 2,430 tests; synthetic books pass 1,765 checks.
+
+### PDF annotation correction — 2026-10-13
+
+Parent review identified a release blocker missed by the original text/page-count
+checks: both committed PDFs contained four loopback link targets on the temporary
+export server. This includes trial, privacy, bank-format and deck navigation links.
+
+- Parent explicitly authorized the directly related public exporter repair.
+  `scripts/deck-pdf.ts` resolves same-origin anchors to the repo's documented
+  production origin before printing; local rendering/assets stay local. It does
+  not read local `APP_URL` as a publication origin.
+- Added an annotation regression using `unpdf.extractLinks`, which reads the actual
+  PDF link annotations. Both tests fail against the old PDFs (two failures, two
+  existing artifact passes), then pass against the regenerated downloads.
+- Independent annotation audit: firm PDF has 17 pages / 20 link annotations;
+  company PDF has 14 pages / 17 annotations. Both have exactly these public targets:
+  `https://native-erp-v2.vercel.app/deck`,
+  `https://native-erp-v2.vercel.app/#bank-formats`,
+  `https://native-erp-v2.vercel.app/kebijakan-privasi`,
+  `https://native-erp-v2.vercel.app/daftar`.
+- Tests require the canonical HTTPS origin and expected target set, rejecting
+  localhost, loopback, private/internal hosts, temporary ports and URL credentials.
+- Corrective checks: lint and typecheck pass; 5 focused files / 27 tests pass
+  (7.07 seconds); the 9 anonymous public browser tests pass (14.5 seconds), including
+  desktop/phone navigation and downloads. No HTML/CSS/product runtime changed.
+- Visual checks: raster-rendered all 31 PDF pages before and after the link repair;
+  raw pixels are identical on every page (`pagesCompared: 31`,
+  `pixelDifferences: []`). Inspected regenerated firm source and company CTA pages.
+  Existing PR highlight screenshots remain visually exact.
+- Evidence: `/tmp/buku-public-evidence/pdf-annotation-audit.json`,
+  `/tmp/buku-public-evidence/pdf-links/visual-comparison.json`,
+  `/tmp/buku-public-annotations-before.log`,
+  `/tmp/buku-public-annotations-focused.log`,
+  `/tmp/buku-public-annotations-browser.log`.
+- This supersedes the earlier PDF link coverage gap; the earlier 2,430-test full
+  suite is historical, not a claimed rerun of this correction. Keep PR #155 draft
+  for renewed exact-head parent review; do not enable CI or merge yet.
 
 ## Ship Notes
 - Branch: `task/public-reviewed-close`, fresh main `e4899e1` unchanged at final fetch.
