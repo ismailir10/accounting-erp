@@ -199,12 +199,12 @@ b, strong { font-weight: 620; }
 @keyframes grow { from { scale: 1 0; } to { scale: 1 1; } }
 @keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
 @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
-.slide.on [data-a] { animation: rise 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both; animation-delay: calc(var(--d, 0) * 90ms + 80ms); }
-.slide.on .art .pop { animation: pop 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both; animation-delay: calc(var(--d, 0) * 90ms + 200ms); }
-.slide.on .art .grow { transform-box: fill-box; transform-origin: 50% 100%; animation: grow 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both; animation-delay: calc(var(--d, 0) * 90ms + 300ms); }
-.slide.on .art .draw, .slide.on .st .draw { stroke-dasharray: 1; animation: draw 0.7s ease-out both; animation-delay: calc(var(--d, 0) * 90ms + 300ms); }
-.slide.on .fade { animation: fadein 0.6s ease both; animation-delay: calc(var(--d, 0) * 90ms + 200ms); }
-/* the one looping motion: a packet travelling a path, to show an amount moving (SVG <animateMotion>, removed under reduced motion) */
+.slide.on [data-a] { animation: rise 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both; animation-delay: calc(var(--d, 0) * 90ms + 80ms); }
+.slide.on .art .pop { animation: pop 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both; animation-delay: calc(var(--d, 0) * 90ms + 200ms); }
+.slide.on .art .grow { transform-box: fill-box; transform-origin: 50% 100%; animation: grow 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both; animation-delay: calc(var(--d, 0) * 90ms + 300ms); }
+.slide.on .art .draw, .slide.on .st .draw { stroke-dasharray: 1; animation: draw 0.4s ease-out both; animation-delay: calc(var(--d, 0) * 90ms + 300ms); }
+.slide.on .fade { animation: fadein 0.4s ease both; animation-delay: calc(var(--d, 0) * 90ms + 200ms); }
+/* Financial examples keep their final values throughout navigation. */
 
 /* ---------- controls ---------- */
 .ctrl { position: fixed; right: 2.4rem; bottom: 2.2rem; display: flex; align-items: center; gap: 0.8rem; z-index: 5; }
@@ -224,7 +224,8 @@ html.flow body { overflow: auto; }
 html.flow .slide { position: relative; inset: auto; opacity: 1; visibility: visible; display: block; transition: none; min-height: 0; }
 html.flow .frame { width: auto; height: auto; padding: 0 3.2rem 6rem; }
 html.flow .s-top { height: 8rem; }
-html.flow .s-foot { display: none; }
+html.flow .s-foot { display: flex; height: auto; gap: 2rem; padding-top: 3rem; }
+html.flow .s-foot .n { display: block; white-space: nowrap; }
 html.flow .s-body { display: block; }
 html.flow .split, html.flow .split.lw, html.flow .split.rw { grid-template-columns: 1fr; gap: 4.4rem; }
 html.flow h1 { font-size: 6.4rem; }
@@ -239,7 +240,26 @@ html.flow .fl-1 { grid-template-columns: 1fr !important; }
 html.flow .psak.fl-1 { grid-template-columns: 1fr 1fr !important; }
 html.flow .fl-scroll { overflow-x: auto; }
 html.flow .fl-scroll > * { min-width: 72rem; }
-@media (max-width: 560px) { html.flow { font-size: 6.4px; } html.flow .frame { padding: 0 2.5rem 6rem; } html.flow h1 { font-size: 6rem; } html.flow h2 { font-size: 4.9rem; } html.flow .lead, html.flow .pts li { font-size: 2.5rem; } }
+/* Public reading mode: PDF access remains visible and body copy stays readable. */
+.reader-tools { display: none; }
+html.flow .reader-tools { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 2rem; padding: 1rem 3.2rem; background: var(--bg); border-bottom: 1px solid var(--line); font-size: 1.75rem; }
+.reader-tools a { display: inline-flex; align-items: center; min-height: 44px; text-underline-offset: 3px; }
+html.flow .slide { scroll-margin-top: 70px; }
+html.flow .slide > .s-body { padding: 4rem 3.2rem 6rem; }
+.reader-note { padding: 2rem 3.2rem; }
+.deck-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 560px) {
+  html.flow { font-size: 8px; }
+  html.flow .frame { padding: 0 2.5rem 4rem; }
+  html.flow h1 { font-size: 5.2rem; }
+  html.flow h2 { font-size: 4.4rem; }
+  html.flow .lead, html.flow .pts li { font-size: 2.1rem; }
+  html.flow .s-top, html.flow .s-foot, html.flow .note, html.flow .lbl { font-size: 1.75rem; }
+  html.flow .brand small { font-size: 1.5rem; }
+  html.flow .s-top { gap: 2rem; }
+  html.flow .reader-tools { padding-inline: 2.5rem; }
+  html.flow .psak.fl-1 { grid-template-columns: 1fr !important; }
+}
 
 /* ---------- reduced motion and print: final state, nothing moves ---------- */
 @media (prefers-reduced-motion: reduce) {
@@ -258,7 +278,7 @@ html.flow [data-a], html.flow .art .pop, html.flow .art .grow, html.flow .art .d
   html.flow .s-foot { display: flex; }
   html.flow .split { grid-template-columns: 54rem 1fr; }
   .slide [data-a], .slide .art .pop, .slide .art .grow, .slide .art .draw, .slide .st .draw, .slide .fade { animation: none !important; }
-  .ctrl, .bar, .art .packet { display: none !important; }
+  .ctrl, .bar, .reader-tools, .reader-note, .deck-status { display: none !important; }
   .s-foot .n { display: inline; }
 }
 

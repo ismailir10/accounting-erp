@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="id">
+<html lang="id" class="flow">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Buku untuk kantor akuntan — by Right Jet</title>
-<meta name="description" content="Tutup buku semua klien tanpa mengetik ulang rekening koran. Buku membaca rekening koran, memeriksa saldo dan kelengkapan sumber, mengusulkan jurnal untuk Anda putuskan, dan menyusun laporan yang bisa ditelusuri.">
+<meta name="description" content="Dari file klien ke tutup buku yang ditinjau akuntan. Periksa sumber, putuskan usulan akun, lengkapi penyesuaian dan telusuri laporan ke jurnalnya.">
 <meta name="robots" content="index,follow">
 <meta name="theme-color" content="#1a1919">
 <link rel="icon" href="/deck/favicon.svg" type="image/svg+xml">
@@ -33,18 +33,19 @@
   </defs>
 </svg>
 
+<noscript><nav class="reader-tools" aria-label="Tautan presentasi"><a href="/deck">Semua presentasi</a><a href="/daftar">Minta uji coba</a><a href="/deck/buku-kantor-akuntan.pdf" download>Unduh PDF</a></nav><p class="reader-note">Semua ilustrasi memakai data demo sintetis.</p></noscript>
 <main>
 
 <!-- 01 · Cover -->
-<section class="slide dark" aria-label="Pembuka" data-note="Data demo sintetis · right-jet.com">
+<section class="slide dark" aria-label="Pembuka" data-note="Ilustrasi · data demo sintetis">
   <div class="s-body">
     <div class="split lw">
       <div>
-        <h1 data-a>Tutup buku semua klien <em>tanpa mengetik ulang</em> rekening koran.</h1>
-        <p class="lead" data-a>Buku membaca rekening koran klien, memeriksa saldo dan kelengkapan sumber, mengusulkan jurnal untuk Anda putuskan, lalu menyusun laporan yang setiap angkanya bisa ditelusuri.</p>
+        <h1 data-a>Dari file klien ke <em>tutup buku yang ditinjau</em> akuntan.</h1>
+        <p class="lead" data-a>Buku membaca rekening koran dan memeriksa saldo. Anda meninjau usulan akun, melengkapi saldo awal dan penyesuaian, lalu menutup bulan dengan laporan yang bisa ditelusuri.</p>
       </div>
       <div class="viz">
-        <svg class="art" viewBox="0 0 640 520" role="img" aria-label="Rekening koran klien menjadi buku besar dan laporan laba rugi; setiap angka laporan bisa ditelusuri kembali ke barisnya">
+        <svg class="art" viewBox="0 0 640 520" role="img" aria-label="Ilustrasi alur rekening koran ke jurnal dan laporan, dilengkapi saldo awal dan penyesuaian yang ditinjau akuntan; angka dari transaksi bank bisa ditelusuri ke baris sumbernya">
           <g class="pop" style="--d:1"><use href="#sheet" x="64" y="210" width="150" height="190" transform="rotate(-19 139 400)"/></g>
           <g class="pop" style="--d:2"><use href="#sheet" x="64" y="210" width="150" height="190" transform="rotate(-7 139 400)"/></g>
           <g class="pop" style="--d:3"><use href="#sheet" x="64" y="210" width="150" height="190" transform="rotate(5 139 400)"/></g>
@@ -56,7 +57,7 @@
 
           <path class="lb on-dk" d="M246 330C280 330 300 316 334 302"/>
           <path class="lb on-dk" d="M326 294l10 7-11 7"/>
-          <circle class="packet" r="4" fill="#8aa8ff"><animateMotion dur="2.4s" repeatCount="indefinite" path="M246 330C280 330 300 316 334 302"/></circle>
+
 
           <g class="pop" style="--d:6">
             <path class="p" d="M456 256L354 242V360L456 374Z"/>
@@ -172,10 +173,10 @@
           </svg>
         </div>
         <span class="lbl">1 · Sumber</span>
-        <h3>File lengkap, saldo terbukti</h3>
+        <h3>File dan saldo diperiksa</h3>
         <dl>
           <dt>Buku</dt><dd>membaca file dan mencocokkan saldo berjalan</dd>
-          <dt>Anda</dt><dd>melengkapi file yang kurang</dd>
+          <dt>Anda</dt><dd>memeriksa hasil baca, melengkapi file dan saldo awal</dd>
         </dl>
       </div>
       <svg class="stage-arrow" viewBox="0 0 16 16" aria-hidden="true"><use href="#i-arrow"/></svg>
@@ -192,7 +193,7 @@
         <h3>Ditinjau dan ditutup</h3>
         <dl>
           <dt>Buku</dt><dd>mengusulkan akun, memasangkan transfer, menjalankan kontrol</dd>
-          <dt>Anda</dt><dd>memutuskan yang ragu, mengunci bulan</dd>
+          <dt>Anda</dt><dd>meninjau usulan, mencatat penyesuaian, mengunci bulan</dd>
         </dl>
       </div>
       <svg class="stage-arrow" viewBox="0 0 16 16" aria-hidden="true"><use href="#i-arrow"/></svg>
@@ -252,10 +253,11 @@
       <div>
         <h2 data-a>File klien dibaca. Saldo dan periode diperiksa.</h2>
         <ul class="pts">
-          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>25 bank, rekening Rupiah.</b> PDF, CSV, Excel, atau MT940; juga PDF bersandi atau berisi beberapa rekening.</div></li>
-          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Bank lain: tunjuk kolomnya sekali.</b> File yang belum dikenal dibaca setelah kolom tanggal, keterangan, nominal, dan saldonya ditunjuk; file berikutnya langsung terbaca.</div></li>
+          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Format rekening Rupiah dari 25 bank.</b> PDF, CSV, Excel, atau MT940 sesuai tata letaknya; termasuk PDF bersandi. Periksa kecocokan file saat uji coba.</div></li>
+          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Format berbeda: atur kolomnya.</b> Tunjuk tanggal, keterangan, nominal dan saldo pada file bertabel. Pemetaan bisa dipakai ulang untuk tata letak yang sama.</div></li>
           <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Saldo cocok belum cukup.</b> Periode dan saldo penutup harus terbukti; selisih sumber wajib diperbaiki.</div></li>
         </ul>
+        <p class="note" data-a>Sebagian format belum diuji dengan contoh asli. <a href="/#bank-formats">Lihat format bank</a>.</p>
       </div>
       <div class="viz" data-a>
         <div class="c stmt fl-scroll">
@@ -286,7 +288,7 @@
   <div class="s-body">
     <div class="split rw">
       <div>
-        <h2 data-a>Buku tahu file yang kurang, dan menulis permintaannya.</h2>
+        <h2 data-a>Lihat file yang kurang. Siapkan permintaan ke klien.</h2>
         <ul class="pts">
           <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Kelengkapan per rekening, per bulan.</b> Cakupan sampai akhir bulan; sumber yang belum terbukti tetap perlu dicek.</div></li>
           <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Pesan siap kirim.</b> Salin, atau kirim lewat WhatsApp; isinya persis file yang kurang.</div></li>
@@ -328,14 +330,14 @@
       <div>
         <h2 data-a>AI mengusulkan. <em>Anda memutuskan.</em></h2>
         <ul class="pts">
-          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Yang sudah pasti, tanpa AI.</b> Transfer antar rekening sendiri, aturan, dan memori klien langsung dibukukan.</div></li>
+          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Yang memenuhi pemeriksaan, tanpa AI.</b> Transfer yang terbukti, aturan dan memori klien bisa dibukukan langsung; akuntan tetap memeriksa hasilnya.</div></li>
           <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>AI hanya untuk sisanya.</b> Usulan akun dengan alasan dan tingkat keyakinan, menunggu di antrean review.</div></li>
-          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Keputusan Anda diingat.</b> Bulan depan, penerima yang sama dikenali memori klien.</div></li>
+          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Keputusan Anda diingat.</b> Memori klien membantu mengenali penerima dan arah transaksi yang sama; hasilnya tetap bisa dikoreksi.</div></li>
         </ul>
       </div>
       <div class="viz">
         <div class="funnel" data-a>
-          <div class="f-top"><span class="lbl">PT Ayam Nusantara Digital · Agustus</span><span><b class="num" data-count>182</b> baris rekening koran</span></div>
+          <div class="f-top"><span class="lbl">PT Ayam Nusantara Digital · Agustus</span><span><b class="num">182</b> baris rekening koran</span></div>
           <div class="f-bar">
             <i style="flex:14" class="f1"></i><i style="flex:92" class="f2"></i><i style="flex:71" class="f3"></i><i style="flex:5" class="f4"></i>
           </div>
@@ -368,13 +370,13 @@
           <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Kunci AI dikelola Buku, tidak disimpan di kantor Anda.</b> Batas pemakaian per impor dan per bulan. Tanpa AI, Buku tetap berjalan.</div></li>
           <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Baca scan dengan AI mati kecuali Buku menyalakannya.</b> Kata sandi PDF disimpan terenkripsi per klien agar file bulan depan langsung terbuka; admin bisa menghapusnya.</div></li>
         </ul>
-        <p class="note" data-a>Basis data dan server aplikasi di region Singapura</p>
+        <p class="note" data-a>Baca <a href="/kebijakan-privasi">Kebijakan privasi</a>: pemrosesan AI dan akses dukungan</p>
       </div>
       <div class="viz" data-a>
         <div class="c ai-tbl fl-scroll">
           <div>
             <div class="c-h"><span>Empat baris rekening koran</span><span class="sub">Dikirim ke AI?</span></div>
-            <div class="row ai-grid"><span class="mono">TRSF DB 5210887766</span><span class="muted">Transfer antar rekening sendiri</span><span class="st mut">Tidak</span></div>
+            <div class="row ai-grid"><span class="mono">TRSF DB REKENING SENDIRI</span><span class="muted">Transfer antar rekening sendiri</span><span class="st mut">Tidak</span></div>
             <div class="row ai-grid"><span class="mono">BYR LISTRIK PLN</span><span class="muted">Aturan</span><span class="st mut">Tidak</span></div>
             <div class="row ai-grid"><span class="mono">TRSF CR PT TOKO MAKMUR JAYA</span><span class="muted">Memori klien</span><span class="st mut">Tidak</span></div>
             <div class="row ai-grid hl"><span class="mono">TRSF DB PT MESIN PAKAN OTOMATIS</span><span>Belum dikenali</span><span class="st blue">Ya</span></div>
@@ -582,7 +584,7 @@
           </g>
           <path class="lb" d="M90 168C110 238 420 238 440 168" />
           <path class="lb" d="M433 178l7-11 6 12"/>
-          <circle class="packet" r="5" fill="#2152e8"><animateMotion dur="2.6s" repeatCount="indefinite" path="M90 168C110 238 420 238 440 172"/></circle>
+
           <g class="pop" style="--d:4">
             <rect x="164" y="226" width="312" height="56" rx="28" fill="#e6ecfd"/>
             <text x="320" y="250" text-anchor="middle" class="t-bl" style="font-size:17px;font-weight:620">Rp 197.000.000</text>
@@ -614,8 +616,8 @@
       <div>
         <h2 data-a>Klien tidak perlu ganti aplikasi. Buku membaca hasilnya.</h2>
         <ul class="pts">
-          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Kasir, faktur, dan penggajian tetap dipakai.</b> Hasilnya tiba di rekening koran, dan dari situ Buku mulai.</div></li>
-          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Buku lama ikut masuk.</b> Ekspor buku besar atau neraca dari Accurate, Jurnal, atau Excel, diperiksa dulu baris per baris.</div></li>
+          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Kasir, faktur, dan penggajian tetap dipakai.</b> Rekening koran, ekspor buku dan dokumen pendukung menjadi bahan pembukuan.</div></li>
+          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Buku lama ikut masuk.</b> Ekspor buku besar atau Neraca Saldo dalam Excel/CSV: petakan akun dan periksa barisnya sebelum masuk ke Buku.</div></li>
           <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Faktur Coretax dicocokkan.</b> Faktur dan bukti potong dibandingkan dengan buku, sebelum kertas kerja pajak disusun.</div></li>
         </ul>
       </div>
@@ -638,7 +640,7 @@
           <g class="pop" style="--d:4"><rect x="290" y="196" width="200" height="88" rx="14" class="p"/><text x="310" y="232" style="font-size:15.5px;font-weight:620">Ekspor buku lama</text><text x="310" y="254" class="t-s">buku besar atau neraca</text></g>
           <g class="pop" style="--d:5"><rect x="290" y="298" width="200" height="88" rx="14" class="p"/><text x="310" y="334" style="font-size:15.5px;font-weight:620">Faktur Coretax</text><text x="310" y="356" class="t-s">dan bukti potong, dicocokkan</text></g>
           <path class="lb" d="M490 138C520 138 520 220 544 226M490 240H544M490 342C520 342 520 260 544 254"/>
-          <circle class="packet" r="4.5" fill="#2152e8"><animateMotion dur="2.2s" repeatCount="indefinite" path="M490 138C520 138 520 220 544 226"/></circle>
+
           <g class="pop" style="--d:7">
             <rect x="544" y="176" width="90" height="128" rx="18" fill="#2152e8"/>
             <text x="589" y="236" text-anchor="middle" class="t-w" style="font-size:22px;font-weight:600;letter-spacing:-.02em">Buku</text>
@@ -669,7 +671,7 @@
         <div class="onb" data-a>
           <span class="lbl">Bulan pertama setiap klien</span>
           <ol>
-            <li><b>Tambah klien dari file</b><small>tarik rekening koran: entitas dan rekening diusulkan, file langsung dibukukan</small></li>
+            <li><b>Tambah klien dari file</b><small>unggah rekening koran; periksa usulan entitas dan rekening sebelum melanjutkan</small></li>
             <li><b>Unggah data</b><small>bulan berikutnya, atau ekspor buku lama</small></li>
             <li><b>Saldo awal</b><small>dari neraca terakhir; saldo bank terisi dari rekening koran</small></li>
             <li><b>Review, tutup buku</b><small>bulan berikutnya mengikuti alur yang sama</small></li>
@@ -702,19 +704,19 @@
 </section>
 
 <!-- 17 · Mulai -->
-<section class="slide dark" aria-label="Cara memulai" data-note="right-jet.com">
+<section class="slide dark" aria-label="Cara memulai" data-note="Minta akses uji coba di /daftar">
   <div class="s-body">
     <div class="split">
       <div>
         <h2 data-a>Mulai dengan satu klien dan satu bulan.</h2>
-        <p class="lead" data-a>Kami tunjukkan alurnya dengan data demo, lalu kami jalankan satu klien nyata bersama Anda. Ukur hasilnya dengan waktu yang biasanya Anda butuhkan untuk klien yang sama.</p>
-        <div class="cta" data-a><a class="btn" href="https://right-jet.com" target="_blank" rel="noopener noreferrer">Minta undangan di right-jet.com</a><p class="note">Harga dibahas saat demo</p></div>
+        <p class="lead" data-a>Uji kecocokan format dan hasil baca. Lengkapi saldo awal serta dokumen penyesuaian, lalu jalani review sampai laporan. Bandingkan hasil dan waktunya dengan cara kerja Anda sekarang.</p>
+        <div class="cta" data-a><a class="btn" href="/daftar">Minta akses uji coba</a><p class="note">Permintaan ditinjau sebelum undangan dikirim</p></div>
       </div>
       <div class="viz end">
         <div class="steps" data-a>
           <div><span class="dotn">1</span><b>Demo</b><small>alur lengkap dengan data sintetis</small></div>
-          <div><span class="dotn">2</span><b>Satu klien, satu bulan</b><small>rekening koran asli, saldo awal dari neraca terakhir</small></div>
-          <div><span class="dotn">3</span><b>Seluruh portofolio</b><small>klien berikutnya memakai alur yang sama</small></div>
+          <div><span class="dotn">2</span><b>Satu klien, satu bulan</b><small>rekening koran, saldo awal, bukti dan penyesuaian</small></div>
+          <div><span class="dotn">3</span><b>Evaluasi sebelum melanjutkan</b><small>periksa hasil, temuan dan waktu pengerjaan</small></div>
         </div>
         <div class="c tl" data-a>
           <div class="c-h"><span>Yang dicatat Buku sendiri</span><span class="sub">per klien, per bulan</span></div>
