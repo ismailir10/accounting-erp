@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="id">
+<html lang="id" class="flow">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Buku untuk perusahaan — by Right Jet</title>
-<meta name="description" content="Laporan keuangan bulanan langsung dari rekening koran perusahaan Anda, disusun bersama akuntan Anda, dengan setiap angka bisa ditelusuri.">
+<meta name="description" content="Dari file perusahaan ke laporan bulanan yang ditinjau akuntan, dengan saldo awal, penyesuaian dan jejak sumber.">
 <meta name="robots" content="index,follow">
 <meta name="theme-color" content="#1a1919">
 <link rel="icon" href="/deck/favicon.svg" type="image/svg+xml">
@@ -37,30 +37,31 @@
   </defs>
 </svg>
 
+<noscript><nav class="reader-tools" aria-label="Tautan presentasi"><a href="/deck">Semua presentasi</a><a href="/daftar">Minta uji coba</a><a href="/deck/buku-perusahaan.pdf" download>Unduh PDF</a></nav><p class="reader-note">Semua ilustrasi memakai data demo sintetis.</p></noscript>
 <main>
 
 <!-- 01 · Cover -->
-<section class="slide dark" aria-label="Pembuka" data-note="Data demo sintetis · right-jet.com">
+<section class="slide dark" aria-label="Pembuka" data-note="Ilustrasi · data demo sintetis">
   <div class="s-body">
     <div class="split lw">
       <div>
-        <h1 data-a>Laporan keuangan bulanan, <em>langsung dari rekening koran</em> Anda.</h1>
-        <p class="lead" data-a>Buku membaca rekening koran perusahaan, akuntan Anda memutuskan yang meragukan, dan setiap bulan Anda menerima laba rugi, neraca, dan arus kas yang setiap angkanya bisa ditelusuri.</p>
+        <h1 data-a>Laporan bulanan dari buku <em>yang ditinjau akuntan</em> Anda.</h1>
+        <p class="lead" data-a>Mulai dari rekening koran, saldo awal dan dokumen pendukung. Akuntan meninjau transaksi serta penyesuaian; Buku menyusun laporan dari jurnal yang sudah dibukukan.</p>
       </div>
       <div class="viz">
-        <svg class="art" viewBox="0 0 640 520" role="img" aria-label="Dua rekening koran menjadi laporan laba rugi bulanan">
+        <svg class="art" viewBox="0 0 640 520" role="img" aria-label="Ilustrasi rekening koran sebagai sumber laporan laba rugi bulanan, bersama saldo awal dan penyesuaian yang ditinjau akuntan">
           <g class="pop" style="--d:1"><use href="#sheet" x="40" y="150" width="150" height="190" transform="rotate(-10 115 340)"/></g>
           <g class="pop" style="--d:2"><use href="#sheet" x="40" y="150" width="150" height="190" transform="rotate(6 115 340)"/></g>
           <text class="t-s" x="36" y="404">Rekening koran BCA dan Mandiri</text>
           <path class="lb on-dk" d="M206 250C236 250 248 250 276 250"/>
           <path class="lb on-dk" d="M268 243l9 7-9 7"/>
-          <circle class="packet" r="4" fill="#8aa8ff"><animateMotion dur="2s" repeatCount="indefinite" path="M206 250C236 250 248 250 276 250"/></circle>
+
           <g class="pop on-paper" style="--d:4">
             <rect x="296" y="60" width="320" height="380" rx="16" class="p"/>
             <text x="324" y="102" style="font-size:15px;font-weight:620">PT Ayam Nusantara Digital</text>
             <text x="324" y="122" class="t-s">Laba Rugi · Agustus 2026</text>
             <text x="324" y="170" class="t-s">Laba sebelum pajak</text>
-            <text x="324" y="210" style="font-size:36px;font-weight:500;letter-spacing:-.03em"><tspan>Rp </tspan><tspan data-count data-delay="700">274.200.000</tspan></text>
+            <text x="324" y="210" style="font-size:36px;font-weight:500;letter-spacing:-.03em"><tspan>Rp </tspan><tspan>274.200.000</tspan></text>
             <rect x="324" y="226" width="118" height="26" rx="13" fill="#e3f1e8"/>
             <path d="M336 244v-10M332 238l4-4 4 4" fill="none" stroke="#0e6b43" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
             <text x="346" y="243.5" style="font-size:12px;font-weight:650;fill:#0e6b43">13,4% dari Juli</text>
@@ -113,14 +114,14 @@
 <section class="slide" aria-label="Cara kerja" data-note="Akuntan = tim keuangan Anda sendiri atau kantor akuntan Anda">
   <div class="s-body">
     <div class="head">
-      <h2 data-a>Tim Anda mengirim file. Buku mengerjakan sisanya. Akuntan memutuskan.</h2>
+      <h2 data-a>Tim Anda mengirim file. Buku memeriksa. Akuntan meninjau.</h2>
     </div>
     <div class="track fl-1" data-a>
       <div class="tk">
         <span class="who">Tim Anda</span>
         <span class="tile"><svg><use href="#i-up"/></svg></span>
         <h3>Mengirim file</h3>
-        <p>Rekening koran apa adanya, lewat tautan, dari ponsel. Tanpa akun.</p>
+        <p>Rekening koran dan bukti pendukung lewat tautan unggah, dari ponsel. Tanpa akun.</p>
         <div class="tk-m"><span class="st mut"><svg><use href="#i-file"/></svg>bca-giro-agustus.pdf</span></div>
       </div>
       <div class="tk">
@@ -133,8 +134,8 @@
       <div class="tk">
         <span class="who">Akuntan</span>
         <span class="tile"><svg><use href="#i-user"/></svg></span>
-        <h3>Memutuskan yang ragu</h3>
-        <p>Usulan akun dari AI menunggu persetujuan. Keputusannya diingat.</p>
+        <h3>Meninjau pembukuan</h3>
+        <p>Periksa usulan akun, saldo awal dan penyesuaian. AI menunggu persetujuan.</p>
         <div class="tk-m"><span class="st blue"><svg><use href="#i-check"/></svg>5 usulan diputuskan</span></div>
       </div>
       <div class="tk">
@@ -153,12 +154,13 @@
   <div class="s-body">
     <div class="split rw">
       <div>
-        <h2 data-a>Cukup kirim file, dari ponsel, tanpa akun.</h2>
+        <h2 data-a>Kirim file dari ponsel. Akuntan memeriksa sebelum impor.</h2>
         <ul class="pts">
           <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Tautan unggah.</b> Berlaku 7, 14, atau 30 hari, bisa dicabut. Hanya mengunggah; tidak ada yang dibukukan.</div></li>
-          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Rekening Rupiah dari 25 bank.</b> PDF, CSV, Excel, atau MT940; termasuk PDF bersandi.</div></li>
+          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Format rekening Rupiah dari 25 bank.</b> PDF, CSV, Excel, atau MT940 sesuai tata letaknya. Periksa kecocokan file saat uji coba.</div></li>
           <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Kelengkapan perlu bukti.</b> Periode dan saldo penutup diperiksa; sumber yang belum terbukti ditandai.</div></li>
         </ul>
+        <p class="note" data-a>Sebagian format belum diuji dengan contoh asli. <a href="/#bank-formats">Lihat format bank</a>.</p>
       </div>
       <div class="viz">
         <div class="send">
@@ -441,11 +443,11 @@
   <div class="s-body">
     <div class="split">
       <div>
-        <h2 data-a>Yang ragu diputuskan sekali. Bulan berikutnya, Buku ingat.</h2>
+        <h2 data-a>Keputusan akuntan membantu review bulan berikutnya.</h2>
         <ul class="pts">
-          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Yang sudah pasti dibukukan langsung.</b> Listrik, gaji, BPJS, setoran pajak menurut kode setorannya, transfer antar rekening sendiri.</div></li>
+          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Aturan dan memori bisa membukukan langsung.</b> Berlaku untuk transaksi yang memenuhi pemeriksaan; hasilnya tetap ditinjau akuntan.</div></li>
           <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Yang baru, AI mengusulkan.</b> Akun dan alasannya, menunggu akuntan. AI tidak pernah membukukan sendiri.</div></li>
-          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Keputusan menjadi memori.</b> Penerima yang sama dikenali lagi tanpa AI.</div></li>
+          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Keputusan menjadi memori.</b> Penerima dan arah transaksi yang sama bisa dikenali tanpa AI; hasilnya tetap bisa dikoreksi.</div></li>
         </ul>
       </div>
       <div class="viz months">
@@ -521,18 +523,18 @@
           <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Baca scan dengan AI mati kecuali Buku menyalakannya.</b> Kata sandi PDF disimpan terenkripsi agar file bulan depan langsung terbuka; admin bisa menghapusnya.</div></li>
         </ul>
         <p class="note" data-a>Fitur AI lain (memetakan nama akun, menjelaskan kontrol, membaca scan bila dinyalakan) mengirim bahan sesuai tugasnya</p>
-        <p class="note" data-a style="margin-top:1rem">Basis data dan server aplikasi di region Singapura</p>
+        <p class="note" data-a style="margin-top:1rem">Baca <a href="/kebijakan-privasi">Kebijakan privasi</a>: pemrosesan AI dan akses dukungan</p>
       </div>
       <div class="viz">
         <svg class="art" viewBox="0 0 640 470" role="img" aria-label="Dari empat baris rekening koran, hanya satu yang belum dikenali yang dikirim ke penyedia AI, berupa nama penerima, 80 karakter keterangan, serta nama dan jenis usaha; jawabannya masuk review">
 <rect x="10" y="20" width="350" height="430" rx="18" fill="#ece9e5"/><text x="32" y="52" style="font-size:13px;font-weight:620">Di dalam Buku</text>
-<g class="pop" style="--d:0"><rect x="30" y="74" width="310" height="60" rx="12" fill="#fff" stroke="none" stroke-width="1.4"/><text x="48" y="100" style="font-size:12px;font-weight:600;letter-spacing:.02em">TRSF DB 5210887766</text><text x="48" y="119" style="font-size:11.5px;fill:#5f5b58">Transfer sendiri · tidak dikirim</text></g>
+<g class="pop" style="--d:0"><rect x="30" y="74" width="310" height="60" rx="12" fill="#fff" stroke="none" stroke-width="1.4"/><text x="48" y="100" style="font-size:12px;font-weight:600;letter-spacing:.02em">TRSF DB REKENING SENDIRI</text><text x="48" y="119" style="font-size:11.5px;fill:#5f5b58">Transfer sendiri · tidak dikirim</text></g>
 <g class="pop" style="--d:1"><rect x="30" y="148" width="310" height="60" rx="12" fill="#fff" stroke="none" stroke-width="1.4"/><text x="48" y="174" style="font-size:12px;font-weight:600;letter-spacing:.02em">BYR LISTRIK PLN</text><text x="48" y="193" style="font-size:11.5px;fill:#5f5b58">Aturan · tidak dikirim</text></g>
 <g class="pop" style="--d:2"><rect x="30" y="222" width="310" height="60" rx="12" fill="#fff" stroke="none" stroke-width="1.4"/><text x="48" y="248" style="font-size:12px;font-weight:600;letter-spacing:.02em">TRSF CR PT TOKO MAKMUR JAYA</text><text x="48" y="267" style="font-size:11.5px;fill:#5f5b58">Memori · tidak dikirim</text></g>
 <g class="pop" style="--d:3"><rect x="30" y="296" width="310" height="60" rx="12" fill="#e6ecfd" stroke="#2152e8" stroke-width="1.4"/><text x="48" y="322" style="font-size:12px;font-weight:600;letter-spacing:.02em">TRSF DB PT MESIN PAKAN OTOMATIS</text><text x="48" y="341" style="font-size:11.5px;fill:#1638a8">Belum dikenali · dikirim ke AI</text></g>
 <text x="32" y="400" class="t-s">Nominal, saldo, dan baris yang sudah</text><text x="32" y="418" class="t-s">dikenali tetap di Buku.</text>
 <path class="lb" d="M340 326C380 326 384 210 430 210"/><path class="lb" d="M422 203l9 7-9 7"/>
-<circle class="packet" r="4.5" fill="#2152e8"><animateMotion dur="2.2s" repeatCount="indefinite" path="M340 326C380 326 384 210 430 210"/></circle>
+
 <g class="pop" style="--d:6"><rect x="430" y="110" width="200" height="214" rx="16" class="p"/><text x="450" y="142" style="font-size:13px;font-weight:620">Penyedia AI</text><text x="450" y="160" class="t-s">pihak ketiga, kunci dari Buku</text><path class="hair" d="M450 176h160"/><text x="450" y="196" class="t-s">Penerima</text><text x="450" y="212" style="font-size:11px;font-weight:600;letter-spacing:.02em">PT MESIN PAKAN OTOMATIS</text><text x="450" y="234" class="t-s">Keterangan dan arah</text><text x="450" y="250" style="font-size:11.5px;font-weight:600">80 karakter, keluar</text><text x="450" y="272" class="t-s">Klien</text><text x="450" y="288" style="font-size:11.5px;font-weight:600">nama, jenis usaha, daftar akun</text></g>
 <path class="l" d="M530 324V380C530 400 520 410 500 410H368"/><path class="l" d="M376 403l-9 7 9 7"/>
 <g class="pop" style="--d:8"><rect x="430" y="362" width="200" height="34" rx="17" fill="#fbefd0"/><text x="530" y="383.5" text-anchor="middle" style="font-size:11.5px;font-weight:650;fill:#7a4a00">usulan akun, masuk review</text></g>
@@ -561,7 +563,7 @@
       <div class="c" data-a>
         <div class="c-h"><span class="st mut">Belum cocok bila Anda butuh</span></div>
         <ul class="no">
-          <li><b>Kasir, stok harian, atau marketplace</b><span>Tetap pakai aplikasi Anda; hasilnya masuk lewat rekening koran.</span></li>
+          <li><b>Kasir, stok harian, atau marketplace</b><span>Tetap pakai aplikasi Anda; lengkapi rekening koran dengan ekspor buku dan bukti pendukung.</span></li>
           <li><b>Menerbitkan faktur atau menjalankan penggajian</b><span>Buku mencocokkan faktur dan PPh 21 dengan buku; tidak membuatnya.</span></li>
           <li><b>Koneksi langsung ke bank, mutasi otomatis harian</b><span>Yang masuk adalah rekening koran yang diunggah.</span></li>
           <li><b>Penyampaian SPT</b><span>Buku menyiapkan kertas kerja untuk Coretax; penyampaiannya tetap oleh Anda atau akuntan.</span></li>
@@ -572,13 +574,13 @@
 </section>
 
 <!-- 14 · Mulai -->
-<section class="slide dark" aria-label="Cara memulai" data-note="right-jet.com">
+<section class="slide dark" aria-label="Cara memulai" data-note="Minta akses uji coba di /daftar">
   <div class="s-body">
     <div class="split">
       <div>
         <h2 data-a>Coba satu bulan bersama akuntan Anda.</h2>
-        <p class="lead" data-a>Pakai rekening koran perusahaan Anda sendiri, lalu bandingkan dengan cara sekarang: angkanya, waktunya, dan pertanyaan yang selama ini dijawab “nanti dulu”.</p>
-        <div class="cta" data-a><a class="btn" href="https://right-jet.com" target="_blank" rel="noopener noreferrer">Hubungi kami di right-jet.com</a><p class="note">Harga dibahas saat demo</p></div>
+        <p class="lead" data-a>Uji format dan hasil baca bersama akuntan. Lengkapi saldo awal dan bukti penyesuaian, lalu bandingkan laporan serta waktu pengerjaan dengan cara sekarang.</p>
+        <div class="cta" data-a><a class="btn" href="/daftar">Minta akses uji coba</a><p class="note">Permintaan ditinjau sebelum undangan dikirim</p></div>
       </div>
       <div class="viz end">
         <div class="c prep" data-a>
@@ -586,7 +588,7 @@
           <ol>
             <li><span class="dotn">1</span><div><b>Rekening koran satu bulan</b><small>Dan daftar rekening bank setiap entitas, termasuk rekening pemilik bila dipakai untuk usaha.</small></div></li>
             <li><span class="dotn">2</span><div><b>Saldo awal</b><small>Dari neraca terakhir Anda; saldo bank terisi dari rekening koran.</small></div></li>
-            <li><span class="dotn">3</span><div><b>Akuntan Anda</b><small>Tim keuangan Anda atau kantor akuntan Anda: yang meninjau usulan dan menutup bulan.</small></div></li>
+            <li><span class="dotn">3</span><div><b>Akuntan dan bukti pendukung</b><small>Faktur, daftar aset dan penyesuaian sesuai kebutuhan. Akuntan memeriksa hasil dan menutup bulan.</small></div></li>
           </ol>
         </div>
         <p class="note" data-a>Buku mencatat sendiri waktunya: file pertama masuk, bulan dikunci, laporan diunduh</p>
