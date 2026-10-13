@@ -1,5 +1,5 @@
 import { convertMinor, exponentOf, isCurrency } from "@/lib/fx/currency";
-import { centsToMinor, formatMoney, roundEntry } from "@/lib/money";
+import { centsToMinor, formatMoney, microToMinor, roundEntry } from "@/lib/money";
 import { dateOnly, formatDate, formatPeriod } from "@/lib/format";
 import type { LedgerDateOrder, LedgerRow, LedgerTotal, NeracaRow, NeracaTotal, TbGroup, TbRead, TbRow } from "@/lib/ledger-import/types";
 import { columnLetter, TB_GROUP_LABEL } from "@/lib/ledger-import/read";
@@ -276,6 +276,7 @@ export function planLedger(
     const info = opts.entities.get(ek)!;
     const date = list[0].date!;
     const cents: bigint[] = [];
+    const exact: (bigint | undefined)[] = [];
     const lines: PlanLine[] = [];
     let convertedExact = true;
     // Σ signed source amount per currency: all zero = the group balances as written, whatever conversion rounding does.
@@ -283,8 +284,10 @@ export function planLedger(
     let converted = 0;
     for (const r of list) {
       const signedCents = r.debit - r.credit;
+      // The source amount as written (micro-units): sums and roundings start from it, so nothing is rounded twice (rule 6a).
+      const signedMicro = r.exact ?? signedCents * 10_000n;
       const foreign = r.currency && r.currency !== info.currency ? r.currency : null;
-      bySourceCurrency.set(foreign ?? info.currency, (bySourceCurrency.get(foreign ?? info.currency) ?? 0n) + signedCents);
+      bySourceCurrency.set(foreign ?? info.currency, (bySourceCurrency.get(foreign ?? info.currency) ?? 0n) + signedMicro);
       if (foreign && opts.currencyMode === "CONVERT") {
         const rate = r.rate ?? opts.rateFor?.(foreign, info.currency, date) ?? null;
         if (!rate) {
@@ -292,22 +295,24 @@ export function planLedger(
           convertedExact = false;
           continue;
         }
-        const fxMinor = centsToMinor(signedCents < 0n ? -signedCents : signedCents, foreign);
+        const fxMinor = microToMinor(signedMicro < 0n ? -signedMicro : signedMicro, foreign);
         const functional = convertMinor(fxMinor, foreign, info.currency, rate);
         const signed = signedCents < 0n ? -functional : functional;
         // Back to sen so the entry total and rounding residue are computed over every line alike.
         cents.push(signed * 10n ** BigInt(2 - exponentOf(info.currency)));
+        exact.push(undefined);
         lines.push({ ref: r.ref, code: r.code, name: r.name, amount: signed, fx: { currency: foreign, amount: fxMinor, rate }, memo: r.description || null });
         converted++;
       } else {
         if (foreign) noRate.set(`${ek}|${foreign}`, [...(noRate.get(`${ek}|${foreign}`) ?? []), r]);
         cents.push(signedCents);
+        exact.push(r.exact);
         lines.push({ ref: r.ref, code: r.code, name: r.name, amount: 0n, fx: null, memo: [foreign ? `${foreign} dicatat apa adanya` : null, r.description || null].filter(Boolean).join(" · ") || null });
       }
     }
     if (!convertedExact) continue;
     // Rounding (rule 6a): only lines not already converted to functional minor units.
-    const { rounded, rounding: lineRounding, total } = roundEntry(cents, info.currency);
+    const { rounded, rounding: lineRounding, total } = roundEntry(cents, info.currency, exact);
     lines.forEach((l, i) => {
       if (!l.fx) l.amount = rounded[i];
     });
@@ -480,7 +485,7 @@ export function planNeraca(
     const prev = opts.existingNames?.get(k);
     accounts.set(k, { entityKey, code: r.code, name: r.name, previousNames: prev && prev !== r.name ? [prev] : [], balance: r.amount, currency: null });
   }
-  const { rounded, rounding, total } = roundEntry(usable.map((r) => r.amount), entity.currency);
+  const { rounded, rounding, total } = roundEntry(usable.map((r) => r.amount), entity.currency, usable.map((r) => r.exact));
   const entry: PlanEntry = {
     key: `${entityKey}|NERACA|${date.toISOString().slice(0, 10)}`,
     entityKey,
@@ -544,6 +549,8 @@ export function planTb(tb: TbRead, opts: { entityKey: string; entity: EntityInfo
   const { entity, entityKey } = opts;
   const has = (g: TbGroup) => tb.layout.groups[g] !== undefined;
   const v = (r: TbRow, g: TbGroup) => r.values[g] ?? 0n;
+  // The same value as written, in micro-units: journal lines and their totals are rounded once from it (rule 6a).
+  const vx = (r: TbRow, g: TbGroup) => r.exact?.[g] ?? v(r, g) * 10_000n;
   const money = (c: bigint) => formatMoney(centsToMinor(c, entity.currency), entity.currency);
   for (const r of tb.rows) for (const e of r.errors) checks.push({ severity: "BLOCK", code: "ROW_ERROR", message: `${r.ref}: ${e}`, refs: [r.ref], entityKey });
   const usable = tb.rows.filter((r) => !r.errors.length);
@@ -557,14 +564,15 @@ export function planTb(tb: TbRead, opts: { entityKey: string; entity: EntityInfo
   const derivedAdjustment = !has("ADJUSTMENT") && has("ADJUSTED") && base !== null;
 
   // Each row's opening, adjustment and movement — from its own columns, or derived when a column is absent (said below).
-  const parts = usable.map((r) => {
-    const adjustment = derivedAdjustment ? v(r, "ADJUSTED") - v(r, base!) : v(r, "ADJUSTMENT");
-    const opening = base ? v(r, base) : has("ADJUSTED") ? v(r, "ADJUSTED") - adjustment : v(r, "CLOSING") - v(r, "MOVEMENT") - adjustment;
-    const adjusted = has("ADJUSTED") ? v(r, "ADJUSTED") : opening + adjustment;
-    const movement = has("MOVEMENT") ? v(r, "MOVEMENT") : has("CLOSING") ? v(r, "CLOSING") - adjusted : 0n;
-    const closing = has("CLOSING") ? v(r, "CLOSING") : adjusted + movement;
-    return { r, opening, adjustment, adjusted, movement, closing };
-  });
+  const split = (r: TbRow, get: (r: TbRow, g: TbGroup) => bigint) => {
+    const adjustment = derivedAdjustment ? get(r, "ADJUSTED") - get(r, base!) : get(r, "ADJUSTMENT");
+    const opening = base ? get(r, base) : has("ADJUSTED") ? get(r, "ADJUSTED") - adjustment : get(r, "CLOSING") - get(r, "MOVEMENT") - adjustment;
+    const adjusted = has("ADJUSTED") ? get(r, "ADJUSTED") : opening + adjustment;
+    const movement = has("MOVEMENT") ? get(r, "MOVEMENT") : has("CLOSING") ? get(r, "CLOSING") - adjusted : 0n;
+    const closing = has("CLOSING") ? get(r, "CLOSING") : adjusted + movement;
+    return { opening, adjustment, adjusted, movement, closing };
+  };
+  const parts = usable.map((r) => ({ r, ...split(r, v), exact: split(r, vx) }));
   for (const p of parts) {
     const prev = opts.existingNames?.get(accountKey(entityKey, p.r.code));
     accounts.set(accountKey(entityKey, p.r.code), { entityKey, code: p.r.code, name: p.r.name, previousNames: prev && !sameName(prev, p.r.name) ? [prev] : [], balance: p.closing, currency: null });
@@ -607,10 +615,10 @@ export function planTb(tb: TbRead, opts: { entityKey: string; entity: EntityInfo
     return col === undefined ? r.ref : `${r.ref.slice(0, r.ref.lastIndexOf("!"))}!${columnLetter(col)}${r.row}`;
   };
   const entries: PlanEntry[] = [];
-  const entry = (kind: NonNullable<PlanEntry["kind"]>, key: string, date: Date, memo: string, list: { r: TbRow; amount: bigint; group: TbGroup }[]) => {
-    const lines = list.filter((x) => x.amount !== 0n);
+  const entry = (kind: NonNullable<PlanEntry["kind"]>, key: string, date: Date, memo: string, list: { r: TbRow; amount: bigint; exact: bigint; group: TbGroup }[]) => {
+    const lines = list.filter((x) => x.exact !== 0n);
     if (!lines.length) return;
-    const { rounded, rounding, total: imbalance } = roundEntry(lines.map((x) => x.amount), entity.currency);
+    const { rounded, rounding, total: imbalance } = roundEntry(lines.map((x) => x.amount), entity.currency, lines.map((x) => x.exact));
     const e: PlanEntry = {
       key: `${entityKey}|${key}|${date.toISOString().slice(0, 10)}`,
       entityKey,
@@ -629,9 +637,9 @@ export function planTb(tb: TbRead, opts: { entityKey: string; entity: EntityInfo
   };
   const openingFrom: TbGroup = base ?? (has("ADJUSTED") ? "ADJUSTED" : "CLOSING");
   const worksheet = tbIsWorksheet(tb.layout);
-  entry("OPENING", "TB-OPENING", opts.opening, worksheet ? `Saldo sebelum penyesuaian dari neraca saldo per ${formatDate(opts.opening)}` : `Saldo awal dari neraca saldo per ${formatDate(opts.opening)}`, parts.map((p) => ({ r: p.r, amount: p.opening, group: openingFrom })));
-  if (has("ADJUSTMENT") || derivedAdjustment) entry("ADJUSTMENT", "TB-ADJUSTMENT", opts.opening, derivedAdjustment ? "Adjustment dari neraca saldo (setelah penyesuaian − sebelumnya)" : "Adjustment dari neraca saldo (kolom Adjustment)", parts.map((p) => ({ r: p.r, amount: p.adjustment, group: derivedAdjustment ? ("ADJUSTED" as const) : ("ADJUSTMENT" as const) })));
-  if (has("MOVEMENT") || has("CLOSING")) entry("IMPORTED", "TB-MOVEMENT", opts.closing, `Mutasi ${formatDate(new Date(+opts.opening + 86_400_000))} – ${formatDate(opts.closing)} dari neraca saldo`, parts.map((p) => ({ r: p.r, amount: p.movement, group: has("MOVEMENT") ? ("MOVEMENT" as const) : ("CLOSING" as const) })));
+  entry("OPENING", "TB-OPENING", opts.opening, worksheet ? `Saldo sebelum penyesuaian dari neraca saldo per ${formatDate(opts.opening)}` : `Saldo awal dari neraca saldo per ${formatDate(opts.opening)}`, parts.map((p) => ({ r: p.r, amount: p.opening, exact: p.exact.opening, group: openingFrom })));
+  if (has("ADJUSTMENT") || derivedAdjustment) entry("ADJUSTMENT", "TB-ADJUSTMENT", opts.opening, derivedAdjustment ? "Adjustment dari neraca saldo (setelah penyesuaian − sebelumnya)" : "Adjustment dari neraca saldo (kolom Adjustment)", parts.map((p) => ({ r: p.r, amount: p.adjustment, exact: p.exact.adjustment, group: derivedAdjustment ? ("ADJUSTED" as const) : ("ADJUSTMENT" as const) })));
+  if (has("MOVEMENT") || has("CLOSING")) entry("IMPORTED", "TB-MOVEMENT", opts.closing, `Mutasi ${formatDate(new Date(+opts.opening + 86_400_000))} – ${formatDate(opts.closing)} dari neraca saldo`, parts.map((p) => ({ r: p.r, amount: p.movement, exact: p.exact.movement, group: has("MOVEMENT") ? ("MOVEMENT" as const) : ("CLOSING" as const) })));
 
   checks.push(...signChecks(parts.map((p) => ({ ref: cell(p.r, has("CLOSING") ? "CLOSING" : openingFrom), code: p.r.code, name: p.r.name, amount: p.closing })), entity, entityKey));
   checks.push({

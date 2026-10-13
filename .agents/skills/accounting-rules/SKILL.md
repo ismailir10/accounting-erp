@@ -240,7 +240,9 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
    pixels. Across the server→client boundary pass bigint as string. Never add amounts of entities with different currencies
    without translating first (rule 11).
 6a. **IDR sen:** source amounts with sen round half-up per line to whole Rupiah; the entry's residue goes to one line on
-   **7190 Selisih Pembulatan** (`roundEntry()`). Never spread it silently over other lines. Same for conversion: when a ledger
+   **7190 Selisih Pembulatan** (`roundEntry()`). Never spread it silently over other lines. Round from the source as written (up to 6
+   decimals, `parseSubSen`), never from an already-rounded sen value — in every currency, so a sub-cent residue of a balanced USD journal is
+   7190, not a difference. Same for conversion: when a ledger
    group balances in every source currency, the ≤ 1 minor unit per converted line left after converting goes to 7190
    ("Selisih pembulatan konversi kurs"); a larger residue, or a group that doesn't balance per currency, is a real difference.
 6b. **Foreign-currency lines** keep `currency`, `fxAmount` (minor units) and `fxRate` (decimal string, functional per 1 unit);

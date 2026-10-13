@@ -544,3 +544,49 @@ describe("printed account holders belong to headers only", () => {
     expect(sections.map((st) => st.holder)).toEqual(["PT REKENING SATU", undefined, undefined]);
   });
 });
+
+describe("consolidated statement: a foreign account only on the summary page (readiness finding F2, 2026-10-12)", () => {
+  // A consolidated statement (synthetic values): the summary lists a JPY account with a balance, a deposit and an IDR account; only the
+  // IDR account has an activity section this month.
+  const header: [number, string][] = [[37, "Tanggal Transaksi"], [119, "Tanggal Pembukuan"], [246, "Keterangan"], [353, "Mutasi Debet"], [437, "Mutasi Kredit"], [531, "Saldo"]];
+  const pdf = () =>
+    makePdf([
+      [
+        ...table(800, [[[32, "Kepada Yth:"], [318, "Periode Laporan"], [398, ": 01 MEI 2026 - 31 MEI 2026"]]]),
+        ...table(760, [
+          [[30, "Nama Produk"], [140, "Nomor Rekening"], [230, "Mata Uang"], [300, "Nama Akun"], [420, "Saldo"]],
+          [[30, "REKENING VALAS JPY"], [140, "11100000001"], [230, "JPY"], [300, "UJI FIKTIF"], [420, "1,000.00"]],
+          [[30, "GIRO UTAMA"], [140, "11100000002"], [230, "IDR"], [300, "UJI FIKTIF"], [420, "1,234,567.00"]],
+          [[30, "DEPOSITO BERJANGKA"], [140, "0011TD11100000003"], [230, "IDR"], [300, "UJI FIKTIF"], [420, "500,000,000.00"]],
+          [[30, "Total Simpanan"], [420, "501,235,567.00"]],
+        ]),
+        ...table(640, [
+          [[25, "Aktivitas Rekening / Account Activities – GIRO UTAMA (IDR) 11100000002"]],
+          header,
+          [[45, "01-05-2026"], [132, "01-05-2026"], [199, "Saldo Awal - Beginning Balance"], [531, "1,234,567.00"]],
+          [[45, "18-05-2026"], [132, "18-05-2026"], [199, "Cr BI fast Incoming"], [436, "100,000,000.00"], [523, "101,234,567.00"]],
+          [[45, "Total"], [235, "0 DEBIT 1 KREDIT"], [354, "0.00"], [436, "100,000,000.00"]],
+        ]),
+        { x: 180, y: 400, text: "Ini adalah akhir dari Laporan Konsolidasi Rekening Anda" },
+      ],
+    ]);
+
+  it("lists the summary-only JPY account as not imported, with no money read, and keeps the IDR section as it was", async () => {
+    const sections = await parseStatementSections("smbc.pdf", pdf());
+    const idr = sections.find((s) => s.accountNumber === "11100000002")!;
+    expect(idr).toMatchObject({ currency: "IDR", openingBalance: 1_234_567n, closingBalance: 101_234_567n });
+    expect(idr.rows).toHaveLength(1);
+    const jpy = sections.find((s) => s.accountNumber === "11100000001")!;
+    expect(jpy).toMatchObject({ currency: "JPY", openingBalance: 0n, closingBalance: 0n, rows: [], section: { label: "REKENING VALAS JPY", currency: "JPY" } });
+    expect(jpy.error).toMatch(/hanya tercantum di ringkasan .* tidak diimpor/);
+    // IDR products without a section (the deposit) are not added here: Saldo Awal offers deposits from their own table.
+    expect(sections.map((s) => s.accountNumber).sort()).toEqual(["11100000001", "11100000002"]);
+  });
+
+  it("a foreign account that has its own activity section is listed once, as before", async () => {
+    const sections = await parseStatementSections("smbc.pdf", smbcCombinedPdf());
+    const numbers = sections.map((s) => s.accountNumber);
+    expect(sections.filter((s) => s.currency !== "IDR").length).toBeGreaterThan(0);
+    expect(new Set(numbers).size).toBe(numbers.length);
+  });
+});

@@ -27,6 +27,17 @@ describe("planLedger", () => {
     expect(p.checks.find((c) => c.code === "STATS")?.message).toMatch(/pembulatan ke 7190 total Rp 1 di 1 jurnal/);
   });
 
+  it("rounds a sub-sen line once: no Rupiah moved into it, no 7190 needed when the source balances (F1, 2026-10-12)", () => {
+    // 1.000,497 + 999,503 = 2.000 in the source. Rounded once: 1.000 + 1.000 − 2.000. Rounded twice (sen, then Rupiah) the first line was
+    // 1.001 and a −1 went to 7190.
+    const p = planLedger(
+      [row({ code: "1", debit: 100_050n, exact: 1_000_497_000n }), row({ code: "2", debit: 99_950n, exact: 999_503_000n }), row({ code: "3", credit: 200_000n })],
+      { entities: ENT, currencyMode: "FUNCTIONAL" },
+    );
+    expect(p.entries[0].lines.map((l) => l.amount)).toEqual([1000n, 1000n, -2000n]);
+    expect(p.entries[0].rounding).toBe(0n);
+  });
+
   it("blocks an unbalanced group (CSP −Rp 5.000.000 pattern) but lets it be accepted", () => {
     const p = planLedger(
       [row({ code: "11141", debit: 100_000_000_00n }), row({ code: "21001", credit: 100_500_000_00n })],
@@ -101,6 +112,16 @@ describe("planLedger", () => {
     expect(p.checks.filter((c) => c.severity === "BLOCK")).toEqual([]);
   });
 
+  it("CONVERT mode: a foreign amount written beyond sen is rounded once to its own minor unit (rule 6a)", () => {
+    // ¥1.234,497 rounds once to ¥1.234 (not ¥1.234,50 → ¥1.235), then at 100 to Rp 123.400.
+    const p = planLedger(
+      [row({ code: "11000", debit: 123_450n, exact: 1_234_497_000n, currency: "JPY", rate: "100" }), row({ code: "20000", credit: 123_450n, exact: -1_234_497_000n, currency: "JPY", rate: "100" })],
+      { entities: ENT, currencyMode: "CONVERT" },
+    );
+    expect(p.entries[0].lines.map((l) => [l.fx?.amount, l.amount])).toEqual([[1234n, 123_400n], [1234n, -123_400n]]);
+    expect(p.entries[0]).toMatchObject({ imbalance: 0n, rounding: 0n });
+  });
+
   it("CONVERT mode: a group balanced only in raw numbers across currencies stays blocked", () => {
     const p = planLedger(
       [row({ entity: "HOLDCO", code: "10001", debit: 15_000_000n, currency: "USD", rate: "1.31" }), row({ entity: "HOLDCO", code: "20000", credit: 15_000_000n, currency: "SGD" })],
@@ -151,6 +172,28 @@ describe("planNeraca", () => {
     expect(p.entries[0].lines.map((l) => l.amount)).toEqual([1001n, -400n, -601n]);
     expect(p.entries[0].rounding).toBe(0n);
     expect(p.checks.map((c) => c.code)).toEqual(["TOTAL_OK", "TOTAL_MISMATCH", "STATS"]);
+  });
+});
+
+describe("planNeraca, one rounding (F1, 2026-10-12)", () => {
+  const nr = (code: string, amount: bigint, typeHint: NeracaRow["typeHint"], exact?: bigint): NeracaRow => ({ ref: `N!${n++}`, row: n, code, name: code, amount, typeHint, termHint: null, coded: true, errors: [], ...(exact !== undefined ? { exact } : {}) });
+  it("a payable that reached …,50 sen from below rounds down and the Rupiah residue shows on 7190 (the real Neraca pattern)", () => {
+    // Source: assets 2.000,000 = payable 1.000,497 + equity 999,503. Rupiah, rounded once: 2.000 vs 1.000 + 1.000 → balanced.
+    // A second sub-sen line elsewhere makes the once-rounded lines not foot: that residue belongs on 7190, never in a payable.
+    const p = planNeraca(
+      [nr("1-1000", 200_000n, "ASET"), nr("2-2000", -100_050n, "LIABILITAS", -1_000_497_000n), nr("3-3000", -99_950n, "EKUITAS", -999_503_000n)],
+      [],
+      { entityKey: "", entity: { entityId: "e", name: "PT Uji", currency: "IDR" }, date: dateOnly(2026, 5, 31), sheet: "N" },
+    );
+    expect(p.entries[0].lines.map((l) => l.amount)).toEqual([2000n, -1000n, -1000n]);
+    expect(p.entries[0].rounding).toBe(0n);
+    const q = planNeraca(
+      [nr("1-1000", 200_000n, "ASET"), nr("2-2000", -100_050n, "LIABILITAS", -1_000_497_000n), nr("3-3000", -99_950n, "EKUITAS", -999_497_000n)],
+      [],
+      { entityKey: "", entity: { entityId: "e", name: "PT Uji", currency: "IDR" }, date: dateOnly(2026, 5, 31), sheet: "N" },
+    );
+    expect(q.entries[0].lines.map((l) => l.amount)).toEqual([2000n, -1000n, -999n]);
+    expect(q.entries[0].rounding).toBe(-1n);
   });
 });
 

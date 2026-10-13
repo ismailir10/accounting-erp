@@ -46,6 +46,13 @@ export type ProposedEntity = {
   fromClientName?: boolean;
   /** A ledger's entity label is its short name (the rows are matched by it), kept when the name is edited. */
   labelled?: boolean;
+  /** The ledger's rows of this entity per currency, most first ("USD 700 · SGD 300 · IDR 2"). */
+  rowsByCurrency?: { currency: string; rows: number }[];
+  /**
+   * Its rows aren't mostly Rupiah: the bookkeeping currency is a judgement (a holding can keep SGD books over mostly USD rows), so the
+   * card asks for it instead of creating the company in Rupiah and booking foreign amounts as Rupiah.
+   */
+  currencyRequired?: boolean;
   banks: ProposedAccount[];
 };
 export type ClientProposal = {
@@ -120,6 +127,15 @@ function missingMonths(periods: (readonly [string, string])[]): string[] {
 type Group = { key: string; holders: string[]; company: boolean; banks: ProposedAccount[] };
 
 /** The new client the files describe (Decision 1): holders grouped into entities by name, every Rupiah rekening under its holder. */
+/** A ledger entity's rows per currency, and whether its bookkeeping currency must be asked: only when Rupiah rows aren't the majority. */
+function currencyOf(counts: Map<string, number> | undefined): Pick<ProposedEntity, "rowsByCurrency" | "currencyRequired"> {
+  if (!counts?.size) return {};
+  const rowsByCurrency = [...counts].map(([currency, rows]) => ({ currency, rows })).sort((a, b) => b.rows - a.rows || a.currency.localeCompare(b.currency));
+  const total = rowsByCurrency.reduce((s, c) => s + c.rows, 0);
+  const idr = counts.get("IDR") ?? 0;
+  return idr * 2 > total ? {} : { rowsByCurrency, currencyRequired: true };
+}
+
 export function proposeClient(files: PreviewFile[]): ClientProposal {
   const accounts = new Map<string, ProposedAccount>();
   const spans = new Map<string, { start: string[]; end: string[] }>();
@@ -130,6 +146,7 @@ export function proposeClient(files: PreviewFile[]): ClientProposal {
   let ledger = false;
   // Companies the files name outside any bank statement: a ledger's entity labels ("SKP"), or a report's own title ("PT FKM").
   const labels = new Map<string, string>();
+  const labelCurrencies = new Map<string, Map<string, number>>();
   const titled = new Map<string, string>();
 
   for (const f of files) {
@@ -140,7 +157,14 @@ export function proposeClient(files: PreviewFile[]): ClientProposal {
     if (f.kind === "LEDGER") {
       ledger = true;
       documents.push(f.fileName);
-      for (const section of f.sections as LedgerSection[]) for (const label of section.entities ?? []) if (!labels.has(label.toLowerCase())) labels.set(label.toLowerCase(), label);
+      for (const section of f.sections as LedgerSection[]) {
+        for (const label of section.entities ?? []) if (!labels.has(label.toLowerCase())) labels.set(label.toLowerCase(), label);
+        for (const [label, counts] of Object.entries(section.entityCurrencies ?? {})) {
+          const into = labelCurrencies.get(label.toLowerCase()) ?? new Map<string, number>();
+          for (const [currency, n] of Object.entries(counts)) into.set(currency, (into.get(currency) ?? 0) + n);
+          labelCurrencies.set(label.toLowerCase(), into);
+        }
+      }
     }
     if (f.kind !== "BANK" && f.companyName) {
       const key = normalName(f.companyName);
@@ -228,10 +252,11 @@ export function proposeClient(files: PreviewFile[]): ClientProposal {
   // company a report's title names — unless a bank holder already is that company.
   if (labels.size) {
     for (const label of labels.values()) {
+      const currency = currencyOf(labelCurrencies.get(label.toLowerCase()));
       // A label that is a bank holder's company too (same words, legal form ignored) is that entity: its short name becomes the label.
       const holder = entities.find((e) => e.key === normalName(label));
-      if (holder) Object.assign(holder, { shortName: label, labelled: true });
-      else entities.push({ key: `label:${label.toLowerCase()}`, name: label, shortName: label, kind: "PT", labelled: true, banks: [] });
+      if (holder) Object.assign(holder, { shortName: label, labelled: true, ...currency });
+      else entities.push({ key: `label:${label.toLowerCase()}`, name: label, shortName: label, kind: "PT", labelled: true, ...currency, banks: [] });
     }
   } else {
     for (const [key, title] of titled) {

@@ -15,6 +15,14 @@ async function workbook(sheets: Record<string, unknown[][]>): Promise<Buffer> {
 const GL_HEADER = ["Entity", "GL Entry ID", "Entry Date", "Account Code", "Account Name", "Currency", "Debit", "Credit", "Reconstruction Logic / Description", "Notes"];
 
 describe("ledger reader", () => {
+
+  it("keeps an amount written beyond sen exactly, with the Neraca's sign (F1, 2026-10-12)", async () => {
+    const buf = await workbook({ N: [["PT Uji"], ["Balance Sheet"], ["Date", null, "31/05/2026"], ["Assets"], ["1-1000", "Bank", 2000], ["Total Assets", null, 2000], ["Liability & Equity"], ["2-2000", "Accounts Payable", 1000.497123], ["3-3000", "Share Capital", 999.502877], ["Total Liability & Equity", null, 2000]] });
+    const sheets = await readSheets("neraca.xlsx", buf);
+    const res = readTable(sheets, detectTables(sheets)[0]);
+    const by = Object.fromEntries((res.rows as { code: string; exact?: bigint }[]).map((r) => [r.code, r.exact]));
+    expect(by).toEqual({ "1-1000": undefined, "2-2000": -1_000_497_123n, "3-3000": -999_502_877n });
+  });
   it("finds a multi-entity, multi-currency ledger sheet among others and keeps row refs", async () => {
     const buf = await workbook({
       README: [["Topic", "Definition"], ["GL", "single source of truth"]],

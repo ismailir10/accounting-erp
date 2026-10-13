@@ -20,6 +20,7 @@ import { proposeClient, shortNameOf, type ClientProposal, type PreviewFile, type
 import { itemSummary } from "@/lib/inbox/view";
 import { MAX_UPLOAD_BYTES, UPLOAD_TOO_BIG } from "@/lib/upload";
 import { cn } from "@/lib/utils";
+import { CURRENCIES, CURRENCY_CODES } from "@/lib/fx/currency";
 
 /**
  * *Tambah klien* from files (cycle 2026-10-10-new-client-from-files): the client's name, its statements dropped, one card with the
@@ -28,7 +29,22 @@ import { cn } from "@/lib/utils";
  */
 
 type Dropped = { key: string; file: File; preview: PreviewFile | null; error: string | null; reading: boolean; password?: string };
-type CardEntity = { key: string; name: string; kind: ProposedKind; fromClientName?: boolean; fromProposal?: boolean; touched?: boolean; removed?: boolean; /** A ledger's entity label: the short name its rows are matched by, kept when the name is edited. */ shortName?: string };
+type CardEntity = {
+  key: string;
+  name: string;
+  kind: ProposedKind;
+  fromClientName?: boolean;
+  fromProposal?: boolean;
+  touched?: boolean;
+  removed?: boolean;
+  /** A ledger's entity label: the short name its rows are matched by, kept when the name is edited. */
+  shortName?: string;
+  /** Its ledger rows aren't mostly Rupiah: the bookkeeping currency is asked (`ProposedEntity.currencyRequired`), with the rows per currency. */
+  currencyRequired?: boolean;
+  rowsByCurrency?: { currency: string; rows: number }[];
+  /** The bookkeeping currency the user chose; absent = Rupiah. */
+  currency?: string;
+};
 export type CardState = { entities: CardEntity[]; owner: Record<string, string>; moved: Record<string, true> };
 
 const OFFLINE = "Koneksi terputus. Periksa internet lalu coba lagi.";
@@ -62,7 +78,17 @@ export function reconcile(p: ClientProposal, prev: CardState | null): CardState 
     if (known) {
       // A ledger read later names an entity the statements already proposed: its label becomes the short name.
       if (e.labelled) known.shortName = e.shortName;
-    } else entities.push({ key: e.key, name: e.name, kind: e.kind, fromClientName: e.fromClientName, fromProposal: true, ...(e.labelled ? { shortName: e.shortName } : {}) });
+      if (e.currencyRequired) Object.assign(known, { currencyRequired: true, rowsByCurrency: e.rowsByCurrency });
+    } else
+      entities.push({
+        key: e.key,
+        name: e.name,
+        kind: e.kind,
+        fromClientName: e.fromClientName,
+        fromProposal: true,
+        ...(e.labelled ? { shortName: e.shortName } : {}),
+        ...(e.currencyRequired ? { currencyRequired: true, rowsByCurrency: e.rowsByCurrency } : {}),
+      });
   }
   return { entities, owner, moved };
 }
@@ -201,6 +227,14 @@ export function NewClientStart({ company, manual: manualAtStart }: { company: bo
     setFields({});
     try {
       const active = card.entities.filter((e) => !e.removed);
+      // A company whose ledger rows aren't mostly Rupiah is never created in Rupiah by default: its foreign amounts would be booked as Rupiah.
+      const unasked = active.filter((e) => e.currencyRequired && !e.currency);
+      if (unasked.length) {
+        setFields(Object.fromEntries(unasked.map((e) => [`currency:${e.key}`, "Pilih mata uang pembukuannya."])));
+        setError(unasked.length === 1 ? null : `Pilih mata uang pembukuan ${unasked.length} perusahaan yang ditandai.`);
+        setFocusError((n) => n + 1);
+        return;
+      }
       const banksOf = (key: string) => [...accounts.values()].filter((a) => card.owner[a.key] === key);
       const sent = active.map((e) => ({ entity: e, banks: banksOf(e.key) }));
       const r = await addClientAction({
@@ -208,7 +242,7 @@ export function NewClientStart({ company, manual: manualAtStart }: { company: bo
         industry,
         entities: sent.map(({ entity, banks }) => {
           const n = entityName(entity).trim();
-          return { name: n, shortName: entity.shortName ?? shortNameOf(n, entity.kind), kind: entity.kind, npwp: "", banks: banks.map((b) => ({ bank: b.bank, number: b.number, label: "", isOverdraft: b.isOverdraft })) };
+          return { name: n, shortName: entity.shortName ?? shortNameOf(n, entity.kind), kind: entity.kind, npwp: "", ...(entity.currency ? { currency: entity.currency } : {}), banks: banks.map((b) => ({ bank: b.bank, number: b.number, label: "", isOverdraft: b.isOverdraft })) };
         }),
       }).catch(() => ({ ok: false as const, error: OFFLINE, fields: undefined }));
       if (!r.ok) {
@@ -451,6 +485,27 @@ export function NewClientStart({ company, manual: manualAtStart }: { company: bo
                         <Trash2 /> Hapus
                       </Button>
                     </div>
+                    {e.currencyRequired && (
+                      <Field className="sm:max-w-md" data-testid="proposal-currency">
+                        <FieldLabel htmlFor={`proposal-currency-${i}`}>Mata uang pembukuan</FieldLabel>
+                        <SimpleSelect
+                          id={`proposal-currency-${i}`}
+                          label={`Mata uang pembukuan ${entityName(e) || "entitas"}`}
+                          value={e.currency ?? ""}
+                          placeholder="Pilih mata uang"
+                          options={CURRENCY_CODES.map((c) => ({ value: c, label: `${c} · ${CURRENCIES[c].name}` }))}
+                          disabled={busy}
+                          onChange={(v) => {
+                            setEntity(e.key, { currency: v || undefined });
+                            dropField(`currency:${e.key}`);
+                          }}
+                        />
+                        <FieldDescription>
+                          Baris buku besarnya: {e.rowsByCurrency?.map((c) => `${c.currency} ${c.rows.toLocaleString("id-ID")}`).join(" · ")}. Sebagian besar bukan Rupiah, jadi Buku tidak menebak mata uang pembukuannya.
+                        </FieldDescription>
+                        <FieldError>{fields[`currency:${e.key}`]}</FieldError>
+                      </Field>
+                    )}
                     {banks.length ? (
                       <ul className="space-y-2">
                         {banks.map((a) => (
