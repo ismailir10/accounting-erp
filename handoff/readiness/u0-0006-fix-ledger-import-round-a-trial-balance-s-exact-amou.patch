@@ -1,0 +1,164 @@
+diff --git a/lib/ledger-import/check.ts b/lib/ledger-import/check.ts
+index 955ba1c..6ca435b 100644
+--- a/lib/ledger-import/check.ts
++++ b/lib/ledger-import/check.ts
+@@ -551,0 +552,2 @@
++  // The same value as written, in micro-units: journal lines and their totals are rounded once from it (rule 6a).
++  const vx = (r: TbRow, g: TbGroup) => r.exact?.[g] ?? v(r, g) * 10_000n;
+@@ -565,8 +567,9 @@
+-  const parts = usable.map((r) => {
+-    const adjustment = derivedAdjustment ? v(r, "ADJUSTED") - v(r, base!) : v(r, "ADJUSTMENT");
+-    const opening = base ? v(r, base) : has("ADJUSTED") ? v(r, "ADJUSTED") - adjustment : v(r, "CLOSING") - v(r, "MOVEMENT") - adjustment;
+-    const adjusted = has("ADJUSTED") ? v(r, "ADJUSTED") : opening + adjustment;
+-    const movement = has("MOVEMENT") ? v(r, "MOVEMENT") : has("CLOSING") ? v(r, "CLOSING") - adjusted : 0n;
+-    const closing = has("CLOSING") ? v(r, "CLOSING") : adjusted + movement;
+-    return { r, opening, adjustment, adjusted, movement, closing };
+-  });
++  const split = (r: TbRow, get: (r: TbRow, g: TbGroup) => bigint) => {
++    const adjustment = derivedAdjustment ? get(r, "ADJUSTED") - get(r, base!) : get(r, "ADJUSTMENT");
++    const opening = base ? get(r, base) : has("ADJUSTED") ? get(r, "ADJUSTED") - adjustment : get(r, "CLOSING") - get(r, "MOVEMENT") - adjustment;
++    const adjusted = has("ADJUSTED") ? get(r, "ADJUSTED") : opening + adjustment;
++    const movement = has("MOVEMENT") ? get(r, "MOVEMENT") : has("CLOSING") ? get(r, "CLOSING") - adjusted : 0n;
++    const closing = has("CLOSING") ? get(r, "CLOSING") : adjusted + movement;
++    return { opening, adjustment, adjusted, movement, closing };
++  };
++  const parts = usable.map((r) => ({ r, ...split(r, v), exact: split(r, vx) }));
+@@ -615,2 +618,2 @@
+-  const entry = (kind: NonNullable<PlanEntry["kind"]>, key: string, date: Date, memo: string, list: { r: TbRow; amount: bigint; group: TbGroup }[]) => {
+-    const lines = list.filter((x) => x.amount !== 0n);
++  const entry = (kind: NonNullable<PlanEntry["kind"]>, key: string, date: Date, memo: string, list: { r: TbRow; amount: bigint; exact: bigint; group: TbGroup }[]) => {
++    const lines = list.filter((x) => x.exact !== 0n);
+@@ -618 +621 @@
+-    const { rounded, rounding, total: imbalance } = roundEntry(lines.map((x) => x.amount), entity.currency);
++    const { rounded, rounding, total: imbalance } = roundEntry(lines.map((x) => x.amount), entity.currency, lines.map((x) => x.exact));
+@@ -637,3 +640,3 @@
+-  entry("OPENING", "TB-OPENING", opts.opening, worksheet ? `Saldo sebelum penyesuaian dari neraca saldo per ${formatDate(opts.opening)}` : `Saldo awal dari neraca saldo per ${formatDate(opts.opening)}`, parts.map((p) => ({ r: p.r, amount: p.opening, group: openingFrom })));
+-  if (has("ADJUSTMENT") || derivedAdjustment) entry("ADJUSTMENT", "TB-ADJUSTMENT", opts.opening, derivedAdjustment ? "Adjustment dari neraca saldo (setelah penyesuaian − sebelumnya)" : "Adjustment dari neraca saldo (kolom Adjustment)", parts.map((p) => ({ r: p.r, amount: p.adjustment, group: derivedAdjustment ? ("ADJUSTED" as const) : ("ADJUSTMENT" as const) })));
+-  if (has("MOVEMENT") || has("CLOSING")) entry("IMPORTED", "TB-MOVEMENT", opts.closing, `Mutasi ${formatDate(new Date(+opts.opening + 86_400_000))} – ${formatDate(opts.closing)} dari neraca saldo`, parts.map((p) => ({ r: p.r, amount: p.movement, group: has("MOVEMENT") ? ("MOVEMENT" as const) : ("CLOSING" as const) })));
++  entry("OPENING", "TB-OPENING", opts.opening, worksheet ? `Saldo sebelum penyesuaian dari neraca saldo per ${formatDate(opts.opening)}` : `Saldo awal dari neraca saldo per ${formatDate(opts.opening)}`, parts.map((p) => ({ r: p.r, amount: p.opening, exact: p.exact.opening, group: openingFrom })));
++  if (has("ADJUSTMENT") || derivedAdjustment) entry("ADJUSTMENT", "TB-ADJUSTMENT", opts.opening, derivedAdjustment ? "Adjustment dari neraca saldo (setelah penyesuaian − sebelumnya)" : "Adjustment dari neraca saldo (kolom Adjustment)", parts.map((p) => ({ r: p.r, amount: p.adjustment, exact: p.exact.adjustment, group: derivedAdjustment ? ("ADJUSTED" as const) : ("ADJUSTMENT" as const) })));
++  if (has("MOVEMENT") || has("CLOSING")) entry("IMPORTED", "TB-MOVEMENT", opts.closing, `Mutasi ${formatDate(new Date(+opts.opening + 86_400_000))} – ${formatDate(opts.closing)} dari neraca saldo`, parts.map((p) => ({ r: p.r, amount: p.movement, exact: p.exact.movement, group: has("MOVEMENT") ? ("MOVEMENT" as const) : ("CLOSING" as const) })));
+diff --git a/lib/ledger-import/read.ts b/lib/ledger-import/read.ts
+index e484ede..355218c 100644
+--- a/lib/ledger-import/read.ts
++++ b/lib/ledger-import/read.ts
+@@ -803,0 +804 @@
++    const exact: NonNullable<TbRow["exact"]> = {};
+@@ -808,2 +809,7 @@
+-      if (bad) errors.push(`${TB_GROUP_LABEL[g]} bukan angka: ${bad}`);
+-      else values[g] = parts.length === 1 ? (parts[0] as bigint) : (parts[0] as bigint) - (parts[1] as bigint);
++      if (bad) {
++        errors.push(`${TB_GROUP_LABEL[g]} bukan angka: ${bad}`);
++        continue;
++      }
++      values[g] = parts.length === 1 ? (parts[0] as bigint) : (parts[0] as bigint) - (parts[1] as bigint);
++      const x = s.balance !== undefined ? cellSubSen(row[s.balance]) : exactOf(row[s.debit!], row[s.credit!], parts[0] as bigint, parts[1] as bigint);
++      if (x !== undefined) exact[g] = x;
+@@ -817 +823 @@
+-    const tbRow: TbRow = { ref, row: r + 1, code: hasCode ? codeCell : `${NO_CODE_PREFIX}${label}`, name: hasCode ? nameCell || codeCell : label, coded: hasCode, values, errors };
++    const tbRow: TbRow = { ref, row: r + 1, code: hasCode ? codeCell : `${NO_CODE_PREFIX}${label}`, name: hasCode ? nameCell || codeCell : label, coded: hasCode, values, ...(Object.keys(exact).length ? { exact } : {}), errors };
+@@ -831 +837,5 @@
+-      for (const r of rows) if (credit(r) && r.values[g] !== undefined) r.values[g] = -r.values[g]!;
++      for (const r of rows) {
++        if (!credit(r)) continue;
++        if (r.values[g] !== undefined) r.values[g] = -r.values[g]!;
++        if (r.exact?.[g] !== undefined) r.exact[g] = -r.exact[g]!;
++      }
+diff --git a/lib/ledger-import/types.ts b/lib/ledger-import/types.ts
+index a1b6027..28c0d3e 100644
+--- a/lib/ledger-import/types.ts
++++ b/lib/ledger-import/types.ts
+@@ -39 +39,11 @@
+-export type TbRow = { ref: string; row: number; code: string; name: string; coded: boolean; values: Partial<Record<TbGroup, bigint>>; errors: string[] };
++export type TbRow = {
++  ref: string;
++  row: number;
++  code: string;
++  name: string;
++  coded: boolean;
++  values: Partial<Record<TbGroup, bigint>>;
++  /** A group's value exactly, in micro-units, when the file wrote it beyond sen (`parseSubSen`): rule 6a rounds this once. */
++  exact?: Partial<Record<TbGroup, bigint>>;
++  errors: string[];
++};
+diff --git a/tests/unit/rounding-reference.test.ts b/tests/unit/rounding-reference.test.ts
+index fe6eafc..cf20313 100644
+--- a/tests/unit/rounding-reference.test.ts
++++ b/tests/unit/rounding-reference.test.ts
+@@ -4 +4 @@
+-import { planLedger, planNeraca, type EntityInfo } from "@/lib/ledger-import/check";
++import { planLedger, planNeraca, planTb, type EntityInfo } from "@/lib/ledger-import/check";
+@@ -13 +13 @@
+- * an Excel workbook → the ledger reader → planLedger / planNeraca. Synthetic amounts only.
++ * an Excel workbook → the reader → planLedger / planNeraca / planTb. Synthetic amounts only.
+@@ -39,0 +40,6 @@
++/** micro-units → decimal text, the form a source amount is written in. */
++function text(m: bigint): string {
++  const a = m < 0n ? -m : m;
++  return `${m < 0n ? "-" : ""}${a / 1_000_000n}.${String(a % 1_000_000n).padStart(6, "0")}`;
++}
++
+@@ -94,3 +100 @@
+-          const rest = (micro(a) + micro(offset)) * -1n;
+-          const restText = `${rest < 0n ? "-" : ""}${(rest < 0n ? -rest : rest) / 1_000_000n}.${String((rest < 0n ? -rest : rest) % 1_000_000n).padStart(6, "0")}`;
+-          const src = [a, offset, restText];
++          const src = [a, offset, text(-(micro(a) + micro(offset)))];
+@@ -103,0 +108,58 @@
++
++  // The trial-balance (neraca saldo) path: same reference, same expectations.
++  const TITLE = [["PT UJI"], ["TRIAL BALANCE"], ["Periode 1 Mei 2026 s.d. 31 Mei 2026"]];
++  const drcr = (t: string) => (t.startsWith("-") ? [0, Number(t.slice(1))] : [Number(t), 0]);
++  async function throughTb(rows: unknown[][], currency: string) {
++    const sheets = await readSheets("tb.xlsx", await workbook(rows));
++    const read = readTable(sheets, detectTables(sheets)[0]);
++    if (read.mode !== "NERACA" || !read.tb || !read.date) throw new Error("not a TB");
++    const p = planTb(read.tb, { entityKey: "", entity: { entityId: "e", name: "PT Uji", currency }, opening: read.tb.opening ?? read.date, closing: read.date });
++    const of = (kind: string) => p.entries.find((e) => e.kind === kind);
++    const shape = (e: (typeof p.entries)[number] | undefined) => e && { lines: e.lines.map((l) => l.amount), rounding: e.rounding, imbalance: e.imbalance };
++    return { opening: shape(of("OPENING")), movement: shape(of("IMPORTED")), checks: p.checks };
++  }
++
++  it("TB: the payable example in a movement column posts 101 / 75 / 25 and Rp 1 on 7190", async () => {
++    const src = ["100.51", "-75.4999", "-25.0101"];
++    const ref = reference(src, "IDR");
++    expect(ref).toEqual({ lines: [101n, -75n, -25n], rounding: -1n, imbalance: 0n });
++    const rows = src.map((a, i) => [`${i + 1}-1000`, `Akun ${i}`, 0, 0, ...drcr(a), ...drcr(a)]);
++    const { movement, checks } = await throughTb([...TITLE, ["COA", "Nama Akun", "Saldo Awal", null, "Mutasi", null, "Saldo Akhir", null], [null, null, "Dr", "Cr", "Dr", "Cr", "Dr", "Cr"], ...rows], "IDR");
++    expect(movement).toEqual(ref);
++    expect(checks.filter((c) => c.code === "UNBALANCED")).toEqual([]);
++  });
++
++  it("TB: a movement derived from opening and closing rounds the difference once", async () => {
++    // Opening 100,51 = 75,4999 + 25,0101; closing 300,0049 = 150,2525 + 149,7524. Movement = closing − opening, per account.
++    const open = ["100.51", "-75.4999", "-25.0101"];
++    const close = ["300.0049", "-150.2525", "-149.7524"];
++    const move = close.map((c, i) => text(micro(c) - micro(open[i])));
++    const rows = open.map((o, i) => [`${i + 1}-1000`, `Akun ${i}`, ...drcr(o), ...drcr(close[i])]);
++    const { opening, movement } = await throughTb([...TITLE, ["COA", "Nama Akun", "Saldo Awal", null, "Saldo Akhir", null], [null, null, "Dr", "Cr", "Dr", "Cr"], ...rows], "IDR");
++    expect(opening).toEqual(reference(open, "IDR"));
++    expect(movement).toEqual(reference(move, "IDR"));
++  });
++
++  it("TB: a presentation-signed balance column keeps the exact amount with its turned sign", async () => {
++    const { opening, checks } = await throughTb(
++      [...TITLE, ["Kode Akun", "Nama Akun", "Saldo Awal", "Debit", "Kredit", "Saldo Akhir"], ["Aset"], ["1-100", "Kas", 100.51, 0, 0, 100.51], ["Liabilitas"], ["2-100", "Utang Usaha", 75.4999, 0, 0, 75.4999], ["Ekuitas"], ["3-100", "Modal Disetor", 25.0101, 0, 0, 25.0101]],
++      "IDR",
++    );
++    expect(checks.map((c) => c.code)).toContain("TB_PRESENTATION_SIGN");
++    expect(opening).toEqual(reference(["100.51", "-75.4999", "-25.0101"], "IDR"));
++  });
++
++  for (const currency of ["IDR", "JPY", "SGD", "USD"]) {
++    for (const v of grid) {
++      for (const sign of [1, -1]) {
++        it(`TB ${currency} ${sign < 0 ? "-" : ""}${v} matches the reference (movement column)`, async () => {
++          const a = sign < 0 ? `-${v}` : v;
++          const offset = sign < 0 ? "10" : "-10";
++          const src = [a, offset, text(-(micro(a) + micro(offset)))];
++          const rows = src.map((x, i) => [`${i + 1}-1000`, `Akun ${i}`, 0, 0, ...drcr(x), ...drcr(x)]);
++          const { movement } = await throughTb([...TITLE, ["COA", "Nama Akun", "Saldo Awal", null, "Mutasi", null, "Saldo Akhir", null], [null, null, "Dr", "Cr", "Dr", "Cr", "Dr", "Cr"], ...rows], currency);
++          expect(movement).toEqual(reference(src, currency));
++        });
++      }
++    }
++  }

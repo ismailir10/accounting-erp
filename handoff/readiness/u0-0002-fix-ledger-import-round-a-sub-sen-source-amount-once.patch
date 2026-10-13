@@ -1,0 +1,187 @@
+diff --git a/lib/ledger-import/check.ts b/lib/ledger-import/check.ts
+index 4b0d76a..1b0215b 100644
+--- a/lib/ledger-import/check.ts
++++ b/lib/ledger-import/check.ts
+@@ -278,0 +279 @@
++    const ties: boolean[] = [];
+@@ -299,0 +301 @@
++        ties.push(false);
+@@ -304,0 +307 @@
++        ties.push(!!r.tie);
+@@ -310 +313 @@
+-    const { rounded, rounding: lineRounding, total } = roundEntry(cents, info.currency);
++    const { rounded, rounding: lineRounding, total } = roundEntry(cents, info.currency, ties);
+@@ -483 +486 @@
+-  const { rounded, rounding, total } = roundEntry(usable.map((r) => r.amount), entity.currency);
++  const { rounded, rounding, total } = roundEntry(usable.map((r) => r.amount), entity.currency, usable.map((r) => !!r.tie));
+diff --git a/lib/ledger-import/read.ts b/lib/ledger-import/read.ts
+index 807c08a..3e7344e 100644
+--- a/lib/ledger-import/read.ts
++++ b/lib/ledger-import/read.ts
+@@ -3 +3 @@
+-import { parseCents } from "@/lib/money";
++import { parseCents, senTieFromBelow } from "@/lib/money";
+@@ -162,0 +163,5 @@
++/** Whether the cell's amount reached …,50 sen only by rounding sub-sen digits up (see `senTieFromBelow`). */
++function cellTie(c: RawCell | undefined): boolean {
++  return (typeof c === "number" || typeof c === "string") && senTieFromBelow(c);
++}
++
+@@ -583,0 +589,2 @@
++      // One amount per row: the tie of the side that holds it.
++      ...((raw.debit !== 0n) !== (raw.credit !== 0n) && cellTie(raw.debit !== 0n ? debitCell : creditCell) ? { tie: true } : {}),
+@@ -704,0 +712,4 @@
++      const tieCell = c.amount !== undefined ? amountCell : (() => {
++        const d = cellCents(row[c.debit!]);
++        return typeof d === "bigint" && d !== 0n ? row[c.debit!] : row[c.credit!];
++      })();
+@@ -705,0 +717 @@
++        ...(cellTie(tieCell) ? { tie: true } : {}),
+diff --git a/lib/ledger-import/types.ts b/lib/ledger-import/types.ts
+index 8acc802..7e7c07a 100644
+--- a/lib/ledger-import/types.ts
++++ b/lib/ledger-import/types.ts
+@@ -69,0 +70,2 @@
++  /** Its amount reached …,50 sen only by rounding sub-sen digits up (`senTieFromBelow`): rounds toward zero to Rupiah (rule 6a). */
++  tie?: boolean;
+@@ -81,0 +84,2 @@
++  /** Its amount reached …,50 sen only by rounding sub-sen digits up (`senTieFromBelow`): rounds toward zero to Rupiah (rule 6a). */
++  tie?: boolean;
+diff --git a/lib/money.ts b/lib/money.ts
+index e683e4f..9758a2e 100644
+--- a/lib/money.ts
++++ b/lib/money.ts
+@@ -74,2 +74,20 @@
+-  if (input === null || input === undefined) return 0n;
+-  if (typeof input === "bigint") return input * 100n;
++  return parseCentsDetail(input).cents;
++}
++
++/**
++ * Whether a source amount reached exactly half a Rupiah (…,50 sen) only by rounding sub-sen digits **up**: 1.234,497 → 1.234,50 sen.
++ * Rounding that sen value to Rupiah again would give 1.235, where the source amount rounds once to 1.234 (accounting-rules 6a: round
++ * the source amount, half-up, per line). `roundEntry` breaks such a tie toward zero for currencies without sen (IDR, JPY).
++ */
++export function senTieFromBelow(input: string | number | bigint | null | undefined): boolean {
++  try {
++    const { cents, roundedAway } = parseCentsDetail(input);
++    return roundedAway && (cents < 0n ? -cents : cents) % 100n === 50n;
++  } catch {
++    return false;
++  }
++}
++
++function parseCentsDetail(input: string | number | bigint | null | undefined): { cents: bigint; roundedAway: boolean } {
++  if (input === null || input === undefined) return { cents: 0n, roundedAway: false };
++  if (typeof input === "bigint") return { cents: input * 100n, roundedAway: false };
+@@ -78 +96 @@
+-    return parseCents(input.toFixed(6));
++    return parseCentsDetail(input.toFixed(6));
+@@ -81 +99 @@
+-  if (s === "" || s === "-") return 0n;
++  if (s === "" || s === "-") return { cents: 0n, roundedAway: false };
+@@ -103,2 +121,4 @@
+-  const value = frac.length > 2 ? divRound(scaled, 10n ** BigInt(frac.length - 2)) : scaled;
+-  return negative ? -value : value;
++  const divisor = 10n ** BigInt(Math.max(frac.length - 2, 0));
++  const value = frac.length > 2 ? divRound(scaled, divisor) : scaled;
++  const roundedAway = frac.length > 2 && value * divisor > scaled;
++  return { cents: negative ? -value : value, roundedAway };
+@@ -177,2 +197,8 @@
+-export function roundEntry(cents: bigint[], currency: string): { rounded: bigint[]; rounding: bigint; total: bigint } {
+-  const rounded = cents.map((c) => centsToMinor(c, currency));
++export function roundEntry(cents: bigint[], currency: string, tiesFromBelow?: boolean[]): { rounded: bigint[]; rounding: bigint; total: bigint } {
++  const e = exponentOf(currency);
++  // A …,50 sen line that the source only reached by rounding up rounds toward zero here: one rounding of the source amount (rule 6a).
++  const half = e < 2 ? 10n ** BigInt(2 - e) / 2n : 0n;
++  const rounded = cents.map((c, i) => {
++    if (half && tiesFromBelow?.[i] && (c < 0n ? -c : c) % (half * 2n) === half) return (c - (c < 0n ? -half : half)) / (half * 2n);
++    return centsToMinor(c, currency);
++  });
+diff --git a/tests/unit/ledger-check.test.ts b/tests/unit/ledger-check.test.ts
+index ad10fa9..1b61d93 100644
+--- a/tests/unit/ledger-check.test.ts
++++ b/tests/unit/ledger-check.test.ts
+@@ -29,0 +30,11 @@
++  it("rounds a sub-sen line once: no Rupiah moved into it, no 7190 needed when the source balances (F1, 2026-10-12)", () => {
++    // 1.000,497 + 999,503 = 2.000 in the source. Rounded once: 1.000 + 1.000 − 2.000. Rounded twice (sen, then Rupiah) the first line was
++    // 1.001 and a −1 went to 7190.
++    const p = planLedger(
++      [row({ code: "1", debit: 100_050n, tie: true }), row({ code: "2", debit: 99_950n }), row({ code: "3", credit: 200_000n })],
++      { entities: ENT, currencyMode: "FUNCTIONAL" },
++    );
++    expect(p.entries[0].lines.map((l) => l.amount)).toEqual([1000n, 1000n, -2000n]);
++    expect(p.entries[0].rounding).toBe(0n);
++  });
++
+@@ -156,0 +168,22 @@
++describe("planNeraca, one rounding (F1, 2026-10-12)", () => {
++  const nr = (code: string, amount: bigint, typeHint: NeracaRow["typeHint"], tie = false): NeracaRow => ({ ref: `N!${n++}`, row: n, code, name: code, amount, typeHint, termHint: null, coded: true, errors: [], ...(tie ? { tie: true } : {}) });
++  it("a payable that reached …,50 sen from below rounds down and the Rupiah residue shows on 7190 (the real Neraca pattern)", () => {
++    // Source: assets 2.000,000 = payable 1.000,497 + equity 999,503. Rupiah, rounded once: 2.000 vs 1.000 + 1.000 → balanced.
++    // A second sub-sen line elsewhere makes the once-rounded lines not foot: that residue belongs on 7190, never in a payable.
++    const p = planNeraca(
++      [nr("1-1000", 200_000n, "ASET"), nr("2-2000", -100_050n, "LIABILITAS", true), nr("3-3000", -99_950n, "EKUITAS")],
++      [],
++      { entityKey: "", entity: { entityId: "e", name: "PT Uji", currency: "IDR" }, date: dateOnly(2026, 5, 31), sheet: "N" },
++    );
++    expect(p.entries[0].lines.map((l) => l.amount)).toEqual([2000n, -1000n, -1000n]);
++    expect(p.entries[0].rounding).toBe(0n);
++    const q = planNeraca(
++      [nr("1-1000", 200_000n, "ASET"), nr("2-2000", -100_050n, "LIABILITAS", true), nr("3-3000", -99_950n, "EKUITAS", true)],
++      [],
++      { entityKey: "", entity: { entityId: "e", name: "PT Uji", currency: "IDR" }, date: dateOnly(2026, 5, 31), sheet: "N" },
++    );
++    expect(q.entries[0].lines.map((l) => l.amount)).toEqual([2000n, -1000n, -999n]);
++    expect(q.entries[0].rounding).toBe(-1n);
++  });
++});
++
+diff --git a/tests/unit/ledger-read.test.ts b/tests/unit/ledger-read.test.ts
+index e66ceb0..0a0d8b6 100644
+--- a/tests/unit/ledger-read.test.ts
++++ b/tests/unit/ledger-read.test.ts
+@@ -17,0 +18,8 @@
++
++  it("marks an amount that reached …,50 sen only by rounding sub-sen digits up (F1, 2026-10-12)", async () => {
++    const buf = await workbook({ N: [["PT Uji"], ["Balance Sheet"], ["Date", null, "31/05/2026"], ["Assets"], ["1-1000", "Bank", 2000], ["Total Assets", null, 2000], ["Liability & Equity"], ["2-2000", "Accounts Payable", 1000.497123], ["3-3000", "Share Capital", 999.502877], ["Total Liability & Equity", null, 2000]] });
++    const sheets = await readSheets("neraca.xlsx", buf);
++    const res = readTable(sheets, detectTables(sheets)[0]);
++    const by = Object.fromEntries((res.rows as { code: string; tie?: boolean }[]).map((r) => [r.code, !!r.tie]));
++    expect(by).toEqual({ "1-1000": false, "2-2000": true, "3-3000": false });
++  });
+diff --git a/tests/unit/money.test.ts b/tests/unit/money.test.ts
+index 4180593..f0b1a77 100644
+--- a/tests/unit/money.test.ts
++++ b/tests/unit/money.test.ts
+@@ -43 +43 @@
+-import { centsToMinor, formatMoney, parseCents, parseMinor, roundEntry } from "@/lib/money";
++import { centsToMinor, formatMoney, parseCents, parseMinor, roundEntry, senTieFromBelow } from "@/lib/money";
+@@ -68,0 +69,27 @@
++describe("one rounding of a sub-sen source amount (rule 6a; readiness finding F1, 2026-10-12)", () => {
++  it("knows a …,50 sen reached only by rounding up from below", () => {
++    expect(senTieFromBelow(1234.497123)).toBe(true); // a spreadsheet float with six real decimals
++    expect(senTieFromBelow("1234.4951")).toBe(true); // ("1234.495" alone reads as a thousands group, as before)
++    expect(senTieFromBelow(-1234.497123)).toBe(true);
++    expect(senTieFromBelow(1234.5)).toBe(false); // a real half: half-up stays up
++    expect(senTieFromBelow(1234.503)).toBe(false); // rounded down to …,50: still ≥ half
++    expect(senTieFromBelow(1234.4949)).toBe(false); // …,49 sen: no tie
++    expect(senTieFromBelow(93375132.07000001)).toBe(false); // float noise only
++    expect(senTieFromBelow("1.234,497")).toBe(true);
++    expect(senTieFromBelow("abc")).toBe(false);
++    expect(parseCents(1234.497123)).toBe(123450n); // sen are unchanged
++  });
++
++  it("roundEntry breaks those ties toward zero for Rupiah (and other no-sen currencies), never for sen currencies", () => {
++    expect(roundEntry([123450n, -123450n], "IDR").rounded).toEqual([1235n, -1235n]); // before: rounded twice
++    expect(roundEntry([123450n, -123450n], "IDR", [true, true]).rounded).toEqual([1234n, -1234n]);
++    expect(roundEntry([123450n], "JPY", [true]).rounded).toEqual([1234n]);
++    expect(roundEntry([123450n, -123450n], "SGD", [true, true]).rounded).toEqual([123450n, -123450n]);
++    expect(roundEntry([123449n], "IDR", [true]).rounded).toEqual([1234n]); // not a tie: unchanged
++    // The residue still goes to one 7190 line: 1.234,497 + 765,503 = 2.000,000.
++    const r = roundEntry([123450n, 76550n, -200000n], "IDR", [true, false, false]);
++    expect(r.rounded).toEqual([1234n, 766n, -2000n]);
++    expect(r.rounding).toBe(0n);
++  });
++});
++

@@ -1,0 +1,11 @@
+diff --git a/tests/unit/inbox-propose.test.ts b/tests/unit/inbox-propose.test.ts
+index fcade85..5ddef3f 100644
+--- a/tests/unit/inbox-propose.test.ts
++++ b/tests/unit/inbox-propose.test.ts
+@@ -162,0 +163,6 @@
++  it("LIMIT (documented): a Rupiah majority is not asked even with many foreign rows — those rely on the draft's FX review checks", () => {
++    const sheet = { sheet: "GL", mode: "LEDGER" as const, rows: 100, periodStart: "2025-01-01", periodEnd: "2025-12-31", entities: ["MIX"], entityCurrencies: { MIX: { IDR: 60, USD: 40 } } };
++    const p = proposeClient([{ fileName: "mix.xlsx", kind: "LEDGER", status: "CHECKED", message: null, sections: [sheet] }]);
++    expect(p.entities[0].currencyRequired).toBeUndefined();
++  });
++

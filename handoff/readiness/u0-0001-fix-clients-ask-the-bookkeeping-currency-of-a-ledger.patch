@@ -1,0 +1,215 @@
+diff --git a/components/app/new-client-from-files.tsx b/components/app/new-client-from-files.tsx
+index b90bbeb..86aa10e 100644
+--- a/components/app/new-client-from-files.tsx
++++ b/components/app/new-client-from-files.tsx
+@@ -22,0 +23 @@
++import { CURRENCIES, CURRENCY_CODES } from "@/lib/fx/currency";
+@@ -31 +32,16 @@
+-type CardEntity = { key: string; name: string; kind: ProposedKind; fromClientName?: boolean; fromProposal?: boolean; touched?: boolean; removed?: boolean; /** A ledger's entity label: the short name its rows are matched by, kept when the name is edited. */ shortName?: string };
++type CardEntity = {
++  key: string;
++  name: string;
++  kind: ProposedKind;
++  fromClientName?: boolean;
++  fromProposal?: boolean;
++  touched?: boolean;
++  removed?: boolean;
++  /** A ledger's entity label: the short name its rows are matched by, kept when the name is edited. */
++  shortName?: string;
++  /** Its ledger rows aren't mostly Rupiah: the bookkeeping currency is asked (`ProposedEntity.currencyRequired`), with the rows per currency. */
++  currencyRequired?: boolean;
++  rowsByCurrency?: { currency: string; rows: number }[];
++  /** The bookkeeping currency the user chose; absent = Rupiah. */
++  currency?: string;
++};
+@@ -65 +81,11 @@
+-    } else entities.push({ key: e.key, name: e.name, kind: e.kind, fromClientName: e.fromClientName, fromProposal: true, ...(e.labelled ? { shortName: e.shortName } : {}) });
++      if (e.currencyRequired) Object.assign(known, { currencyRequired: true, rowsByCurrency: e.rowsByCurrency });
++    } else
++      entities.push({
++        key: e.key,
++        name: e.name,
++        kind: e.kind,
++        fromClientName: e.fromClientName,
++        fromProposal: true,
++        ...(e.labelled ? { shortName: e.shortName } : {}),
++        ...(e.currencyRequired ? { currencyRequired: true, rowsByCurrency: e.rowsByCurrency } : {}),
++      });
+@@ -203,0 +230,8 @@
++      // A company whose ledger rows aren't mostly Rupiah is never created in Rupiah by default: its foreign amounts would be booked as Rupiah.
++      const unasked = active.filter((e) => e.currencyRequired && !e.currency);
++      if (unasked.length) {
++        setFields(Object.fromEntries(unasked.map((e) => [`currency:${e.key}`, "Pilih mata uang pembukuannya."])));
++        setError(unasked.length === 1 ? null : `Pilih mata uang pembukuan ${unasked.length} perusahaan yang ditandai.`);
++        setFocusError((n) => n + 1);
++        return;
++      }
+@@ -211 +245 @@
+-          return { name: n, shortName: entity.shortName ?? shortNameOf(n, entity.kind), kind: entity.kind, npwp: "", banks: banks.map((b) => ({ bank: b.bank, number: b.number, label: "", isOverdraft: b.isOverdraft })) };
++          return { name: n, shortName: entity.shortName ?? shortNameOf(n, entity.kind), kind: entity.kind, npwp: "", ...(entity.currency ? { currency: entity.currency } : {}), banks: banks.map((b) => ({ bank: b.bank, number: b.number, label: "", isOverdraft: b.isOverdraft })) };
+@@ -453,0 +488,21 @@
++                    {e.currencyRequired && (
++                      <Field className="sm:max-w-md" data-testid="proposal-currency">
++                        <FieldLabel htmlFor={`proposal-currency-${i}`}>Mata uang pembukuan</FieldLabel>
++                        <SimpleSelect
++                          id={`proposal-currency-${i}`}
++                          label={`Mata uang pembukuan ${entityName(e) || "entitas"}`}
++                          value={e.currency ?? ""}
++                          placeholder="Pilih mata uang"
++                          options={CURRENCY_CODES.map((c) => ({ value: c, label: `${c} · ${CURRENCIES[c].name}` }))}
++                          disabled={busy}
++                          onChange={(v) => {
++                            setEntity(e.key, { currency: v || undefined });
++                            dropField(`currency:${e.key}`);
++                          }}
++                        />
++                        <FieldDescription>
++                          Baris buku besarnya: {e.rowsByCurrency?.map((c) => `${c.currency} ${c.rows.toLocaleString("id-ID")}`).join(" · ")}. Sebagian besar bukan Rupiah, jadi Buku tidak menebak mata uang pembukuannya.
++                        </FieldDescription>
++                        <FieldError>{fields[`currency:${e.key}`]}</FieldError>
++                      </Field>
++                    )}
+diff --git a/lib/evidence/extract.ts b/lib/evidence/extract.ts
+index 7d80445..ac7c5f8 100644
+--- a/lib/evidence/extract.ts
++++ b/lib/evidence/extract.ts
+@@ -337 +337,7 @@
+-        out.set(candidate.sheet, { mode: "LEDGER", rows: read.rows.length, entities: [...new Set(read.rows.flatMap((r) => r.entity ? [r.entity] : []))], periodStart: dates[0] ?? null, periodEnd: dates.at(-1) ?? null, currencies: [...new Set(read.rows.flatMap((r) => r.currency ? [r.currency] : []))].sort() });
++        const entityCurrencies: Record<string, Record<string, number>> = {};
++        for (const r of read.rows) {
++          if (!r.entity || !r.currency) continue;
++          const byCurrency = (entityCurrencies[r.entity] ??= {});
++          byCurrency[r.currency] = (byCurrency[r.currency] ?? 0) + 1;
++        }
++        out.set(candidate.sheet, { mode: "LEDGER", rows: read.rows.length, entities: [...new Set(read.rows.flatMap((r) => r.entity ? [r.entity] : []))], periodStart: dates[0] ?? null, periodEnd: dates.at(-1) ?? null, currencies: [...new Set(read.rows.flatMap((r) => r.currency ? [r.currency] : []))].sort(), entityCurrencies });
+diff --git a/lib/evidence/types.ts b/lib/evidence/types.ts
+index 3f9b718..0f5bddc 100644
+--- a/lib/evidence/types.ts
++++ b/lib/evidence/types.ts
+@@ -34,0 +35,3 @@
++  /** Ledger rows per entity label and currency ({ HOLDCO: { USD: 700, SGD: 300 } }): an entity whose rows aren't mostly Rupiah has its
++   *  bookkeeping currency asked, never assumed (cycle 2026-10-12-ledger-entity-currency). Rows without a currency aren't counted. */
++  entityCurrencies?: Record<string, Record<string, number>>;
+diff --git a/lib/inbox/check.ts b/lib/inbox/check.ts
+index 69d226a..fff9e07 100644
+--- a/lib/inbox/check.ts
++++ b/lib/inbox/check.ts
+@@ -40,0 +41,2 @@
++  /** Rows per entity label and currency, when the ledger has a currency column (see `EvidenceTable.entityCurrencies`). */
++  entityCurrencies?: Record<string, Record<string, number>>;
+@@ -99,0 +102,6 @@
++/** Only entities with a non-Rupiah row carry their counts (all they're for is asking a bookkeeping currency): a Rupiah ledger's preview is unchanged. */
++function foreignEntities(counts: Record<string, Record<string, number>> | undefined): Pick<LedgerSection, "entityCurrencies"> {
++  const foreign = Object.entries(counts ?? {}).filter(([, byCurrency]) => Object.keys(byCurrency).some((c) => c !== "IDR"));
++  return foreign.length ? { entityCurrencies: Object.fromEntries(foreign) } : {};
++}
++
+@@ -104 +112,9 @@
+-  return [...tables].map(([sheet, t]) => ({ sheet, mode: t.mode, rows: t.rows, periodStart: t.periodStart, periodEnd: t.periodEnd, ...(t.entities.length ? { entities: t.entities } : {}) }));
++  return [...tables].map(([sheet, t]) => ({
++    sheet,
++    mode: t.mode,
++    rows: t.rows,
++    periodStart: t.periodStart,
++    periodEnd: t.periodEnd,
++    ...(t.entities.length ? { entities: t.entities } : {}),
++    ...foreignEntities(t.entityCurrencies),
++  }));
+diff --git a/lib/inbox/propose.ts b/lib/inbox/propose.ts
+index 0cc9c83..9388dee 100644
+--- a/lib/inbox/propose.ts
++++ b/lib/inbox/propose.ts
+@@ -48,0 +49,7 @@
++  /** The ledger's rows of this entity per currency, most first ("USD 700 · SGD 300 · IDR 2"). */
++  rowsByCurrency?: { currency: string; rows: number }[];
++  /**
++   * Its rows aren't mostly Rupiah: the bookkeeping currency is a judgement (a holding can keep SGD books over mostly USD rows), so the
++   * card asks for it instead of creating the company in Rupiah and booking foreign amounts as Rupiah.
++   */
++  currencyRequired?: boolean;
+@@ -122,0 +130,9 @@
++/** A ledger entity's rows per currency, and whether its bookkeeping currency must be asked: only when Rupiah rows aren't the majority. */
++function currencyOf(counts: Map<string, number> | undefined): Pick<ProposedEntity, "rowsByCurrency" | "currencyRequired"> {
++  if (!counts?.size) return {};
++  const rowsByCurrency = [...counts].map(([currency, rows]) => ({ currency, rows })).sort((a, b) => b.rows - a.rows || a.currency.localeCompare(b.currency));
++  const total = rowsByCurrency.reduce((s, c) => s + c.rows, 0);
++  const idr = counts.get("IDR") ?? 0;
++  return idr * 2 > total ? {} : { rowsByCurrency, currencyRequired: true };
++}
++
+@@ -132,0 +149 @@
++  const labelCurrencies = new Map<string, Map<string, number>>();
+@@ -143 +160,8 @@
+-      for (const section of f.sections as LedgerSection[]) for (const label of section.entities ?? []) if (!labels.has(label.toLowerCase())) labels.set(label.toLowerCase(), label);
++      for (const section of f.sections as LedgerSection[]) {
++        for (const label of section.entities ?? []) if (!labels.has(label.toLowerCase())) labels.set(label.toLowerCase(), label);
++        for (const [label, counts] of Object.entries(section.entityCurrencies ?? {})) {
++          const into = labelCurrencies.get(label.toLowerCase()) ?? new Map<string, number>();
++          for (const [currency, n] of Object.entries(counts)) into.set(currency, (into.get(currency) ?? 0) + n);
++          labelCurrencies.set(label.toLowerCase(), into);
++        }
++      }
+@@ -230,0 +255 @@
++      const currency = currencyOf(labelCurrencies.get(label.toLowerCase()));
+@@ -233,2 +258,2 @@
+-      if (holder) Object.assign(holder, { shortName: label, labelled: true });
+-      else entities.push({ key: `label:${label.toLowerCase()}`, name: label, shortName: label, kind: "PT", labelled: true, banks: [] });
++      if (holder) Object.assign(holder, { shortName: label, labelled: true, ...currency });
++      else entities.push({ key: `label:${label.toLowerCase()}`, name: label, shortName: label, kind: "PT", labelled: true, ...currency, banks: [] });
+diff --git a/tests/unit/evidence-extract.test.ts b/tests/unit/evidence-extract.test.ts
+index 81f1221..5ff7389 100644
+--- a/tests/unit/evidence-extract.test.ts
++++ b/tests/unit/evidence-extract.test.ts
+@@ -26,0 +27,15 @@
++  it("a multi-entity ledger table counts its rows per entity and currency (cycle 2026-10-12-ledger-entity-currency)", async () => {
++    const { postableTables } = await import("@/lib/evidence/extract");
++    const rows = [
++      ["Entitas", "Tanggal", "Kode Akun", "Nama Akun", "Mata Uang", "Debit", "Kredit"],
++      ["HOLD", new Date(Date.UTC(2025, 0, 31)), "1-100", "Kas", "USD", 100, 0],
++      ["HOLD", new Date(Date.UTC(2025, 0, 31)), "3-100", "Modal", "USD", 0, 100],
++      ["HOLD", new Date(Date.UTC(2025, 1, 28)), "1-100", "Kas", "SGD", 50, 0],
++      ["HOLD", new Date(Date.UTC(2025, 1, 28)), "3-100", "Modal", "SGD", 0, 50],
++      ["OPA", new Date(Date.UTC(2025, 0, 31)), "1-100", "Kas", "IDR", 1000, 0],
++      ["OPA", new Date(Date.UTC(2025, 0, 31)), "4-100", "Penjualan", "IDR", 0, 1000],
++    ];
++    const tables = await postableTables("gl.xlsx", await workbook({ GL: rows }));
++    expect(tables.get("GL")).toMatchObject({ mode: "LEDGER", entities: ["HOLD", "OPA"], entityCurrencies: { HOLD: { USD: 2, SGD: 2 }, OPA: { IDR: 2 } } });
++  });
++
+diff --git a/tests/unit/inbox-propose.test.ts b/tests/unit/inbox-propose.test.ts
+index 3a1ad1c..fcade85 100644
+--- a/tests/unit/inbox-propose.test.ts
++++ b/tests/unit/inbox-propose.test.ts
+@@ -139,0 +140,32 @@
++  it("a ledger entity whose rows are mostly foreign currency has its bookkeeping currency asked, with the rows per currency (cycle 2026-10-12)", () => {
++    // A holding-style entity: almost every row USD or SGD, a couple in Rupiah, books kept in SGD. Created in Rupiah by default, the import
++    // would have booked its USD/SGD amounts as Rupiah.
++    const sheet = (name: string, entities: string[], entityCurrencies: Record<string, Record<string, number>>) => ({ sheet: name, mode: "LEDGER" as const, rows: 100, periodStart: "2023-01-01", periodEnd: "2025-12-31", entities, entityCurrencies });
++    const p = proposeClient([
++      {
++        fileName: "grup.xlsx",
++        kind: "LEDGER",
++        status: "CHECKED",
++        message: null,
++        sections: [
++          sheet("HC_GL", ["HOLD"], { HOLD: { USD: 70, SGD: 28, IDR: 2 } }),
++          // A Rupiah company with a few USD lines (converted by rate at import) keeps Rupiah without a question.
++          sheet("OPCO_GL", ["OPA", "OPB"], { OPA: { IDR: 300, USD: 12 }, OPB: { IDR: 50 } }),
++        ],
++      },
++    ]);
++    const by = Object.fromEntries(p.entities.map((e) => [e.shortName, e]));
++    expect(by.HOLD).toMatchObject({ currencyRequired: true, rowsByCurrency: [{ currency: "USD", rows: 70 }, { currency: "SGD", rows: 28 }, { currency: "IDR", rows: 2 }] });
++    expect(by.OPA.currencyRequired).toBeUndefined();
++    expect(by.OPB.currencyRequired).toBeUndefined();
++  });
++
++  it("an even split, or a ledger without a currency column, changes nothing — only a non-Rupiah majority asks", () => {
++    const sheet = (entities: string[], entityCurrencies?: Record<string, Record<string, number>>) => ({ sheet: "GL", mode: "LEDGER" as const, rows: 10, periodStart: "2025-01-01", periodEnd: "2025-12-31", entities, ...(entityCurrencies ? { entityCurrencies } : {}) });
++    const half = proposeClient([{ fileName: "a.xlsx", kind: "LEDGER", status: "CHECKED", message: null, sections: [sheet(["EVEN"], { EVEN: { IDR: 5, USD: 5 } })] }]);
++    expect(half.entities[0].currencyRequired).toBe(true);
++    const none = proposeClient([{ fileName: "b.xlsx", kind: "LEDGER", status: "CHECKED", message: null, sections: [sheet(["PLAIN"])] }]);
++    expect(none.entities[0]).not.toHaveProperty("currencyRequired");
++    expect(none.entities[0]).not.toHaveProperty("rowsByCurrency");
++  });
++
