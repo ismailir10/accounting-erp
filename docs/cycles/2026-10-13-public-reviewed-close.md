@@ -57,7 +57,7 @@ Any non-public code change, new dependency, production action or private-data us
 ## Tasks
 - [x] T1 Clarify the public page and both decks; repair public deck navigation and
       phone reading; regenerate PDFs and verify the changed surfaces.
-- [ ] T2 Record the exact claim changes, source audit and verification; publish a
+- [x] T2 Record the exact claim changes, source audit and verification; publish a
       draft PR with synthetic highlight screenshots.
 
 ## Implementation
@@ -303,13 +303,24 @@ After:
   locally in `/tmp/buku-public-*.log` and `/tmp/buku-public-evidence/`.
 
 
+### Verified locally — `9f355f770077106eb921bc038f6e44f008443ea8`, 2026-10-13
+
+Production build at `http://localhost:3200`, anonymous prospect. Final public tests
+pass (25 unit/artifact, 9 browser), lint/typecheck/build pass, 62 deck captures have
+no browser errors or page/body overflow. Highlights named above were captured
+against this final runtime. The subsequent record update changes documentation
+only. Full existing suite passed 2,430 tests; synthetic books pass 1,765 checks.
+
 ## Ship Notes
 - Branch: `task/public-reviewed-close`, fresh main `e4899e1` unchanged at final fetch.
 - Changed firm slides: 1, 3, 5–8, 14, 15, 17. Company slides: 1, 3, 4, 10, 12–14.
   Shared deck reading/navigation styles affect all slides; both PDFs regenerated.
 - Scope review: only the public landing component, public deck files/PDFs,
   anonymous public tests and this work record. No product/auth/import/backend edits.
-- Final evidence and PR screenshots are attached in the publication step.
+- Draft PR: [#155](https://github.com/ismailir10/accounting-erp/pull/155).
+- Final public evidence is recorded above; synthetic highlights are attached to
+  the PR from the never-merged `pr-assets` branch. CI remains draft-skipped until
+  parent release coordination and review.
 
 No merge/deploy in this worker. No migrations, environment changes or manual data
 steps. Rollback: revert this public-only change.
