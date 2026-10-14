@@ -1,3 +1,5 @@
+# Cu mana file2 aslinya buat nyoba2
+
 # Buku — Operating Manual (for every coding agent)
 
 > How to work on this repo. [README.md](./README.md) is the *what*; this file is the *how*.
