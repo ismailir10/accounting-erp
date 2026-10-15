@@ -316,7 +316,9 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
 15a. **Ledger / Neraca import** (`lib/ledger-import`): read → check → map → post, all-or-nothing in one transaction, via
     `postJournal()` (kind `IMPORTED`, or `OPENING` for Neraca). Checks are deterministic and cite rows: BLOCK (non-numeric cell,
     missing date/account, unbalanced group, unknown currency, missing rate) stops posting; an unbalanced group may be **explicitly
-    accepted**, which posts its difference to 1999 with memo "Selisih dari file sumber". Same file twice for the same entity is refused.
+    accepted**, which posts its difference to 1999 with memo "Selisih dari file sumber". Same file twice for the same entity is refused,
+    also when two posts race: `postImport` locks the client's file (`ledger-import:<client>:<fileHash>`) first in its transaction,
+    re-checks the draft and a posted twin under the lock, and writes POSTED only from DRAFT.
     Each such 1999 line gets a deterministic correction proposal (`lib/adjust/suspense.ts`, rule 20b): reverse it on 1999 against a
     counter account — prefilled only when one line of the same entry has exactly that amount — posted only by the accountant's click
     (it can't be dismissed: the close FAILs until 1999 is cleared), keeping the group's `ledgerImportId` + `sourceRef`. It is offered
