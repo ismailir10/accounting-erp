@@ -106,9 +106,17 @@ All on fictional data, loopback databases, AI off. Code head `6e41946` (later co
     browser self-tests and review probes ran beside it. That file then passed 5/5 alone, and a **clean full rerun passed 102/102**,
     exit 0. **The cause of that timeout is unknown.**
   - `DEMO_MODE=false`: 102/102 as expected, exit 0.
-  - The two passing runs are separate executions with byte-identical redacted status files, told apart by their own server process,
-    server log and time window (16:00–16:08 UTC `false`, 16:09–16:18 UTC `true`) on one production build; the mode rests on the
-    recorded launch commands. Details and hashes in the cycle's metadata receipt (kept outside the repository).
+  - These earlier runs (15:48–16:18 UTC) are kept as **mode-unverified**: nothing recorded the effective mode.
+  - **Attested runs** (re-established loopback fixture, one fresh build `CwZXOlOB3eA0okCQfEo15` from the clean head, strictly
+    sequential, no other load): full suites `DEMO_MODE=true` 102/102 and `DEMO_MODE=false` 102/102, exit 0, each with its own run id,
+    server process and window, server and runner flags recorded per run. A separate behavioural probe per mode (fresh server, same
+    build, same controlled preconditions: the sample account unique and the exact live-upload file not booked, on the authorized
+    import page with the form shown) found the demo sample control **present with `true` and absent with `false`**: both modes
+    **attested**. The suites' own in-run probes failed on probe bugs and are kept as failures, so for the suite runs the flags are
+    attested by environment and the effective mode is inferred. `DEMO_MODE` is a runtime read in compiled server code only. Reviewed
+    read-only (`claude-opus-5-5`, high). Limits: one probe sample per mode; synthetic names in server logs (not attached). The server
+    line "The destination stream closed early" recurs (8 and 15 in the suites) during varying tests with no failure; it comes from
+    React's server renderer when a response closes early; no causal claim. Hashes in the metadata receipt (outside the repository).
   - No screenshot, video, trace or failure-context file written in the repository or the harness output.
 - Verify flows 1–4 are covered by the regression test (Unggah's `processNext` and the direct import, real database); the interleaving
   cannot be forced from the UI, so no manual browser walk of the race was done.
