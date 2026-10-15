@@ -20,8 +20,11 @@ fictional regression data only, independent review and exact-head gates before s
   With one: its own empty import of that source, as a sequential second drop records today (measured on `main`: a second Unggah drop of
   the same bytes writes an import with 2 rows, 2 duplicates and no lines). A handoff from an earlier review proposed answering with the
   winner's import in both cases; that would make the concurrent outcome differ from the sequential one for Unggah, so it was not taken.
-- **Only the same bytes recover.** The retry stays for every other change seen under the lock: another file holding the same lines,
-  a file overlapping in part, rows new or gone. Those keep going through retry and the normal dedupe, never passed off as a repeat.
+- **Only the same bytes recover.** The waiter recovers when, under the lock, every row is on file and an import of its same bytes is on
+  file. The retry stays for every other change: another file holding the same lines with no import of these bytes, a file overlapping in
+  part, rows new or gone. Those keep going through retry and the normal dedupe, never passed off as a repeat. (Review: if these bytes
+  already have an import, even an empty one from an earlier repeat, the waiter recovers to it however the rows came back; a sequential
+  repeat answers the same, so nothing differs from today's sequential behaviour.)
 - **"The same statement" is the match `main` already uses before the lock** (same account, period, source hash, source facts and
   issues), reused under the lock, not a new rule.
 
