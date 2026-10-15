@@ -1,9 +1,9 @@
 import { revalidateLegacy } from "@/lib/import/revalidate";
 import { guardTransferCounterparts } from "@/lib/import/transfer-guard";
 import { createHash } from "node:crypto";
-import { validateStatement, readValidation } from "@/lib/import/validation";
+import { validateStatement, readValidation, type StatementValidation } from "@/lib/import/validation";
 import { dedupeStatement as dedupe } from "@/lib/import/dedupe";
-import type { Db } from "@/lib/db";
+import type { Db, Tx } from "@/lib/db";
 import type { BankCode, ClassifyMethod, Direction } from "@/lib/generated/prisma/enums";
 import { ACCOUNT_CODES, isClassifiable } from "@/lib/coa/template";
 import { parseStatementSections } from "@/lib/import/parsers";
@@ -172,34 +172,31 @@ export async function importStatement(
     }
   }
 
+  // The statement as already on file (no imported rows): a repeat changes nothing and writes no second history row.
+  const onFile = async (importId: string): Promise<ImportSummary> => ({
+    importId,
+    rows: st.rows.length,
+    duplicates: st.rows.length,
+    posted: 0,
+    needsReview: 0,
+    byMethod: { TRANSFER: 0, RULE: 0, MEMORY: 0, AI: 0, HEURISTIC: 0, MANUAL: 0 },
+    ai: { calls: 0, cacheHits: 0 },
+    continuityOk: continuity.ok,
+    continuityNote: continuity.note,
+    otherSections,
+    otherAccounts,
+    pendingReview: await pendingReviewCount(),
+    notes,
+    fileBank: st.format,
+    months: monthsOf(st.periodStart, st.periodEnd),
+    layout: chosen.layout ?? null,
+  });
+
   // Nothing new and the statement is already on file: no second history row claiming an import that changed nothing.
   if (fresh.length === 0 && !args.evidenceVersionId) {
     await revalidateLegacy(db, bankAccount.id, st, hashes, validation, args.fileName);
-    const candidates = await db.statementImport.findMany({ where: { bankAccountId: bankAccount.id, periodStart: st.periodStart, periodEnd: st.periodEnd }, orderBy: { createdAt: "asc" }, select: { id: true, sourceValidation: true } });
-    const existing = candidates.find((c) => {
-      const v = readValidation(c.sourceValidation);
-      return v !== null && v.sourceHash === validation.sourceHash && Object.entries(validation.source).every(([key, value]) => v.source[key as keyof typeof v.source] === value) && v.issues.length === validation.issues.length && v.issues.every((issue, i) => issue.code === validation.issues[i].code && issue.severity === validation.issues[i].severity && issue.message === validation.issues[i].message);
-    });
-    if (existing) {
-      return {
-        importId: existing.id,
-        rows: st.rows.length,
-        duplicates: st.rows.length,
-        posted: 0,
-        needsReview: 0,
-        byMethod: { TRANSFER: 0, RULE: 0, MEMORY: 0, AI: 0, HEURISTIC: 0, MANUAL: 0 },
-        ai: { calls: 0, cacheHits: 0 },
-        continuityOk: continuity.ok,
-        continuityNote: continuity.note,
-        otherSections,
-        otherAccounts,
-        pendingReview: await pendingReviewCount(),
-        notes,
-        fileBank: st.format,
-        months: monthsOf(st.periodStart, st.periodEnd),
-        layout: chosen.layout ?? null,
-      };
-    }
+    const existing = await sameStatement(db, bankAccount.id, st, validation);
+    if (existing) return onFile(existing);
   }
 
   const items = fresh.map(({ r, hash }, i) => ({
@@ -289,13 +286,22 @@ export async function importStatement(
   let needsReview = 0;
   const codeToId = new Map(accounts.map((a) => [a.code, a.id]));
 
-  const importId = await db.$transaction(
-    async (tx) => {
+  // The lines this call writes: every new line, or none when the same bytes were booked while it waited for the lock.
+  let booked = items;
+  const outcome = await db.$transaction(
+    async (tx): Promise<{ onFile: string } | { importId: string }> => {
       // Two copies of a statement imported at once must not both pass the dedupe: serialise per bank account and look again.
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`import:${bankAccount.id}`}, 0))::text`;
       const now = await dedupe(tx, bankAccount.id, st, hashes, written, validation.sourceHash, validation);
-      if (now.duplicate.some((d, i) => d !== seen.duplicate[i])) throw new ParseError("Rekening ini baru saja menerima impor lain. Ulangi impor file ini.");
-      await guardTransferCounterparts(tx, client.id, openCounterparts.filter((row) => !!transfers.get(row.id)?.matchedTxId));
+      if (now.duplicate.some((d, i) => d !== seen.duplicate[i])) {
+        // The same bytes were booked while this call waited (a double click, the file dropped twice): it ends as a repeat started now
+        // would. Any other change (rows held by another file, in part or in full) asks for a retry, never passed off as a repeat.
+        const same = now.duplicate.every(Boolean) ? await sameStatement(tx, bankAccount.id, st, validation) : null;
+        if (!same) throw new ParseError("Rekening ini baru saja menerima impor lain. Ulangi impor file ini.");
+        if (!args.evidenceVersionId) return { onFile: same };
+        booked = [];
+      }
+      if (booked.length) await guardTransferCounterparts(tx, client.id, openCounterparts.filter((row) => !!transfers.get(row.id)?.matchedTxId));
       const imp = await tx.statementImport.create({
         data: {
           firmId: client.firmId,
@@ -309,7 +315,7 @@ export async function importStatement(
           openingBalance: st.openingBalance,
           closingBalance: st.closingBalance,
           rowCount: st.rows.length,
-          duplicateCount: st.rows.length - fresh.length,
+          duplicateCount: st.rows.length - booked.length,
           continuityOk: continuity.ok,
           continuityNote: continuity.note,
           parseNotes: notes,
@@ -319,7 +325,7 @@ export async function importStatement(
         },
       });
       const idMap = new Map<string, string>();
-      for (const it of items) {
+      for (const it of booked) {
         const c = result.get(it.id)!;
         const auto = c.method !== "AI" && c.method !== "HEURISTIC" && c.confidence >= AUTO_POST_CONFIDENCE;
         const created = await tx.bankTransaction.create({
@@ -354,7 +360,7 @@ export async function importStatement(
         await postBankTransaction(tx, created.id, auto ? { accountCode: c.accountCode, taxTag: c.taxTag } : { accountCode: ACCOUNT_CODES.SUSPENSE }, { codeToId, actorId: args.actorId });
       }
       // Link transfer pairs (both new, or new ↔ previously imported open half).
-      for (const [id, c] of transfers) {
+      for (const [id, c] of booked.length ? transfers : []) {
         if (!c.matchedTxId) continue;
         const selfId = idMap.get(id) ?? id;
         const otherId = idMap.get(c.matchedTxId) ?? c.matchedTxId;
@@ -372,20 +378,22 @@ export async function importStatement(
           }
         }
       }
-      return imp.id;
+      return { importId: imp.id };
     },
     { timeout: 120_000, maxWait: 10_000 },
   );
+  if ("onFile" in outcome) return onFile(outcome.onFile);
+  const { importId } = outcome;
   if (chosen.layout) await db.statementLayout.updateMany({ where: { id: chosen.layout.id, firmId: bankAccount.firmId }, data: { lastUsedAt: new Date() } });
 
   return {
     importId,
     rows: st.rows.length,
-    duplicates: st.rows.length - fresh.length,
-    posted: items.length - needsReview,
+    duplicates: st.rows.length - booked.length,
+    posted: booked.length - needsReview,
     needsReview,
     byMethod,
-    ai: args.aiLater ? { calls: 0, cacheHits: ai.usage.cacheHits, later: items.filter((it) => askable.has(it.id) && !ai.suggestions.has(`${it.merchantKey}|${it.direction}`)).length } : ai.usage,
+    ai: args.aiLater ? { calls: 0, cacheHits: ai.usage.cacheHits, later: booked.filter((it) => askable.has(it.id) && !ai.suggestions.has(`${it.merchantKey}|${it.direction}`)).length } : ai.usage,
     continuityOk: continuity.ok,
     continuityNote: continuity.note,
     otherSections,
@@ -396,6 +404,16 @@ export async function importStatement(
     fileBank: st.format,
     layout: chosen.layout ?? null,
   };
+}
+
+/** The earliest import of this account from the same bytes, read to the same source facts and issues: the statement already on file. */
+async function sameStatement(db: Db | Tx, bankAccountId: string, st: ParsedStatement, validation: StatementValidation): Promise<string | null> {
+  const candidates = await db.statementImport.findMany({ where: { bankAccountId, periodStart: st.periodStart, periodEnd: st.periodEnd }, orderBy: { createdAt: "asc" }, select: { id: true, sourceValidation: true } });
+  const existing = candidates.find((c) => {
+    const v = readValidation(c.sourceValidation);
+    return v !== null && v.sourceHash === validation.sourceHash && Object.entries(validation.source).every(([key, value]) => v.source[key as keyof typeof v.source] === value) && v.issues.length === validation.issues.length && v.issues.every((issue, i) => issue.code === validation.issues[i].code && issue.severity === validation.issues[i].severity && issue.message === validation.issues[i].message);
+  });
+  return existing?.id ?? null;
 }
 
 function monthsOf(start: Date, end: Date): string[] {

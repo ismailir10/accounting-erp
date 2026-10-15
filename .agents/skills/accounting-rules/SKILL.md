@@ -285,6 +285,10 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     Every repair is a note with the value as written (`parseNotes`); the row keeps it in `rawRow`, and the dedupe also knows the row by its
     written hash, so a file imported before a repair never doubles. A second Saldo Awal that doesn't continue the balance in a PDF section
     is another account: refused, never merged.
+    Two imports of one account at once serialise on the account's import lock (`import:<bankAccount>`) and repeat the dedupe under it.
+    A call whose rows were all booked meanwhile by the **same bytes** ends as a repeat started then would (the import on file; with a
+    Dokumen source, its own empty import of it); any other change (another file with the lines, a partial overlap) is refused with
+    *Ulangi impor*, and the retry goes through the dedupe as usual.
 13. Order: **transfer matcher → rules (client before firm, unless a matching firm rule's pattern strictly contains the client rule's — a client "PAJAK" never swallows the firm's "PAJAK BUNGA") → memory → financing / tax-payment suggestion → AI → heuristic.** Transfer matching
     needs a textual hint (TRSF/TRF/PINDAH BUKU/own entity name) — equal amounts alone are never enough — and pairs within **2 business
     days** (Sat/Sun don't count), only when **neither description names anyone besides the group's own entities** (`thirdPartyName`:
