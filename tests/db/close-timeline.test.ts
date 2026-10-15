@@ -3,8 +3,14 @@ import { db, makeGroup, resetDb } from "../helpers";
 import { closeTimeline, formatDuration } from "@/lib/controls/timeline";
 import { recordEvent } from "@/lib/audit";
 import { dateOnly } from "@/lib/format";
+import { addMember } from "../members";
 
-vi.mock("@/lib/tenant", () => ({ getCurrentMember: async () => { throw new Error("no session in tests"); } }));
+// recordExport reads the session through lib/auth/session. The identity source is pinned here (tests/members.ts), so the result never
+// depends on whether the shell running the suite has Auth configured: without these mocks, a configured NEXT_PUBLIC_SUPABASE_* made the
+// real Supabase client call cookies() outside a request, recordExport swallowed the error and logged nothing.
+const auth = vi.hoisted(() => ({ userId: null as string | null }));
+vi.mock("@/lib/auth", () => ({ authConfigured: () => true }));
+vi.mock("@/lib/supabase/server", () => ({ createSupabaseServerClient: async () => ({ auth: { getClaims: async () => ({ data: auth.userId ? { claims: { sub: auth.userId } } : null }) } }) }));
 const { recordExport } = await import("@/lib/reports/export-log");
 
 // ADR 0014's north-star metric: first file in → lock → first report sent after the lock, per client-month.
@@ -15,6 +21,7 @@ const t = (h: number) => new Date(Date.UTC(2026, 9, 1, h)); // hours on 1 Octobe
 beforeEach(async () => {
   await resetDb();
   g = await makeGroup();
+  auth.userId = null;
 });
 
 async function statement(month: number, createdAt: Date) {
@@ -70,6 +77,15 @@ describe("closeTimeline", () => {
     expect(e).toMatchObject({ subject: "period:2026-08", actorId: null, entityId: g.pt.entity.id });
     expect(e.summary).toBe("Laporan keuangan (PDF) · PT Uji Sejahtera · Agustus 2026 · final");
     expect((await closeTimeline(db, g.client.id))[0].firstSentAt).toEqual(e.createdAt);
+  });
+
+  it("a signed-in member's download names that member", async () => {
+    const member = await addMember(g.firm.id, "AKUNTAN", { clients: [g.client.id] });
+    auth.userId = member.userId;
+    await recordExport(db, { clientId: g.client.id, entityId: g.pt.entity.id, scope: "PT Uji Sejahtera", year: 2026, month: 8, file: "Laporan keuangan (Excel)", final: false });
+    const e = await db.auditEvent.findFirstOrThrow({ where: { kind: "REPORT_EXPORT" } });
+    expect(e).toMatchObject({ subject: "period:2026-08", actorId: member.id });
+    expect(e.summary).toBe("Laporan keuangan (Excel) · PT Uji Sejahtera · Agustus 2026 · draf");
   });
 
   it("formats durations as an accountant reads them", () => {
