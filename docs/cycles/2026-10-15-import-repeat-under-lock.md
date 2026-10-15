@@ -104,21 +104,26 @@ All on fictional data, loopback databases, AI off. Code head `6e41946` (later co
   Auth stack (synthetic users only):
   - `DEMO_MODE=true`, first run: 101 as expected, 1 timed out (`client-navigation.spec.ts:81`, a navigation test), exit 1. It ran while
     browser self-tests and review probes ran beside it. That file then passed 5/5 alone, and a **clean full rerun passed 102/102**,
-    exit 0. Cause of the one timeout not established.
+    exit 0. **The cause of that timeout is unknown.**
   - `DEMO_MODE=false`: 102/102 as expected, exit 0.
+  - The two passing runs are separate executions with byte-identical redacted status files, told apart by their own server process,
+    server log and time window (16:00–16:08 UTC `false`, 16:09–16:18 UTC `true`) on one production build; the mode rests on the
+    recorded launch commands. Details and hashes in the cycle's metadata receipt (kept outside the repository).
   - No screenshot, video, trace or failure-context file written in the repository or the harness output.
 - Verify flows 1–4 are covered by the regression test (Unggah's `processNext` and the direct import, real database); the interleaving
   cannot be forced from the UI, so no manual browser walk of the race was done.
-- **Hosted CI:** none ran (draft). Marking the PR ready runs `ci.yml` `check` only (no browser) as long as it has no `e2e` label. The
-  merge's push to `main` runs `e2e.yml` with the unmodified captures; a capture-safe CI change is proposed separately and awaits the
-  owner's scope decision.
+- **Hosted CI:** none ran (draft). Marking the PR ready runs `ci.yml` `check` (no browser without an `e2e` label), but its unmodified
+  `npm test` prints assertion diffs, messages and console output on a failure, and some unit fixtures are not proven fictional: **not
+  privacy-safe** while the CI route is open. The merge's push to `main` runs `e2e.yml` with the unmodified captures. A capture-safe CI
+  change (unit-log reporting and e2e) is proposed separately and awaits the owner's scope decision.
 
 ## Ship Notes
 - No migration, no env var, no dependency. Rollback: revert the merge (no data to undo).
 - Deploy window: both versions take the same account lock and neither double-books. An old waiter still answers the race with the
   retry (today's behaviour); a new waiter recovers. No cutover step is needed for the code itself.
 - Branch: the PR uses the session's assigned branch (`claude/…`), a user-directed exception to the `task/<slug>` rule (AGENTS §8).
-- **Merge and deploy held** for the owner's separate human cutover confirmation, which is a release decision, not a code risk: when to
-  mark the PR ready (CI `check` must then be green on its head), which route the merge's hosted e2e run takes (the capture-safe CI
-  proposal or not), and the merge itself (= the production deploy). No production data was read or written in this cycle; whether
+- **Merge and deploy held** for the owner's separate human cutover confirmation, which is a release decision, not a code risk, in this
+  order: (1) resolve the safe CI route, covering both the unit-log reporting in `ci.yml` and the hosted e2e run the merge triggers (the
+  capture-safe CI proposal or another route); (2) only then mark the PR ready, and CI `check` must be green on its head; (3) the merge
+  itself (= the production deploy). No production data was read or written in this cycle; whether
   production already holds FAILED Unggah lines from this defect is unknown.
