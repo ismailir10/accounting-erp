@@ -58,7 +58,11 @@ All on fictional data, loopback databases, `env -i`, AI off.
 ## Ship Notes
 - No migration, no env var, no dependency. Rollback: revert the merge (no data to undo).
 - **Deploy window.** Old code does not take the lock. While an old invocation is still running after the switch, an old/new pair can
-  still double-post (17 of 24 mixed fictional runs did), as old/old already can on today's `main`. During the deploy, no one posts a ledger
-  draft until the new deployment is live and the previous one has stopped serving requests. After that, posts serialise.
+  still double-post (17 of 24 mixed fictional runs did), as old/old already can on today's `main`. A freeze on new posts and closed tabs
+  are not enough on their own: a post started before the freeze keeps running on the server after its tab closes. Before the merge,
+  every post already started must have a **known terminal result**: its draft reads POSTED after a reload, or the caller saw an explicit
+  refusal. Any post with no response (spinner, timeout, closed tab) is unresolved, and the merge waits until an approved, positive,
+  read-only drain check shows it finished. Elapsed time is not that proof. Posting reopens only after the new deployment serves and
+  every user has loaded it fresh.
 - Unknown: whether production already holds doubled ledger postings (nothing was read). A read-only check and any repair are separate
   decisions.
