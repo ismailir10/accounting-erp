@@ -1,3 +1,4 @@
+import "@/lib/local-database-only";
 import { createPrisma } from "@/lib/db";
 import { createClient, createFirm } from "@/lib/setup";
 

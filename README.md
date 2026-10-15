@@ -138,7 +138,11 @@ merge to `main` is one production deploy.
 
 `vercel-build` (`scripts/vercel-build.sh`) then runs `prisma migrate deploy` on the non-pooling URL, seeds the demo **only if the
 database is empty**, runs the first-admin bootstrap, and builds. `npm run demo:reset` is destructive operator tooling: it removes all
-demo database data, including members; the demo admin is recreated by the seed. The shared UI cannot trigger it. Supabase Storage,
+demo database data, including members; the demo admin is recreated by the seed. The shared UI cannot trigger it, and it refuses to
+run unless every database variable that is set (`POSTGRES_PRISMA_URL`, `POSTGRES_URL`, `DATABASE_URL`, `POSTGRES_URL_NON_POOLING`,
+`DIRECT_URL`), as the `pg` driver would dial it (a `?host=` or an empty host falling back to `PGHOST` counts), and
+`NEXT_PUBLIC_SUPABASE_URL` point at localhost. Host-moving query parameters, sockets and `PGSERVICE` are refused. E2E setup, the DB
+tests and their migrations check the same before anything connects ([`lib/db-url.ts`](lib/db-url.ts)). Supabase Storage,
 Edge Functions, Realtime and Row Level Security are not used: the server is the boundary and Prisma connects as `postgres`.
 
 ### Email & login appearance
