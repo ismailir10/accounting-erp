@@ -1,4 +1,5 @@
 import "dotenv/config";
+import "../lib/local-database-only";
 import { randomBytes } from "node:crypto";
 import { execSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -14,8 +15,7 @@ import { endOfDayJakarta } from "../lib/access/grant";
  */
 async function setup() {
   const baseURL = process.env.BASE_URL ?? "http://localhost:3200";
-  const database = new URL(process.env.DATABASE_URL!);
-  if (!["localhost", "127.0.0.1", "::1"].includes(database.hostname) || !["localhost", "127.0.0.1"].includes(new URL(baseURL).hostname)) throw new Error("E2E setup only accepts disposable localhost environments.");
+  if (!["localhost", "127.0.0.1"].includes(new URL(baseURL).hostname)) throw new Error("E2E setup only accepts disposable localhost environments.");
   execSync("npx tsx scripts/seed.ts", { stdio: "inherit", env: process.env });
   const db = createPrisma();
   try {

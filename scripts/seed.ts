@@ -1,10 +1,11 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import "dotenv/config";
+import "@/lib/local-database-only";
 import { createPrisma } from "@/lib/db";
 import { liveUploadFile, seedDemo } from "@/lib/demo/seed";
 import { seedDemoAdmin } from "@/lib/demo/admin";
 
-/** npm run demo:reset — rebuild the demo firm through the real pipeline (0 real AI calls). */
+/** npm run demo:reset — rebuild the demo firm through the real pipeline (0 real AI calls). It truncates every table first: localhost only. */
 async function main() {
   const db = createPrisma();
   const t0 = Date.now();
