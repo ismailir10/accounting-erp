@@ -66,7 +66,40 @@ None. No migration, no dependency, no env var, no auth/PII change, no AI call, n
 - [ ] T1 Under the lock, a waiter whose rows were all booked by the same bytes ends as a repeat; regression test; rule 12.
 
 ## Implementation
+- T1 (`af04395`, wording `6e41946`): `importStatement` (`lib/import/pipeline.ts`) keeps the pre-lock read and the account lock as they were.
+  The pre-lock same-statement match moved into one helper, `sameStatement`, used both before the lock (a sequential repeat) and under it.
+  Under the lock, when the dedupe now differs from the first read: every row a duplicate and `sameStatement` finds the bytes → without a
+  Dokumen source the call returns the import on file (nothing written, the repeat's summary); with one it writes its own empty import of
+  that source (no lines, no transfer guard or links, as a sequential repeat). Otherwise the retry, unchanged. Rule 12 states it.
+- Regression `tests/db/import-same-file-race.test.ts`: two imports held after their first read (a query hook on the rules read, no sleeps)
+  until both arrive, then released into the lock: same bytes direct, same bytes with a Dokumen source, Unggah's two drops via
+  `processNext`, and retry controls for the same lines in other bytes and a partial overlap. Fictional values only (the `makeGroup`
+  group, fictional counterparties and evidence id).
+- A handoff from an earlier review session proposed a test expecting one shared import for Unggah; measured on `main`, a sequential
+  second drop writes its own empty import, so the waiter matches that (Decisions). Its test text was not added.
 
 ## Verification
+All on fictional data, loopback databases, AI off. Code head `6e41946` (later commits change docs only).
+- Reproduced on released `main`: the new race cases fail 5/5 runs (Unggah `['FAILED','BOOKED']`, direct `['rejected','fulfilled']`), the
+  two retry controls pass; with the fix 5/5 runs pass 5/5.
+- **Clean task gate** at `6e41946`, nothing else on `buku_test`: lint and typecheck pass; `npm test` 273/273 files, 2541/2541 tests, exit 0.
+  An earlier run at `af04395` (same counts, exit 0) overlapped the first review's database work on the shared `buku_test` and is
+  **excluded as contaminated**; its log is kept. The reviews then used their own database (`buku_review_race`).
+- `npm run build` exit 0; `demo:reset` + `verify:books` ALL PASS (1765 checks), without and with the local Auth stack.
+- Local Auth stack (pinned `supabase@2.118.0`): run on a pre-created Docker network whose default host binding is `127.0.0.1`; every
+  published port verified loopback-only before first use (`127.0.0.1:54321`, `:54322`, `:54324`). A first start without that network
+  published `0.0.0.0` and was stopped before any use. Keys kept in a mode-600 file outside the worktree, never printed.
+- **Independent reviews** (separate subagents; served model read from their own transcripts):
+  - code: `claude-opus-5-5`, effort high, ACCEPT. Low findings: recovery keys on "same bytes on file" (wording fixed in rule 12 and the
+    code comment); the no-source repeat reports zero AI calls like a sequential repeat; removal is not under the import lock (pre-existing,
+    no new hazard). Its own probes: three concurrent copies, a waiter with earlier duplicates, the empty-import case; mixed old/new
+    deploy: no hazard.
+  - capture harness (below): `claude-opus-5-5`, effort high, ACCEPT with gaps, all applied.
+  - A first research helper (`claude-opus-5-5`, effort high) was stopped before it returned; nothing from it was read or used.
 
 ## Ship Notes
+- No migration, no env var, no dependency. Rollback: revert the merge (no data to undo).
+- Deploy window: both versions take the same account lock and neither double-books. An old waiter still answers the race with the
+  retry (today's behaviour); a new waiter recovers. No cutover step is needed for the code itself.
+- Branch: the PR uses the session's assigned branch (`claude/…`), a user-directed exception to the `task/<slug>` rule (AGENTS §8).
+- **Merge and deploy held** for the owner's separate human cutover confirmation.
