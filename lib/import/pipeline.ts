@@ -294,8 +294,8 @@ export async function importStatement(
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`import:${bankAccount.id}`}, 0))::text`;
       const now = await dedupe(tx, bankAccount.id, st, hashes, written, validation.sourceHash, validation);
       if (now.duplicate.some((d, i) => d !== seen.duplicate[i])) {
-        // The same bytes were booked while this call waited (a double click, the file dropped twice): it ends as a repeat started now
-        // would. Any other change (rows held by another file, in part or in full) asks for a retry, never passed off as a repeat.
+        // Every row is on file now and so are these bytes (a double click, the file dropped twice): it ends as a repeat started now
+        // would. Any other change (rows new, or on file with no import of these bytes) asks for a retry, never passed off as a repeat.
         const same = now.duplicate.every(Boolean) ? await sameStatement(tx, bankAccount.id, st, validation) : null;
         if (!same) throw new ParseError("Rekening ini baru saja menerima impor lain. Ulangi impor file ini.");
         if (!args.evidenceVersionId) return { onFile: same };
