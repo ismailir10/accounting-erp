@@ -468,6 +468,13 @@ export async function postImport(db: Db, clientId: string, importId: string, act
 
   return db.$transaction(
     async (tx) => {
+      // The checks above ran before this transaction: two calls (a double click, two tabs, the same file staged twice) can both pass
+      // them. One lock per file of the client serialises them, and the second reads the first's committed result here.
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`ledger-import:${clientId}:${imp.fileHash}`}, 0))::text`;
+      const current = await tx.ledgerImport.findFirst({ where: { id: imp.id, clientId }, select: { status: true } });
+      if (!current) throw new LedgerImportError("Impor tidak ditemukan");
+      if (current.status === "POSTED") throw new LedgerImportError("Impor ini sudah dicatat.");
+      if (await tx.ledgerImport.findFirst({ where: { clientId, fileHash: imp.fileHash, status: "POSTED" }, select: { id: true } })) throw new LedgerImportError("Sheet ini sudah diimpor.");
       let posted = 0;
       for (const e of saved.entries) {
         const entityId = saved.entities[e.entityKey];
@@ -517,7 +524,8 @@ export async function postImport(db: Db, clientId: string, importId: string, act
       // shows it on the draft first).
       const now = await fileRateChecks(tx as unknown as Db, imp.firmId, stated, imp.currencyMode, ownRates);
       if (now.some((c) => !reviewed.has(c.message))) throw new LedgerImportError("Tabel Kurs berubah bersamaan; coba catat lagi.");
-      await tx.ledgerImport.update({ where: { id: imp.id }, data: { status: "POSTED", postedAt: new Date(), postedById: actorId ?? null, groupCount: posted } });
+      const marked = await tx.ledgerImport.updateMany({ where: { id: imp.id, status: "DRAFT" }, data: { status: "POSTED", postedAt: new Date(), postedById: actorId ?? null, groupCount: posted } });
+      if (marked.count !== 1) throw new LedgerImportError("Impor ini sudah dicatat.");
       return { entries: posted };
     },
     { timeout: 300_000, maxWait: 20_000 },
