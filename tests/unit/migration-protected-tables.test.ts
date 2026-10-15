@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 /**
  * Production keeps its members (FirmMember), the encrypted AI key and other settings (AppSetting), the firm and the Drive connection
- * across every deploy: `prisma migrate deploy` runs on the real database. From 2026-09-30 a migration may add to these tables
+ * across every release: each migration is applied to the real database. From 2026-09-30 a migration may add to these tables
  * (new columns, indexes, foreign keys) but never delete, rewrite, rename or drop what is in them.
  */
 const PROTECTED = new Set(["firmmember", "appsetting", "firm", "driveconnection"]);

@@ -60,11 +60,12 @@ say only what Buku does today.
 Verify the production deployment (`https://native-erp-v2.vercel.app`):
 
 - `/login` shows the email + password form, not "Akses belum siap";
-- the build log says "No pending migrations to apply" or lists the new ones;
+- the build log says "Database schema is up to date!" (every migration recorded as applied, none failed; not a drift check) and
+  shows no seed, demo-admin or invitation output;
 - Beranda shows the real firm's clients, not "KJA Demo & Rekan".
 
-For an on-demand preview deployment (`DEMO_MODE=true`): walk [docs/demo/investor-demo.md](../demo/investor-demo.md)
-and look for "Demo data seeded/present" in the build log.
+Hosted builds never seed demo data ([ADR 0019](../adrs/0019-builds-never-write.md)): walk
+[docs/demo/investor-demo.md](../demo/investor-demo.md) on the local stack.
 
 ## Promotion
 
@@ -80,14 +81,13 @@ var list are owned by [README → Deploy](../../README.md#deploy-vercel--supabas
   or locally, nowhere else. Development, CI and e2e use the local Supabase stack; never point them at production.
 - A login that says "Email atau kata sandi tidak cocok" for a known member: first check which Supabase project the
   environment's `NEXT_PUBLIC_SUPABASE_URL` and database URL point at (auth users and members must be in the same one).
-- **Build:** `npm run vercel-build` → `scripts/vercel-build.sh`: `prisma generate`, `prisma migrate deploy` on
-  `POSTGRES_URL_NON_POOLING`, seed-if-empty only when `DEMO_MODE=true`, first-admin bootstrap (`INITIAL_*`),
-  `next build`. Schema changes ship by committing a migration.
+- **Build:** `npm run vercel-build` → `scripts/vercel-build.sh`: `prisma generate`, a read-only `prisma migrate status` on
+  `POSTGRES_URL_NON_POOLING` (a pending or failed migration fails the build; drift is not detected), `next build`. It writes nothing to the database or
+  Auth. A migration is applied deliberately before its code merges (README → Schema changes).
 - **Env vars** that matter are the Production ones; the Preview environment is unused.
   - Inspect names with `vercel env ls production` (values stay hidden). The Vercel MCP cannot list env vars (403): use
     the CLI or the dashboard.
-  - Non-secret values (`APP_URL`, `EVIDENCE_ENABLED`, `GOOGLE_REDIRECT_URI`, `GOOGLE_CLIENT_ID`, `INITIAL_*`,
-    `DEMO_ADMIN_EMAIL`) you may set with `printf %s VALUE | vercel env add NAME production`.
+  - Non-secret values (`APP_URL`, `EVIDENCE_ENABLED`, `GOOGLE_REDIRECT_URI`, `GOOGLE_CLIENT_ID`) you may set with `printf %s VALUE | vercel env add NAME production`.
   - **Secrets are set by the user or the Supabase integration** (`GOOGLE_CLIENT_SECRET`, `SETTINGS_SECRET`,
     `DEMO_ADMIN_PASSWORD`, Supabase keys and DB URLs): give them a command that pipes the value straight in.
     Secret-type vars cannot be pulled back; generate or rotate instead.
@@ -97,5 +97,5 @@ var list are owned by [README → Deploy](../../README.md#deploy-vercel--supabas
   `/api/google/callback` URLs, and the connecting Google account must be a test user.
 - `SETTINGS_SECRET` encrypts the Drive refresh token and the Pengaturan AI key. Changing it (or pointing at a DB written
   under another secret) means reconnecting Google and re-saving the AI key.
-- Cloud sandboxes may not reach Supabase (proxy): never migrate or seed a hosted database from a sandbox; let the build
-  do it.
+- Cloud sandboxes may not reach Supabase (proxy): never migrate or seed a hosted database from a sandbox. The build does not
+  migrate either; an operator applies a migration from a machine that can reach Supabase (README → Schema changes).

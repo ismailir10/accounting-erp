@@ -103,8 +103,7 @@ Next.js 16 (App Router, server actions) · TypeScript · Tailwind v4 · shadcn (
 | `SUPABASE_SECRET_KEY` | Server-only admin key (or `SUPABASE_SERVICE_ROLE_KEY`): invitations, revocation, demo admin, e2e |
 | `APP_URL` | Public origin for site metadata and invite / reset links. Set to the public HTTPS origin when hosted; local verification uses `http://localhost:3200` |
 | `BUKU_SUPPORT_EMAIL` | Monitored public support mailbox; the site renders a valid mailto or a neutral fallback. Also used when generating hosted auth-template footers |
-| `DEMO_ADMIN_EMAIL` / `DEMO_ADMIN_PASSWORD` | Demo admin created by the seed; refused unless `DEMO_MODE=true` |
-| `INITIAL_FIRM_NAME` / `INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_NAME` | Build-time bootstrap of a real workspace: first firm + first admin invitation, once |
+| `DEMO_ADMIN_EMAIL` / `DEMO_ADMIN_PASSWORD` | Local demo admin created by `npm run demo:reset`; refused unless `DEMO_MODE=true`. Builds ignore it |
 | `EVIDENCE_ENABLED` | Same authenticated document workspace in both environments; `false` is an operational kill switch |
 | `AI_BASE_URL` | LLM gateway (default OpenCode Zen). Env-only on purpose, so a stored key can't be redirected |
 | `AI_API_KEY` / `AI_MODEL` | Fallback when nothing is saved in **Pengaturan**. Empty = rules + memory only (fully functional) |
@@ -118,7 +117,8 @@ Supabase organisation **Rightjet**, project `native-erp-v2` in `ap-southeast-1`:
 1. **Connect Supabase to the Vercel project** (Vercel → Integrations → Supabase): production ↔ `native-erp-v2`. The integration injects `POSTGRES_PRISMA_URL`, `POSTGRES_URL_NON_POOLING`, `NEXT_PUBLIC_SUPABASE_URL`,
    `NEXT_PUBLIC_SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` per environment — no database password is typed anywhere.
 2. **Env vars** (Settings → Environment Variables): `DEMO_MODE` per the table below, `SETTINGS_SECRET`, `EVIDENCE_ENABLED=true`, `APP_URL`,
-   and optionally `AI_BASE_URL`. Production: `INITIAL_FIRM_NAME` + `INITIAL_ADMIN_EMAIL` (the build invites that admin once).
+   and optionally `AI_BASE_URL`. The first firm and admin of a new workspace are created by an operator, not by a build:
+   `npm run access -- init --name NAMA`, then `npm run access -- invite --firm ID --email ALAMAT --name NAMA --role ADMIN`.
    The AI key + model are set in **Pengaturan** by an admin.
 3. **Supabase Auth settings** (done in the dashboard): Site URL = the production origin, redirect allow-list `<origin>/auth/callback`,
    *Allow new users to sign up* **off**, minimum password length 8, Data API **off** (Prisma owns `public`; nothing is exposed via PostgREST).
@@ -136,9 +136,17 @@ Supabase organisation **Rightjet**, project `native-erp-v2` in `ap-southeast-1`:
 Git deployments are on for `main` only (`vercel.json` → `git.deploymentEnabled`): PRs and other branches build no preview, so every
 merge to `main` is one production deploy.
 
-`vercel-build` (`scripts/vercel-build.sh`) then runs `prisma migrate deploy` on the non-pooling URL, seeds the demo **only if the
-database is empty**, runs the first-admin bootstrap, and builds. `npm run demo:reset` is destructive operator tooling: it removes all
-demo database data, including members; the demo admin is recreated by the seed. The shared UI cannot trigger it, and it refuses to
+`vercel-build` (`scripts/vercel-build.sh`) then generates the Prisma client, checks **read-only** that every migration in
+`prisma/migrations` is recorded as applied and none failed (`prisma migrate status` on the non-pooling URL; otherwise the build fails)
+and builds. That check does not detect drift (an unknown extra applied migration, an edited migration file, a hand-changed table). A build never writes to the
+database or to Auth: no migration, no seed, no demo admin, no firm or admin bootstrap ([ADR 0019](docs/adrs/0019-builds-never-write.md)).
+
+**Schema changes.** A release that adds a migration applies it first, deliberately: from a machine that can reach Supabase, an operator
+runs `npm run db:migrate` with `DATABASE_URL` set to the production non-pooling URL, then the code merges (until then its build fails).
+Keep migrations additive so the running code keeps working in between.
+
+`npm run demo:reset` is destructive local tooling: it removes all demo database data, including members; the demo admin is recreated
+by the seed. The shared UI cannot trigger it, and it refuses to
 run unless every database variable that is set (`POSTGRES_PRISMA_URL`, `POSTGRES_URL`, `DATABASE_URL`, `POSTGRES_URL_NON_POOLING`,
 `DIRECT_URL`), as the `pg` driver would dial it (a `?host=` or an empty host falling back to `PGHOST` counts), and
 `NEXT_PUBLIC_SUPABASE_URL` point at localhost. Host-moving query parameters, sockets and `PGSERVICE` are refused. E2E setup, the DB

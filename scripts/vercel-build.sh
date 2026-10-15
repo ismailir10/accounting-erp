@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Vercel build (runs instead of `npm run build` because package.json has "vercel-build").
-# Vercel's build machine can reach Supabase, so schema, demo data and the first admin are applied here.
+# A build never writes to the database or to Auth: it checks that the schema is current, then builds. Applying a migration, the first
+# firm and admin, and demo data are deliberate operator steps (README → Deploy; ADR 0019), never side effects of a deploy.
 set -euo pipefail
 
 # The Supabase ↔ Vercel integration injects POSTGRES_PRISMA_URL (pooled) and POSTGRES_URL_NON_POOLING (direct).
@@ -14,14 +15,12 @@ fi
 
 npx prisma generate
 
-# Migrations need a direct (non-pooling) connection.
-DATABASE_URL="$DIRECT_URL" npx prisma migrate deploy
-
-if [ "${DEMO_MODE:-}" = "true" ]; then
-  DATABASE_URL="$DIRECT_URL" npx tsx scripts/seed-if-empty.ts
+# Read-only: fails the build while a migration in prisma/migrations is not recorded as applied, or is recorded as failed, so code never
+# ships ahead of its schema. It does not detect drift: an unknown extra applied migration, an edited migration file or a hand-changed
+# table all still read "up to date" (ADR 0019). A build never applies migrations; apply them first with `npm run db:migrate`.
+if ! DATABASE_URL="$DIRECT_URL" npx prisma migrate status; then
+  echo "✗ The database schema is not current. Apply the pending migrations with \`npm run db:migrate\` (README → Schema changes), then redeploy." >&2
+  exit 1
 fi
-
-# First firm + first admin from INITIAL_FIRM_NAME / INITIAL_ADMIN_EMAIL (idempotent).
-DATABASE_URL="$DIRECT_URL" npx tsx scripts/bootstrap-admin.ts
 
 npx next build
