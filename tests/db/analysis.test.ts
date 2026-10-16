@@ -4,6 +4,7 @@ import { postJournal } from "@/lib/ledger/post";
 import { balanceSheet, incomeStatement } from "@/lib/reports/ledger";
 import { activeMonths, days, fiscalMonths, monthlyBalance, monthlyIncome, percent, ratios, times } from "@/lib/reports/analysis";
 import { dateOnly } from "@/lib/format";
+import { standardFormat } from "@/lib/reports/format";
 import { upsertRate } from "@/lib/fx/rates";
 
 const J = 1_000_000n;
@@ -36,7 +37,16 @@ describe("analysis: month by month", () => {
     expect(net.total).toBe(ytd.totals.netProfit);
     const sales = pl.rows.find((r) => r.code === "4100")!;
     expect([sales.label, sales.values, sales.total]).toEqual(["Penjualan", [0n, 100n * J, 50n * J], 150n * J]);
-    expect(pl.rows.filter((r) => r.kind === "heading").map((r) => r.label)).toEqual(["Pendapatan usaha", "Beban pokok pendapatan", "Beban usaha"]);
+    // In the client's format: the standard one has one heading here (its other lines stand on their own).
+    expect(pl.rows.filter((r) => r.kind === "heading").map((r) => r.label)).toEqual(["Beban operasional"]);
+    // A saved format renames the line on the analysis too.
+    const mine = standardFormat();
+    mine.labaRugi = mine.labaRugi.map((l) => (l.key === "pendapatan_usaha" ? { ...l, label: "Pendapatan jasa klinik" } : l));
+    const g2 = await db.client.findUniqueOrThrow({ where: { id: scope.clientId }, select: { firmId: true } });
+    await db.reportFormat.create({ data: { firmId: g2.firmId, clientId: scope.clientId, format: mine } });
+    const custom = await monthlyIncome(db, scope, 2026, 3);
+    expect(custom.rows.find((r) => r.key === "pl:pendapatan_usaha")?.label).toBe("Pendapatan jasa klinik");
+    expect(custom.rows.find((r) => r.key === "net")!.total).toBe(ytd.totals.netProfit);
   });
 
   it("each Neraca column is that month end's balance sheet, assets = liabilities + equity", async () => {

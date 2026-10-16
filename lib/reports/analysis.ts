@@ -2,6 +2,7 @@ import type { Db } from "@/lib/db";
 import { financialYear, fiscalEndMonth } from "@/lib/fiscal";
 import { formatMonthShort, periodBounds } from "@/lib/format";
 import { balanceSheet, incomeStatement, type BalanceSheet, type FsItem, type IncomeStatement, type Scope } from "@/lib/reports/ledger";
+import { balanceItems, incomeItems, loadReportFormat, renderFormat, type FormatSection } from "@/lib/reports/format";
 
 /**
  * Analisis keuangan: the Laba Rugi and the Neraca month by month through the financial year, and the usual ratios per month. Every figure
@@ -37,63 +38,50 @@ export async function activeMonths(db: Db, scope: Scope, year: number, month: nu
 /** One row of a month-by-month table: an FS line, one of its accounts, or a total. `values` per month; `total` = the year to date (Laba Rugi). */
 export type TrendRow = { key: string; label: string; kind: "line" | "account" | "total" | "heading"; code?: string; values: bigint[]; total?: bigint };
 
-type Group = { label: string; pick: (s: IncomeStatement) => FsItem[] } | { total: string; label: string; of: (s: IncomeStatement) => bigint };
-const PL_LAYOUT: Group[] = [
-  { label: "Pendapatan usaha", pick: (s) => s.revenue },
-  { label: "Beban pokok pendapatan", pick: (s) => s.cogs },
-  { total: "gross", label: "Laba kotor", of: (s) => s.totals.grossProfit },
-  { label: "Beban usaha", pick: (s) => s.opex },
-  { total: "operating", label: "Laba usaha", of: (s) => s.totals.operatingProfit },
-  { label: "Pendapatan (beban) lain-lain", pick: (s) => s.other },
-  { total: "pbt", label: "Laba sebelum pajak", of: (s) => s.totals.profitBeforeTax },
-  { label: "Beban pajak", pick: (s) => s.tax },
-  { total: "net", label: "Laba bersih", of: (s) => s.totals.netProfit },
-];
-
-/** FS lines (and their accounts) across all months, in the order they first appear, each with one value per month. */
-function lineRows(items: FsItem[][], prefix: string): TrendRow[] {
-  const lines = new Map<string, { label: string; values: bigint[]; accounts: Map<string, { name: string; values: bigint[] }> }>();
-  items.forEach((month, i) => {
-    for (const it of month) {
-      const key = String(it.fsLine);
-      const line = lines.get(key) ?? { label: it.label, values: items.map(() => 0n), accounts: new Map() };
-      line.values[i] += it.amount;
-      for (const a of it.accounts) {
-        const acc = line.accounts.get(a.code) ?? { name: a.name, values: items.map(() => 0n) };
-        acc.values[i] += a.amount;
-        line.accounts.set(a.code, acc);
+/**
+ * A statement rendered in the client's own format (lib/reports/format.ts: its labels, order, groups, headings and totals) as rows with one
+ * value per column — each *Pos* with its accounts beneath, each total — the same walk as the statement set (`formatRows`), headings kept in
+ * the format's own case. Amounts stay in whole units whatever the format's unit, so a column sums exactly.
+ */
+function trendRows(sections: FormatSection[], prefix: string): TrendRow[] {
+  const rows: TrendRow[] = [];
+  for (const [si, sec] of sections.entries()) {
+    const keys = [...new Set(sec.items.flatMap((col) => col.map((i) => i.fsLine)))];
+    if (sec.title && keys.length) rows.push({ key: `${prefix}:h${si}`, label: sec.title, kind: "heading", values: [] });
+    for (const k of keys) {
+      const cells = sec.items.map((col) => col.find((i) => i.fsLine === k));
+      rows.push({ key: `${prefix}:${k}`, label: cells.find(Boolean)!.label, kind: "line", values: cells.map((c) => c?.amount ?? 0n) });
+      const codes = [...new Set(cells.flatMap((c) => c?.accounts.map((a) => a.code) ?? []))].sort();
+      for (const code of codes) {
+        const name = cells.flatMap((c) => c?.accounts ?? []).find((a) => a.code === code)!.name;
+        rows.push({ key: `${prefix}:${k}:${code}`, label: name, code, kind: "account", values: cells.map((c) => c?.accounts.find((a) => a.code === code)?.amount ?? 0n) });
       }
-      lines.set(key, line);
     }
-  });
-  return [...lines.entries()].flatMap(([key, l]) => [
-    { key: `${prefix}:${key}`, label: l.label, kind: "line" as const, values: l.values },
-    ...[...l.accounts.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([code, a]) => ({ key: `${prefix}:${key}:${code}`, label: a.name, kind: "account" as const, code, values: a.values })),
-  ]);
+    const t = sec.total;
+    if (!t || (t.subtotal && !keys.length && t.values.every((v) => v === 0n))) continue;
+    rows.push({ key: `${prefix}:${t.key}`, label: t.label, kind: "total", values: t.values });
+  }
+  return rows;
 }
-
 
 export type MonthlyIncome = { months: MonthCol[]; rows: TrendRow[]; statements: IncomeStatement[] };
 
 /** Laba Rugi per month of the financial year to date (from the books' first month), with a total column = the year-to-date statement. Expenses and costs positive; totals signed. */
 export async function monthlyIncome(db: Db, scope: Scope, year: number, month: number): Promise<MonthlyIncome> {
   const months = await activeMonths(db, scope, year, month);
-  const [statements, ytd] = await Promise.all([
+  const [statements, ytd, format] = await Promise.all([
     Promise.all(months.map((m) => incomeStatement(db, scope, m.start, m.end))),
     // The total column is the year-to-date statement itself, not a sum of the months: a mixed-currency group translates each month at
     // that month's average rate but the year to date at the year's, exactly as Laporan Keuangan does.
     incomeStatement(db, scope, months[0].start, months.at(-1)!.end),
+    loadReportFormat(db, scope.clientId),
   ]);
-  const all = [...statements, ytd];
-  const split = (r: TrendRow): TrendRow => ({ ...r, values: r.values.slice(0, -1), total: r.values.at(-1)! });
-  const rows: TrendRow[] = PL_LAYOUT.flatMap((g, gi) =>
-    "pick" in g
-      ? (() => {
-          const body = lineRows(all.map(g.pick), `pl${gi}`).map(split);
-          return body.length ? [{ key: `pl${gi}`, label: g.label, kind: "heading" as const, values: [] }, ...body] : [];
-        })()
-      : [split({ key: g.total, label: g.label, kind: "total" as const, values: all.map(g.of) })],
+  const rows = trendRows(renderFormat(format.labaRugi, [...statements, ytd].map(incomeItems)), "pl").map((r) =>
+    r.kind === "heading" ? r : { ...r, values: r.values.slice(0, -1), total: r.values.at(-1)! },
   );
+  // The format's last total is net profit (validated on save): the row the page and tests know as "net".
+  const net = rows.findLast((r) => r.kind === "total");
+  if (net) net.key = "net";
   return { months, rows, statements };
 }
 
@@ -103,22 +91,14 @@ export type MonthlyBalance = { months: MonthCol[]; rows: TrendRow[]; sheets: Bal
 export async function monthlyBalance(db: Db, scope: Scope, year: number, month: number): Promise<MonthlyBalance> {
   const months = await activeMonths(db, scope, year, month);
   const sheets = await Promise.all(months.map((m) => balanceSheet(db, scope, m.end)));
-  const sum = (items: FsItem[]) => items.reduce((s, i) => s + i.amount, 0n);
-  const block = (label: string, key: string, pick: (b: BalanceSheet) => FsItem[], total?: string): TrendRow[] => {
-    const body = lineRows(sheets.map(pick), key);
-    if (!body.length) return [];
-    return [{ key, label, kind: "heading", values: [] }, ...body, ...(total ? [{ key: `${key}:total`, label: total, kind: "total" as const, values: sheets.map((b) => sum(pick(b))) }] : [])];
-  };
-  const rows: TrendRow[] = [
-    ...block("Aset lancar", "ca", (b) => b.currentAssets, "Jumlah aset lancar"),
-    ...block("Aset tidak lancar", "nca", (b) => b.nonCurrentAssets, "Jumlah aset tidak lancar"),
-    { key: "assets", label: "Jumlah aset", kind: "total", values: sheets.map((b) => b.totals.assets) },
-    ...block("Liabilitas jangka pendek", "cl", (b) => b.currentLiabilities, "Jumlah liabilitas jangka pendek"),
-    ...block("Liabilitas jangka panjang", "ncl", (b) => b.nonCurrentLiabilities, "Jumlah liabilitas jangka panjang"),
-    { key: "liabilities", label: "Jumlah liabilitas", kind: "total", values: sheets.map((b) => b.totals.liabilities) },
-    ...block("Ekuitas", "eq", (b) => b.equity, "Jumlah ekuitas"),
-    { key: "le", label: "Jumlah liabilitas dan ekuitas", kind: "total", values: sheets.map((b) => b.totals.liabilities + b.totals.equity) },
-  ];
+  const format = await loadReportFormat(db, scope.clientId);
+  const rows = trendRows(renderFormat(format.neraca, sheets.map(balanceItems)), "bs");
+  // The format holds a total equal to all assets and one equal to liabilities + equity (validated on save): found by their values.
+  const same = (r: TrendRow, v: bigint[]) => r.kind === "total" && r.values.every((x, i) => x === v[i]);
+  const assets = rows.find((r) => same(r, sheets.map((b) => b.totals.assets)));
+  if (assets) assets.key = "assets";
+  const le = rows.findLast((r) => r !== assets && same(r, sheets.map((b) => b.totals.liabilities + b.totals.equity)));
+  if (le) le.key = "le";
   return { months, rows, sheets };
 }
 

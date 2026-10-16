@@ -76,6 +76,9 @@ None: read-only, no migration, no dependency, no AI call.
   card) and `RatioTable`.
 - Page `analysis/page.tsx` (LinkTabs `?tab=pl|bs|rasio`), `lib/reports/analysis-workbook.ts` + route `analysis/export` (no export
   event), nav *Analisis keuangan* after Laporan Keuangan.
+- Review round (Codex): the months and totals render through the client's report format (`renderFormat`: its labels, order, groups,
+  headings, totals), amounts in whole units; the year-to-date column is the year-to-date statement itself (a two-currency group
+  translates it at the year's rate, not as the sum of translated months).
 - Decisions while building: months before the books' first entry are dropped (a January column of dashes looked like a zero month);
   the year-to-date column is pinned so it stays visible on a laptop screen.
 
