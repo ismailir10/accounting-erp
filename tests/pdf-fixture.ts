@@ -296,7 +296,7 @@ export function bcaHolderPdf(opts: { holder?: string | null; labelled?: boolean;
 }
 
 /** A row of the Jenius e-Statement below: date, the Details lines, an optional note and a signed whole-Rupiah amount. */
-export type JeniusRow = { date: string; details: string[]; amount: number; time?: string; note?: string; type?: string };
+export type JeniusRow = { date: string; details: string[]; amount: number; time?: string; note?: string; type?: string; card?: string };
 
 /**
  * Jenius e-Statement, 2025 layout (FICTIONAL content). Built from structure metadata of real statements only — fixed public labels,
@@ -319,6 +319,8 @@ export function jeniusEstatementPdf(opts: {
   inline?: boolean;
   openingLabel?: string;
   rowsPerPage?: number;
+  /** The bank's footer at the foot of every transaction page, right under its last row. */
+  pageFooter?: boolean;
   userPassword?: string;
 }): Buffer {
   const fmt = (v: number, signed = false) => `${signed ? (v < 0 ? "-" : "+") : v < 0 ? "-" : ""}${Math.abs(v).toLocaleString("en-US")}`;
@@ -375,11 +377,13 @@ export function jeniusEstatementPdf(opts: {
   const perPage = opts.rowsPerPage ?? 18;
   opts.rows.forEach((r, i) => {
     if (i > 0 && i % perPage === 0) {
+      if (opts.pageFooter) line([[75, "PT Bank SMBC Indonesia Tbk berizin dan diawasi oleh Otoritas Jasa Keuangan"]]);
       newPage();
       head();
     }
     line([[x.date, r.date], [x.details, r.details[0]], ...(r.note ? ([[x.notes, r.note]] as [number, string][]) : []), [x.amount, fmt(r.amount, true)]], 10);
-    line([[x.date, r.time ?? "09:15"], [x.details, r.details[1] ?? `REF - ${String(7000000 + i)}`]], 10);
+    // A card payment abroad prints its foreign amount and rate as one run near the Amount column, under the row.
+    line([[x.date, r.time ?? "09:15"], [x.details, r.details[1] ?? `REF - ${String(7000000 + i)}`], ...(r.card ? ([[475, r.card]] as [number, string][]) : [])], 10);
     if (r.type !== "") line([[x.details, `TX${String(100 + i)}A | ${r.amount > 0 ? "Transfer" : "Pembayaran"}`], [x.notes, r.type ?? (r.amount > 0 ? "CR Transfer Incoming" : "DB Payment Outgoing")]], 14);
     else y -= 4;
   });

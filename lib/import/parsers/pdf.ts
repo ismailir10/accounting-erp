@@ -24,11 +24,11 @@ export class PdfPasswordError extends ParseError {
 type Cell = { x0: number; x1: number; text: string };
 export type Line = { page: number; y: number; cells: Cell[] };
 /** `skip`: a column left of the description that is neither (row number, branch, journal, teller) — its cells are no description. */
-type ColKind = "date" | "desc" | "debit" | "credit" | "amount" | "balance" | "flag" | "currency" | "skip";
+type ColKind = "date" | "desc" | "debit" | "credit" | "amount" | "balance" | "flag" | "currency" | "skip" | "note";
 type Column = { kind: ColKind; x0: number; x1: number };
 
 const HEADER: Record<ColKind, RegExp> = {
-  date: /^(tanggal|tgl\.?|date|tanggal transaksi|post(ing)? date|tgl\.? transaksi|trans(action)? date|tgl\.? txn|txn date|tanggal & (waktu|jam)|date & time)$/i,
+  date: /^(tanggal|tgl\.?|date|tanggal transaksi|post(ing)? date|tgl\.? transaksi|trans(action)? date|tgl\.? txn|txn date|tanggal\s*&\s*(waktu|jam)|date\s*&\s*time)$/i,
   desc: /^(keterangan|uraian|uraian transaksi|deskripsi|description|remark|remarks|trans(action)? description|transaction desc|transaction details?|details|rincian transaksi|narasi|berita)$/i,
   debit: /^(debet|debit|mutasi debet|mutasi debit|(uang |dana )?keluar|withdrawals?|pengeluaran)$/i,
   credit: /^(kredit|credit|mutasi kredit|(uang |dana )?masuk|deposits?|pemasukan)$/i,
@@ -37,6 +37,8 @@ const HEADER: Record<ColKind, RegExp> = {
   flag: /^(db\/cr|d\/k|dk|cr\/db|db\.?\s*\/\s*cr\.?)$/i,
   currency: CURRENCY_HEADER,
   skip: /^(no\.?|#|cbg|cabang|branch|journal( no\.?)?|jurnal|teller|user id)$/i,
+  // Jenius "Notes": the account holder's own words, part of the description, never money (a number written there stays text).
+  note: /^notes$/i,
 };
 /** An amount: optional sign and "Rp"/"IDR" before it ("+1.000.000", "-Rp 2.500", "(2.500)"), a DB/CR marker after. */
 const NUMBER = /^[+-]?\s*(?:(?:Rp\.?|IDR)\s*)?\(?[+-]?\d+(?:[.,]\d{3})*(?:[.,]\d{1,2})?\)?(?:\s*(DB|CR|DR|D|K|C)\.?)?$/i;
@@ -370,11 +372,15 @@ export function detectFormat(headerText: string): BankCode {
  * on the summary page: its own column header (exactly Date & Time · Details · Notes · Amount) identifies it then. Never transactions.
  */
 const JENIUS_HEADER = ["date & time", "details", "notes", "amount"];
-function formatOf(preamble: string, header: Line): BankCode {
+function formatOf(preamble: string, header: Line, subHeader: Line | undefined): BankCode {
   const named = detectFormat(preamble);
   if (named !== "GENERIC") return named;
-  const labels = header.cells.map((c) => c.text.replace(/\s+/g, " ").trim().toLowerCase());
-  return labels.length === JENIUS_HEADER.length && labels.every((l, i) => l === JENIUS_HEADER[i]) ? "SMBC" : named;
+  const labels = header.cells.map((c) => c.text.replace(/\s*&\s*/g, " & ").replace(/\s+/g, " ").trim().toLowerCase());
+  const exact = labels.length === JENIUS_HEADER.length && labels.every((l, i) => l === JENIUS_HEADER[i]);
+  // Its sub-header too ("Transaction … | Category" over Details, "Transaction Type" over Notes): the whole header block, not four words.
+  const sub = subHeader?.page === header.page ? subHeader.cells.map((c) => c.text.replace(/\s+/g, " ").trim()) : [];
+  const block = sub.some((t) => /^transaction\b.*\|\s*category$/i.test(t)) && sub.some((t) => /^transaction type$/i.test(t));
+  return exact && block ? "SMBC" : named;
 }
 
 export function periodOf(text: string): { start: Date; end: Date } | null {
@@ -531,12 +537,15 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
     throw new ParseError("Tabel transaksi di PDF tidak dikenali (kolom tanggal, keterangan, mutasi/debet-kredit tidak ditemukan). Kirim contoh baris judulnya agar formatnya bisa ditambahkan.");
   }
   const preamble = lines.slice(0, firstHeader).map(lineText).join("\n");
-  const format = ctx.format ?? formatOf(preamble, lines[firstHeader]);
+  const format = ctx.format ?? formatOf(preamble, lines[firstHeader], lines[firstHeader + 1]);
+  // Day/month order only from a bank the text above the table names: a bank known from its header alone forces no order.
+  const named = ctx.format ?? detectFormat(preamble);
   const holder = holderOfHeader(lines.slice(0, firstHeader), format);
   const currency = currencyOfLines(lines, firstHeader);
   const allText = lines.map(lineText).join("\n");
-  const period = ctx.period ?? periodOf(preamble) ?? periodOf(allText) ?? labelledMonth(lines.slice(0, firstHeader));
-  const order = dateOrderOfLines(lines, firstHeader, format, period);
+  // A period printed under its label above the table wins over period-like text anywhere else (a bill's "periode Juli" in a row).
+  const period = ctx.period ?? periodOf(preamble) ?? labelledMonth(lines.slice(0, firstHeader)) ?? periodOf(allText);
+  const order = dateOrderOfLines(lines, firstHeader, named, period);
   // wondr prints its account in the right-hand product cell, never in a transaction.
   const headerCells = lines.slice(0, firstHeader).flatMap((line) => line.cells);
   const rightColumn = (Math.min(...headerCells.map((cell) => cell.x0)) + Math.max(...headerCells.map((cell) => cell.x1))) / 2;
@@ -650,8 +659,26 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
       }
     }
 
+    // One signed Amount column (no Debet/Kredit): the figure is the one in that column. A sign printed as its own item is the figure's;
+    // a figure run into the text before it ("… catatan-2,500") is split off when it reaches into the column.
+    const amountCol = cols.find((c) => c.kind === "amount");
+    if (amountCol && !cols.some((c) => c.kind === "debit" || c.kind === "credit")) {
+      for (let i = 0; i < cells.length; i++) {
+        const c = cells[i];
+        const next = cells[i + 1];
+        if (/^[+-]$/.test(c.text.trim()) && next && NUMBER.test(next.text) && next.x0 - c.x1 < 12) {
+          cells.splice(i, 2, { x0: c.x0, x1: next.x1, text: `${c.text.trim()}${next.text.trim()}` });
+          continue;
+        }
+        const tail = c.text.match(/^(.*[^\d\s.,+-])\s*([+-]\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)$/);
+        if (tail && !NUMBER.test(c.text) && c.x1 >= amountCol.x0) {
+          cells.splice(i, 1, { x0: c.x0, x1: amountCol.x0 - 1, text: tail[1].trim() }, { x0: amountCol.x0, x1: c.x1, text: tail[2] });
+        }
+      }
+    }
+
     const descParts: string[] = [];
-    const nums: { kind: ColKind; text: string; value: bigint; flag: "DB" | "CR" | null }[] = [];
+    const nums: { kind: ColKind; text: string; value: bigint; flag: "DB" | "CR" | null; mid: number }[] = [];
     let flag: "DB" | "CR" | null = null;
     // A figure under an amount column that isn't a readable number ("45.6x8,00"): remembered so its row can't become a silent 0.
     let unreadable: string | null = null;
@@ -660,7 +687,7 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
         const col = nearest(cols, c, moneyKinds);
         if (col) {
           sen.check(c.text, lineNo);
-          nums.push({ kind: col.kind, text: c.text, ...money(c.text) });
+          nums.push({ kind: col.kind, text: c.text, ...money(c.text), mid: (c.x0 + c.x1) / 2 });
           continue;
         }
       }
@@ -670,6 +697,14 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
       }
       if (c.x0 > descCol.x0 && looksLikeAmount(c.text) && !dateParts(c.text) && nearest(cols, c, moneyKinds)) unreadable ??= c.text;
       if (c.x0 >= dateCol.x1 - 1 || date) descParts.push(c.text);
+    }
+    // Two figures that both fall to the Amount column (a long number in a note): the one under the column is the amount, the other text.
+    const amounts = nums.filter((n) => n.kind === "amount");
+    if (amountCol && amounts.length > 1) {
+      const centre = (amountCol.x0 + amountCol.x1) / 2;
+      const keep = amounts.reduce((a, b) => (Math.abs(b.mid - centre) < Math.abs(a.mid - centre) ? b : a));
+      for (const n of amounts) if (n !== keep) descParts.push(n.text);
+      nums.splice(0, nums.length, ...nums.filter((n) => n.kind !== "amount" || n === keep));
     }
 
     if (date) {

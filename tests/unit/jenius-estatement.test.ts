@@ -59,6 +59,86 @@ describe("Jenius e-Statement (2025 layout)", () => {
     expect([st.accountNumber, st.periodStart.toISOString().slice(0, 10), st.provenance?.period]).toEqual(["90011122233", "2026-08-01", "DECLARED"]);
   });
 
+  it("ends on the printed figures (closing written out, not recomputed the fixture's way)", async () => {
+    const st = await read(jeniusEstatementPdf({ rows: ROWS, opening: OPENING }));
+    expect([st.openingBalance, st.closingBalance]).toEqual([10_000_000n, 11_208_896n]);
+  });
+
+  it("keeps the printed Period when a row's text names another period", async () => {
+    const rows: JeniusRow[] = [
+      { date: "05 Aug 2026", details: ["Tagihan Listrik", "Tagihan periode Juli 2026"], amount: -250_000 },
+      { date: "06 Aug 2026", details: ["Cicilan Fiktif"], amount: -100_000, note: "01/07/2026 - 31/07/2026" },
+    ];
+    for (const inline of [false, true]) {
+      const st = await read(jeniusEstatementPdf({ rows, opening: OPENING, inline }));
+      expect([st.periodStart.toISOString().slice(0, 10), st.periodEnd.toISOString().slice(0, 10)]).toEqual(["2026-08-01", "2026-08-31"]);
+      expect(st.rows.map((r) => r.amount)).toEqual([-250_000n, -100_000n]);
+    }
+  });
+
+  it("takes the amount from the Amount column: a long number in a note, a figure run into the note, a sign printed apart", async () => {
+    const page = (row: { x: number; text: string }[]) => makePdf([[
+      { x: 125, y: 800, text: "PT Bank SMBC Indonesia Tbk" },
+      { x: 50, y: 780, text: "Account Number" }, { x: 525, y: 780, text: "Period" }, { x: 50, y: 768, text: "90012345678" }, { x: 500, y: 768, text: "August 2026" },
+      { x: 50, y: 740, text: "Date & Time" }, { x: 125, y: 740, text: "Details" }, { x: 300, y: 740, text: "Notes" }, { x: 525, y: 740, text: "Amount" },
+      { x: 125, y: 728, text: "Transaction Name | Category" }, { x: 300, y: 728, text: "Transaction Type" },
+      { x: 125, y: 714, text: "Previous Balance" }, { x: 525, y: 714, text: "100,000" },
+      ...row.map((c) => ({ ...c, y: 700 })),
+      { x: 125, y: 680, text: "Ending Balance" }, { x: 525, y: 680, text: "55,000" },
+    ]]);
+    const longNote = await read(page([{ x: 50, text: "03 Aug 2026" }, { x: 125, text: "Pembayaran Fiktif" }, { x: 330, text: "880812345678901234" }, { x: 530, text: "-45,000" }]));
+    expect(longNote.rows.map((r) => r.amount)).toEqual([-45_000n]);
+    expect(longNote.rows[0].description).toContain("880812345678901234");
+    const runIn = await read(page([{ x: 50, text: "03 Aug 2026" }, { x: 125, text: "Pembayaran Fiktif" }, { x: 420, text: "Catatan mepet ke nominal-45,000" }]));
+    expect(runIn.rows.map((r) => r.amount)).toEqual([-45_000n]);
+    expect(runIn.rows[0].description).toContain("Catatan mepet ke nominal");
+    const sign = await read(page([{ x: 50, text: "03 Aug 2026" }, { x: 125, text: "Pembayaran Fiktif" }, { x: 516, text: "-" }, { x: 524, text: "45,000" }]));
+    expect(sign.rows.map((r) => r.amount)).toEqual([-45_000n]);
+    for (const st of [longNote, runIn, sign]) expect(checkContinuity(st).ok).toBe(true);
+  });
+
+  it("reads a footer on every page and a card's foreign amount under the row without taking either for money", async () => {
+    const many: JeniusRow[] = Array.from({ length: 30 }, (_, i) => ({ date: `${String(1 + (i % 28)).padStart(2, "0")} Aug 2026`, details: [`Kartu Debit Fiktif ${i + 1}`], amount: -(5_000 + i * 100), ...(i % 5 === 0 ? { card: "Transaction in USD (9.99 USD x 16.250)" } : {}) }));
+    many.sort((a, b) => a.date.localeCompare(b.date));
+    for (const inline of [false, true]) {
+      const st = await read(jeniusEstatementPdf({ rows: many, opening: OPENING, rowsPerPage: 8, pageFooter: true, inline }));
+      expect(st.rows.map((r) => r.amount)).toEqual(many.map((r) => BigInt(r.amount)));
+      expect(checkContinuity(st).ok).toBe(true);
+      expect(st.notes ?? []).toEqual([]);
+    }
+  });
+
+  it("reads the header written without spaces around the ampersand", async () => {
+    const st = await read(makePdf([[
+      { x: 125, y: 800, text: "PT Bank SMBC Indonesia Tbk" },
+      { x: 50, y: 780, text: "Account Number" }, { x: 525, y: 780, text: "Period" }, { x: 50, y: 768, text: "90012345678" }, { x: 500, y: 768, text: "August 2026" },
+      { x: 50, y: 740, text: "Date&Time" }, { x: 125, y: 740, text: "Details" }, { x: 300, y: 740, text: "Notes" }, { x: 525, y: 740, text: "Amount" },
+      { x: 125, y: 714, text: "Previous Balance" }, { x: 525, y: 714, text: "100,000" },
+      { x: 50, y: 700, text: "03 Aug 2026" }, { x: 125, y: 700, text: "Setoran Fiktif" }, { x: 530, y: 700, text: "+5,000" },
+      { x: 125, y: 680, text: "Ending Balance" }, { x: 525, y: 680, text: "105,000" },
+    ]]));
+    expect(st.rows.map((r) => r.amount)).toEqual([5_000n]);
+  });
+
+  it("knows the bank by its own header block only, and then forces no day/month order", async () => {
+    const table = (sub: boolean, dates: [string, string]) => makePdf([[
+      { x: 50, y: 800, text: "e-Statement" },
+      { x: 50, y: 780, text: "Account Number" }, { x: 525, y: 780, text: "Period" }, { x: 50, y: 768, text: "90012345678" }, { x: 500, y: 768, text: "August 2026" },
+      { x: 50, y: 740, text: "Date & Time" }, { x: 125, y: 740, text: "Details" }, { x: 300, y: 740, text: "Notes" }, { x: 525, y: 740, text: "Amount" },
+      ...(sub ? [{ x: 125, y: 728, text: "Transaction Name | Category" }, { x: 300, y: 728, text: "Transaction Type" }] : []),
+      { x: 125, y: 714, text: "Previous Balance" }, { x: 525, y: 714, text: "1,000" },
+      { x: 50, y: 700, text: dates[0] }, { x: 125, y: 700, text: "Setoran Fiktif" }, { x: 530, y: 700, text: "+500" },
+      { x: 50, y: 688, text: dates[1] }, { x: 125, y: 688, text: "Biaya Fiktif" }, { x: 530, y: 688, text: "-200" },
+      { x: 125, y: 670, text: "Ending Balance" }, { x: 525, y: 670, text: "1,300" },
+    ]]);
+    expect((await read(table(false, ["03 Aug 2026", "13 Aug 2026"]))).format).toBe("GENERIC");
+    const block = await read(table(true, ["03 Aug 2026", "13 Aug 2026"]));
+    expect(block.format).toBe("SMBC");
+    // Month-first numeric dates under a bank known only from its header: read month-first from the dates themselves.
+    const mdy = await read(table(true, ["08/03/2026", "08/13/2026"]));
+    expect(mdy.rows.map((r) => [r.date.toISOString().slice(0, 10), r.amount])).toEqual([["2026-08-03", 500n], ["2026-08-13", -200n]]);
+  });
+
   it("knows the bank by its own header only when nothing above the table names one", async () => {
     // Same English labels plus a balance column: another layout, not identified as Jenius.
     const other = makePdf([[
