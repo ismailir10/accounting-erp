@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { loadClientPage } from "@/lib/client-page";
-import type { SearchParams } from "@/lib/scope";
+import { type SearchParams, withParams } from "@/lib/scope";
 import { formatDate, formatPeriod, toIsoDate } from "@/lib/format";
 import { ScopeBar } from "@/components/app/scope-bar";
 import { ScheduleProposals } from "@/components/app/schedule-proposals";
@@ -8,14 +8,17 @@ import { SchedulePanel } from "@/components/app/schedule-panel";
 import { candidateViews, proposalViews, scheduleViews } from "@/lib/adjust/view";
 import { Money } from "@/components/app/money";
 import { NextStep, PageHeader } from "@/components/app/page-header";
-import { JournalForm } from "@/components/app/journal-form";
+import Link from "next/link";
+import { JournalForm, type JournalCopy } from "@/components/app/journal-form";
+import { formatMoney } from "@/lib/money";
+import { firstOfNextMonth } from "@/lib/ledger/adjustment";
 import { accountGroup } from "@/lib/coa/options";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 export const metadata = { title: "Jurnal Penyesuaian" };
 
 export default async function NewJournalPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: SearchParams }) {
-  const { client, period, periodOptions } = await loadClientPage(params, searchParams);
+  const { client, period, periodOptions, sp } = await loadClientPage(params, searchParams);
   const [due, candidates, schedules, p, lockedPeriods] = await Promise.all([
     proposalViews(prisma, client.id, period.year, period.month),
     candidateViews(prisma, client.id, period.year, period.month),
@@ -33,10 +36,23 @@ export default async function NewJournalPage({ params, searchParams }: { params:
   const accounts = await prisma.account.findMany({ where: { clientId: client.id, isSuspense: false }, orderBy: { code: "asc" }, include: { bankAccounts: { select: { entityId: true } } } });
   const recent = await prisma.journalEntry.findMany({
     where: { entity: { clientId: client.id }, kind: "ADJUSTMENT" },
-    include: { entity: true, lines: true },
-    orderBy: { date: "desc" },
+    include: { entity: true, lines: true, reversedBy: { select: { date: true } } },
+    orderBy: [{ date: "desc" }, { createdAt: "desc" }],
     take: 8,
   });
+  // *Salin*: a manual journal of this client as the form's starting point (company, memo, lines and notes); the date stays the month's.
+  const source = typeof sp.salin === "string" ? await prisma.journalEntry.findFirst({ where: { id: sp.salin, kind: "ADJUSTMENT", entity: { clientId: client.id } }, include: { entity: true, reversedBy: { select: { date: true } }, lines: { include: { account: true }, orderBy: { id: "asc" } } } }) : null;
+  const copy: JournalCopy | undefined =
+    source && !source.lines.some((l) => l.currency)
+      ? {
+          entityId: source.entityId,
+          memo: source.memo,
+          reverse: !!source.reversedBy && +source.reversedBy.date === +firstOfNextMonth(source.date),
+          lines: [...source.lines]
+            .sort((a, b) => Number(b.debit > 0n) - Number(a.debit > 0n))
+            .map((l) => ({ accountCode: l.account.code, debit: l.debit > 0n ? formatMoney(l.debit, source.entity.functionalCurrency, { bare: true }) : "", credit: l.credit > 0n ? formatMoney(l.credit, source.entity.functionalCurrency, { bare: true }) : "", memo: l.memo ?? "" })),
+        }
+      : undefined;
   return (
     <div className="space-y-6">
       <PageHeader title="Jurnal Penyesuaian" description="Untuk yang tidak lewat bank: penyusutan, akrual, piutang." actions={<ScopeBar entities={[]} periods={periodOptions} period={period.key} />} />
@@ -53,7 +69,10 @@ export default async function NewJournalPage({ params, searchParams }: { params:
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardContent className="pt-6">
+            {copy && <p className="mb-4 text-sm text-muted-foreground" data-testid="journal-copy">Disalin dari “{source!.memo}” ({formatDate(source!.date)}). Periksa tanggal dan nominalnya sebelum menyimpan.</p>}
             <JournalForm
+              key={copy ? source!.id : "baru"}
+              copy={copy}
               clientId={client.id}
               entities={entities}
               accounts={accounts.map((a) => ({ code: a.code, name: a.name, group: accountGroup(a), entityId: a.bankAccounts[0]?.entityId ?? null }))}
@@ -73,7 +92,12 @@ export default async function NewJournalPage({ params, searchParams }: { params:
               <div key={e.id} className="flex justify-between gap-2">
                 <div className="min-w-0">
                   <div className="truncate">{e.memo}</div>
-                  <div className="text-xs text-muted-foreground">{formatDate(e.date)} · {e.entity.shortName}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {formatDate(e.date)} · {e.entity.shortName}
+                    {e.reversedBy && ` · dibalik ${formatDate(e.reversedBy.date)}`}
+                    {" · "}
+                    <Link href={withParams(`/clients/${client.id}/journals/new`, { period: period.key, salin: e.id })} className="drill" aria-label={`Salin jurnal ${e.memo}`}>Salin</Link>
+                  </div>
                 </div>
                 <Money className="shrink-0" value={e.lines.reduce((s, l) => s + l.debit, 0n)} currency={e.entity.functionalCurrency} />
               </div>

@@ -28,7 +28,7 @@ export type LedgerRow = {
   debit: string;
   credit: string;
   balance: string;
-  entry: { lines: { code: string; name: string; debit: string; credit: string }[] };
+  entry: { lines: { code: string; name: string; debit: string; credit: string; memo?: string | null }[] };
   /** Adjustments: whether *Balik jurnal* applies (blocker = why not, and where it is changed instead), and the entry's date. */
   reversal?: { entryId: string; blocker: string | null; date: string };
   source: null | { bankTxId: string; accountCode: string | null; taxTag: string | null; whtKind: string | null; whtAmount: string; fileName: string; sheet: string | null; rowNumber: number; rawRow: string; description: string; amount: string; bank: string; method: string; reason: string; status: string; /** The other half of a transfer pair, when it has one. */ pairedWith?: string | null; /** A split line's parts (pecah transaksi). */ splits?: SplitPartView[]; /** Who changed this line, newest first (ADR 0013). */ history?: { at: string; actor: string; summary: string }[] };
@@ -241,7 +241,7 @@ export function LedgerTable({ rows, opening, currency = "IDR", accounts }: { row
                     <TableBody>
                       {open.entry.lines.map((l, i) => (
                         <TableRow key={i}>
-                          <TableCell className="truncate"><span className="num text-muted-foreground">{l.code}</span> {l.name}</TableCell>
+                          <TableCell className="truncate"><span className="num text-muted-foreground">{l.code}</span> {l.name}{l.memo && l.memo !== open.memo && <span className="block truncate text-xs text-muted-foreground">{l.memo}</span>}</TableCell>
                           <TableCell className="num text-right">{m(l.debit)}</TableCell>
                           <TableCell className="num text-right">{m(l.credit)}</TableCell>
                         </TableRow>
