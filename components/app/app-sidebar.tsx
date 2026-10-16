@@ -22,7 +22,7 @@ const DESTINATIONS = [
 const ICONS: Record<string, typeof Upload> = {
   "/import": Upload, "/opening": Landmark, "/review": Inbox, "/ledger": BookOpen, "/trial-balance": Scale, "/journals/new": NotebookPen,
   "/receivables": HandCoins, "/inventory": Boxes, "/assets": Warehouse, "/leases": KeyRound, "/benefits": Users, "/close": ClipboardCheck,
-  "/reports": FileSpreadsheet, "/tax/masa": CalendarCheck, "/tax": ReceiptText, "/rates": Coins, "/settings": ListFilter, "/history": History,
+  "/reports": FileSpreadsheet, "/analysis": ChartColumn, "/tax/masa": CalendarCheck, "/tax": ReceiptText, "/rates": Coins, "/settings": ListFilter, "/history": History,
 };
 type Item = NavSection & { icon: typeof Upload };
 const withIcons = (items: NavSection[]): Item[] => items.map((item) => ({ ...item, icon: ICONS[item.href] ?? FileSpreadsheet }));

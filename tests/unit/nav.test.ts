@@ -41,6 +41,7 @@ describe("switchTarget", () => {
   it("keeps tax/masa and journals/new as pages of their own", () => {
     expect(url(switchTarget("/clients/a1/tax/masa", B).href).pathname).toBe("/clients/b1/tax/masa");
     expect(url(switchTarget("/clients/a1/journals/new", B).href).pathname).toBe("/clients/b1/journals/new");
+    expect(sectionOf("/analysis")).toMatchObject({ section: { label: "Analisis keuangan" }, deeper: false });
   });
   it("falls back to the section from a page under it, and says so", () => {
     const t = switchTarget("/clients/a1/ledger/akun/xyz", B);
