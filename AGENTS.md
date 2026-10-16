@@ -55,7 +55,7 @@ A different dev cycle = change agent-workflow upstream and re-sync. Buku-only st
 | Key | Value |
 |---|---|
 | Work record | Cycle doc: `docs/cycles/YYYY-MM-DD-<slug>.md` ([shape](docs/workflow/spec.md#rules)) |
-| Read first | The latest `docs/cycles/*.md`, [`docs/adrs/`](docs/adrs/README.md), the §4 skill for the area; [docs/real-data.md](docs/real-data.md) before real client files; `node_modules/next/dist/docs/` for Next.js 16 APIs |
+| Read first | [docs/roadmap.md](docs/roadmap.md) (what to build next, and why), the latest `docs/cycles/*.md`, [`docs/adrs/`](docs/adrs/README.md), the §4 skill for the area; [docs/real-data.md](docs/real-data.md) before real client files; `node_modules/next/dist/docs/` for Next.js 16 APIs |
 | Base branch | `main` |
 | Production branch | `main` — every merge is one Vercel production deploy; no promotion step ([ADR 0015](docs/adrs/0015-production-only.md)). `main` is the only long-lived branch; `staging` is retired (all of it is in `main`; ADR 0015, amended) |
 | Branch name | `task/<slug>` |
