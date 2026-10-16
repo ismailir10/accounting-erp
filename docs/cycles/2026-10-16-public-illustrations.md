@@ -58,4 +58,20 @@ Hero redesign (it already is an illustration), copy rewrite, deck changes (the d
 - [x] T1 Motion ports, illustrations, landing, screenshot removal, tests, docs.
 
 ## Verification
-(filled below)
+- **Task gate:** `npm run lint` and `npm run typecheck` exit 0. `npm test`: 279 files, 2,609 tests passed. `npm run build`:
+  compiled successfully.
+- `tests/unit/public-product.test.ts` (new):
+  - each section's drawing carries the manifest facts: row 11 with its raw description, the three journal lines and amounts,
+    *Debit = kredit*, the 9 and 12 control counts, the four problem titles, and the Rp 12.552.852.217 total traced to
+    `BCA-5566-2026-08.csv · baris 11`;
+  - no `<img>` on the page;
+  - no screenshot files and no manifest `assets`.
+- **Browser, dev server.** Desktop 1280 and phones 390 and 375: horizontal overflow 0. The phone round fixed three issues
+  (truncated account names, an arrow overlapping its label, a truncated entity name), all re-shot clean.
+- **Motion.**
+  - Reduced motion: 0 hidden at load, all static, the total final from the first paint.
+  - Normal: 3 hidden at load (below the fold) and 0 after scrolling. The total ran through 7 distinct frames and ended at exactly
+    Rp 12.552.852.217; the counts end at 9 and 12.
+- **Production server** (`next start`, 390 px): 3 hidden at load, 0 after scrolling, 0 images, overflow 0, no console errors.
+- **Not run locally:** `e2e/public-site.spec.ts` needs the local Auth stack (Docker is not running in this sandbox). It is updated
+  to the new page and the PR carries the `e2e` label so CI runs it.
