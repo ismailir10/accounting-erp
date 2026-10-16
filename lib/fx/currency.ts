@@ -25,6 +25,9 @@ export function isCurrency(code: string | null | undefined): code is CurrencyCod
   return !!code && Object.prototype.hasOwnProperty.call(CURRENCIES, code);
 }
 
+/** "Rupiah", "Dolar Singapura": how a report header names the currency its amounts are in. */
+export const currencyName = (code: string) => CURRENCIES[code as keyof typeof CURRENCIES]?.name ?? code;
+
 export function exponentOf(code: string): number {
   if (!isCurrency(code)) throw new Error(`Mata uang ${code} belum didukung`);
   return CURRENCIES[code].exponent;

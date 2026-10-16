@@ -29,6 +29,7 @@ import { FxMissingError } from "@/lib/reports/fx";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { buttonVariants } from "@/components/ui/button";
 import { Download } from "lucide-react";
+import { currencyName, exponentOf } from "@/lib/fx/currency";
 
 const TAB = "h-7 flex-none";
 
@@ -141,7 +142,8 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
   // The client's own format (labels, order, headings, subtotals, unit): presentation only, numbers stay the GL's.
   const format = await loadReportFormat(prisma, client.id);
   const status = await reportStatus(prisma, client.id, scope.entityIds, period.year, period.month);
-  const unit = `Dinyatakan dalam ${format.unit === "RIBUAN" ? "ribuan " : ""}${currency === "IDR" ? "Rupiah" : currency}`;
+  const unit = `Dinyatakan dalam ${format.unit === "RIBUAN" ? "ribuan " : ""}${currencyName(currency)}`;
+  const exponent = exponentOf(currency);
   const [ociMonth, ociPrev, ociYtd, ociPrior] = mixed ? [null, null, null, null] : await Promise.all([otherComprehensiveIncome(prisma, s, period.start, period.end), otherComprehensiveIncome(prisma, s, prevStart, prevEnd), otherComprehensiveIncome(prisma, s, yearStart, period.end), otherComprehensiveIncome(prisma, s, priorFrom, priorTo)]);
   // Columns: this month, last month (when it has entries), year to date, the same months last year (when they have entries).
   type PlColumn = { label: string; is: IncomeStatement; oci: typeof ociMonth };
@@ -152,10 +154,10 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
     ...(isPrior ? [{ label: `S.d. ${monthName(period.month)} ${period.year - 1}`, is: isPrior, oci: ociPrior }] : []),
   ];
   const hasOci = !emkm && !!ociMonth && plColumns.some((c) => c.oci && c.oci.items.length);
-  const scaled = (items: FsItem[]): FsItem[] => (format.unit === "RUPIAH" ? items : items.map((i) => ({ ...i, amount: toUnit(i.amount, format.unit), accounts: i.accounts.map((a) => ({ ...a, amount: toUnit(a.amount, format.unit) })) })));
+  const scaled = (items: FsItem[]): FsItem[] => (format.unit === "RUPIAH" ? items : items.map((i) => ({ ...i, amount: toUnit(i.amount, format.unit, exponent), accounts: i.accounts.map((a) => ({ ...a, amount: toUnit(a.amount, format.unit, exponent) })) })));
   const scaledParts = (parts: FsParts | undefined): FsParts | undefined =>
-    parts && format.unit !== "RUPIAH" ? Object.fromEntries(Object.entries(parts).map(([k, rows]) => [k, rows.map((r) => ({ ...r, amount: toUnit(r.amount, format.unit) }))])) : parts;
-  const plFormat = renderFormat(format.labaRugi, plColumns.map((c) => incomeItems(c.is)), format.unit);
+    parts && format.unit !== "RUPIAH" ? Object.fromEntries(Object.entries(parts).map(([k, rows]) => [k, rows.map((r) => ({ ...r, amount: toUnit(r.amount, format.unit, exponent) }))])) : parts;
+  const plFormat = renderFormat(format.labaRugi, plColumns.map((c) => incomeItems(c.is)), format.unit, exponent);
   // Total comprehensive income adds the printed lines (the format's net profit and each OCI line), so thousands add up on the page.
   const netKey = format.labaRugi.filter((l) => l.kind === "TOTAL").at(-1)!.key;
   const netShown = plFormat.find((sec) => sec.total?.key === netKey)!.total!.values;
@@ -165,7 +167,7 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
       ? [{ title: "Penghasilan komprehensif lain", items: plColumns.map((c) => scaled(c.oci?.items ?? [])), total: { label: "Total penghasilan komprehensif", values: plColumns.map((c, i) => netShown[i] + scaled(c.oci?.items ?? []).reduce((sum, x) => sum + x.amount, 0n)), strong: true } }]
       : []),
   ];
-  const bsSections = renderFormat(format.neraca, [bs, ...shown.map((c) => c.bs)].map(balanceItems), format.unit);
+  const bsSections = renderFormat(format.neraca, [bs, ...shown.map((c) => c.bs)].map(balanceItems), format.unit, exponent);
   const [equity, cash, notes] = mixed ? [null, null, null] : await Promise.all([equityChanges(prisma, s, period.end), cashFlow(prisma, s, period.end), financialNotes(prisma, s, period.year, period.month)]);
   const toFill = notes ? manualCount(notes) : 0;
   // Catatan manajemen (I5b): one company at a time, as the management report.
