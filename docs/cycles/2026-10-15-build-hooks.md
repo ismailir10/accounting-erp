@@ -19,7 +19,7 @@ release review of the local DB guard; the user asked to fix Buku and ship it saf
 - A migration is applied deliberately before its code merges (`npm run db:migrate`, README → Schema changes).
 - Limit, stated rather than solved: `migrate status` is not a drift check. An unknown extra applied migration, a checksum mismatch and a
   dropped column all read "up to date" (reproduced on fictional copies). The old `migrate deploy` was equally blind. A drift check is left
-  as an open operator decision.
+  as an open operator decision. Closed 2026-10-16 by [migration-drift-check](2026-10-16-migration-drift-check.md).
 
 ## Acceptance criteria
 - [ ] With any combination of `DEMO_MODE`, `DEMO_ADMIN_*` and `INITIAL_*`, the build calls only `prisma generate`, `prisma migrate status`

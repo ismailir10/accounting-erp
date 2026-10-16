@@ -138,12 +138,14 @@ merge to `main` is one production deploy.
 
 `vercel-build` (`scripts/vercel-build.sh`) then generates the Prisma client, checks **read-only** that every migration in
 `prisma/migrations` is recorded as applied and none failed (`prisma migrate status` on the non-pooling URL; otherwise the build fails)
-and builds. That check does not detect drift (an unknown extra applied migration, an edited migration file, a hand-changed table). A build never writes to the
+then runs a **read-only drift check** (`npm run db:drift`: the applied migration history must match `prisma/migrations` by name and
+checksum, and the tables must match `prisma/schema.prisma`; otherwise the build fails), and builds. A build never writes to the
 database or to Auth: no migration, no seed, no demo admin, no firm or admin bootstrap ([ADR 0019](docs/adrs/0019-builds-never-write.md)).
 
 **Schema changes.** A release that adds a migration applies it first, deliberately: from a machine that can reach Supabase, an operator
 runs `npm run db:migrate` with `DATABASE_URL` set to the production non-pooling URL, then the code merges (until then its build fails).
-Keep migrations additive so the running code keeps working in between.
+Keep migrations additive so the running code keeps working in between. Never change the production schema by hand or edit an applied migration file: the next build
+refuses the drift (`DATABASE_URL=<non-pooling URL> npm run db:drift` shows it read-only); repair it with a reviewed migration.
 
 `npm run demo:reset` is destructive local tooling: it removes all demo database data, including members; the demo admin is recreated
 by the seed. The shared UI cannot trigger it, and it refuses to
