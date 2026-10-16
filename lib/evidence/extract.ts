@@ -334,7 +334,13 @@ export async function postableTables(name: string, data: Buffer): Promise<Map<st
       const read = readTable(sheets, candidate);
       if (read.mode === "LEDGER") {
         const dates = read.rows.flatMap((r) => r.date ? [iso(r.date)!] : []).sort();
-        out.set(candidate.sheet, { mode: "LEDGER", rows: read.rows.length, entities: [...new Set(read.rows.flatMap((r) => r.entity ? [r.entity] : []))], periodStart: dates[0] ?? null, periodEnd: dates.at(-1) ?? null, currencies: [...new Set(read.rows.flatMap((r) => r.currency ? [r.currency] : []))].sort() });
+        const entityCurrencies: Record<string, Record<string, number>> = {};
+        for (const r of read.rows) {
+          if (!r.entity || !r.currency) continue;
+          const byCurrency = (entityCurrencies[r.entity] ??= {});
+          byCurrency[r.currency] = (byCurrency[r.currency] ?? 0) + 1;
+        }
+        out.set(candidate.sheet, { mode: "LEDGER", rows: read.rows.length, entities: [...new Set(read.rows.flatMap((r) => r.entity ? [r.entity] : []))], periodStart: dates[0] ?? null, periodEnd: dates.at(-1) ?? null, currencies: [...new Set(read.rows.flatMap((r) => r.currency ? [r.currency] : []))].sort(), entityCurrencies });
       } else out.set(candidate.sheet, { mode: "NERACA", rows: read.rows.length, entities: [], periodStart: iso(read.date), periodEnd: iso(read.date), currencies: [] });
     } catch { /* Unreadable table stays evidence; the manual import explains why. */ }
   }

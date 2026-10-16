@@ -137,6 +137,44 @@ describe("Klien baru from files: the proposal", () => {
     expect(p.readable).toBe(true);
   });
 
+  it("a ledger entity whose rows are mostly foreign currency has its bookkeeping currency asked, with the rows per currency (cycle 2026-10-12)", () => {
+    // A holding-style entity: almost every row USD or SGD, a couple in Rupiah, books kept in SGD. Created in Rupiah by default, the import
+    // would have booked its USD/SGD amounts as Rupiah.
+    const sheet = (name: string, entities: string[], entityCurrencies: Record<string, Record<string, number>>) => ({ sheet: name, mode: "LEDGER" as const, rows: 100, periodStart: "2023-01-01", periodEnd: "2025-12-31", entities, entityCurrencies });
+    const p = proposeClient([
+      {
+        fileName: "grup.xlsx",
+        kind: "LEDGER",
+        status: "CHECKED",
+        message: null,
+        sections: [
+          sheet("HC_GL", ["HOLD"], { HOLD: { USD: 70, SGD: 28, IDR: 2 } }),
+          // A Rupiah company with a few USD lines (converted by rate at import) keeps Rupiah without a question.
+          sheet("OPCO_GL", ["OPA", "OPB"], { OPA: { IDR: 300, USD: 12 }, OPB: { IDR: 50 } }),
+        ],
+      },
+    ]);
+    const by = Object.fromEntries(p.entities.map((e) => [e.shortName, e]));
+    expect(by.HOLD).toMatchObject({ currencyRequired: true, rowsByCurrency: [{ currency: "USD", rows: 70 }, { currency: "SGD", rows: 28 }, { currency: "IDR", rows: 2 }] });
+    expect(by.OPA.currencyRequired).toBeUndefined();
+    expect(by.OPB.currencyRequired).toBeUndefined();
+  });
+
+  it("LIMIT (documented): a Rupiah majority is not asked even with many foreign rows — those rely on the draft's FX review checks", () => {
+    const sheet = { sheet: "GL", mode: "LEDGER" as const, rows: 100, periodStart: "2025-01-01", periodEnd: "2025-12-31", entities: ["MIX"], entityCurrencies: { MIX: { IDR: 60, USD: 40 } } };
+    const p = proposeClient([{ fileName: "mix.xlsx", kind: "LEDGER", status: "CHECKED", message: null, sections: [sheet] }]);
+    expect(p.entities[0].currencyRequired).toBeUndefined();
+  });
+
+  it("an even split, or a ledger without a currency column, changes nothing — only a non-Rupiah majority asks", () => {
+    const sheet = (entities: string[], entityCurrencies?: Record<string, Record<string, number>>) => ({ sheet: "GL", mode: "LEDGER" as const, rows: 10, periodStart: "2025-01-01", periodEnd: "2025-12-31", entities, ...(entityCurrencies ? { entityCurrencies } : {}) });
+    const half = proposeClient([{ fileName: "a.xlsx", kind: "LEDGER", status: "CHECKED", message: null, sections: [sheet(["EVEN"], { EVEN: { IDR: 5, USD: 5 } })] }]);
+    expect(half.entities[0].currencyRequired).toBe(true);
+    const none = proposeClient([{ fileName: "b.xlsx", kind: "LEDGER", status: "CHECKED", message: null, sections: [sheet(["PLAIN"])] }]);
+    expect(none.entities[0]).not.toHaveProperty("currencyRequired");
+    expect(none.entities[0]).not.toHaveProperty("rowsByCurrency");
+  });
+
   it("a ledger label that is also a bank holder is one entity, with the label as its short name (review of #151)", () => {
     const gl = { sheet: "GL", mode: "LEDGER" as const, rows: 10, periodStart: "2026-01-01", periodEnd: "2026-06-30", entities: ["Belifi", "SKP"] };
     const p = proposeClient([bank("belifi.csv", section("BCA", "7655563814", "BELIFI PT")), { fileName: "gl.xlsx", kind: "LEDGER", status: "CHECKED", message: null, sections: [gl] }]);

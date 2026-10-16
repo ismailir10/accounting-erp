@@ -1,4 +1,5 @@
 import "dotenv/config";
+import "../lib/local-database-only";
 import { createPrisma } from "../lib/db";
 
 /**
@@ -8,7 +9,6 @@ import { createPrisma } from "../lib/db";
 const BUKU_LOG = new Set(["SupportSession", "SupportSessionView", "PlatformAuditEvent", "_prisma_migrations"]);
 
 async function main() {
-  if (!["localhost", "127.0.0.1", "::1"].includes(new URL(process.env.DATABASE_URL!).hostname)) throw new Error("Only a localhost database.");
   const db = createPrisma();
   try {
     const tables = await db.$queryRawUnsafe<{ tablename: string }[]>(`SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename`);

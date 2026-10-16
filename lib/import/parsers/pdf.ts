@@ -145,6 +145,46 @@ export async function parsePdfSections(data: Buffer, opts: { password?: string }
     out.push(withDeposits({ ...st, currency: "IDR", accountNumber: m!.number, section, ...(holder ? { holder } : {}) }));
   });
   if (!out.length) return [withDeposits(parseLines(lines))];
+  // A foreign-currency account the summary page lists with a balance but no activity section this month (readiness finding F2,
+  // 2026-10-12): listed like a foreign section — never imported, no money read, no rate — so the accountant sees it and books it.
+  const listed = new Set(out.map((st) => (st.accountNumber ?? "").replace(/\D/g, "")));
+  for (const p of summaryProducts(docHeader)) {
+    if (p.currency === "IDR" || listed.has(p.number)) continue;
+    listed.add(p.number);
+    out.push({ format, currency: p.currency, accountNumber: p.number, section: { label: p.product, currency: p.currency }, ...(documentHolder ? { holder: documentHolder } : {}),
+      periodStart: period?.start ?? new Date(0), periodEnd: period?.end ?? new Date(0),
+      openingBalance: 0n, closingBalance: 0n, rows: [],
+      error: `Rekening ${p.currency} ini hanya tercantum di ringkasan (bersaldo, tanpa mutasi di laporan ini) dan tidak diimpor. Catat saldonya lewat Saldo Awal atau Jurnal Penyesuaian dengan kurs yang Anda tetapkan.`,
+      provenance: { period: period ? "DECLARED" : "INFERRED", opening: "DERIVED", closing: "DERIVED" },
+    });
+  }
+  return out;
+}
+
+/**
+ * The account table of a consolidated statement's summary page (SMBC "Nama Produk · Nomor Rekening · Mata Uang · … · Saldo"): product,
+ * number and currency per row, up to its Total line. Only used to list accounts that have no activity section; amounts aren't read.
+ */
+export function summaryProducts(lines: Line[]): { product: string; number: string; currency: string }[] {
+  const out: { product: string; number: string; currency: string }[] = [];
+  let inTable = false;
+  for (const line of lines) {
+    const text = lineText(line);
+    if (/nomor rekening/i.test(text) && /mata uang/i.test(text)) {
+      inTable = true;
+      continue;
+    }
+    if (!inTable) continue;
+    if (/^\s*total\b/i.test(text)) {
+      inTable = false;
+      continue;
+    }
+    const cells = line.cells.map((c) => c.text.trim()).filter(Boolean);
+    const numberAt = cells.findIndex((c) => /^\d{8,16}$/.test(c));
+    const currency = cells.slice(numberAt + 1).find((c) => /^[A-Z]{3}$/.test(c));
+    if (numberAt < 1 || !currency) continue;
+    out.push({ product: cells.slice(0, numberAt).join(" "), number: cells[numberAt], currency });
+  }
   return out;
 }
 
