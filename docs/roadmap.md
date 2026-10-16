@@ -1,6 +1,7 @@
 # Buku roadmap
 
-> **Status:** proposed, 2026-10-16. Waiting for the owner's approval. Once approved, it becomes the basis for every `/spec`.
+> **Status:** accepted, 2026-10-16 ([ADR 0020](adrs/0020-roadmap-after-the-spine.md)). It is the basis for every `/spec`, and each
+> spec names its phase.
 > **Benchmarks:** Zahir and Mekari Jurnal for the Indonesian market; Rillet for how AI is built into the close.
 > **Relation to [ADR 0014](adrs/0014-three-stage-spine.md):** the thesis, the three-stage spine, the AI pattern and the not-doing
 > list do not change. ADR 0014's iterations I1–I5 are mostly built. This document replaces that iteration order from here on.
@@ -119,14 +120,16 @@ Each phase ends on an **exit test**: something a person can see or measure, not 
 (one developer plus agents). Every item still goes through the normal loop: `/spec` → approval → `/build` → verify-local → `/ship`.
 
 ### Phase 0 — Ready for an outside firm (1–2 weeks)
-The basics a paying firm hits on day one.
-1. **Ship the deferred import/reconciliation release** (six migrations). It includes the period-lock race fix: today a post can
-   commit into a month that was locked in the meantime ([cycle](cycles/2026-10-15-ledger-post-once.md)).
-2. **Custom SMTP and a verified mail domain** (SPF, DKIM, DMARC), so invitations reach addresses outside the Supabase organisation
-   ([README](../README.md)).
-3. **Final legal pages.** `/syarat` and `/kebijakan-privasi` are drafts. They need a clear UU PDP position on AI processing.
-4. **Migration drift check in CI.** This is the open decision in [build-hooks](cycles/2026-10-15-build-hooks.md).
-5. **Close the unchecked acceptance boxes** in the 2026-10-15 cycles.
+The basics a paying firm hits on day one. **Owner** means the item needs the owner's hands: private files, secrets, a signature.
+Agents prepare those items and never perform them.
+
+| # | Item | Who |
+|---|---|---|
+| 1 | **Ship the deferred import/reconciliation release** (six migrations). It includes the period-lock race fix: today a post can commit into a month that was locked in the meantime ([cycle](cycles/2026-10-15-ledger-post-once.md)) | Owner (private release pipeline) |
+| 2 | **Custom SMTP and a verified mail domain** (SPF, DKIM, DMARC), so invitations reach addresses outside the Supabase organisation ([README](../README.md)) | Owner (secrets, DNS) |
+| 3 | **Final legal pages.** `/syarat` and `/kebijakan-privasi` are drafts. They need a clear UU PDP position on AI processing, which follows ADR 0020 decision 3 | Agent drafts; owner signs off |
+| 4 | **Migration drift check.** This is the open decision in [build-hooks](cycles/2026-10-15-build-hooks.md) | Agent |
+| 5 | **Close the unchecked acceptance boxes** in the 2026-10-15 cycles | Owner (private acceptances) |
 
 **Exit test:** an accountant from an outside firm accepts an invitation, signs in to production and imports a file, and the
 lock-race fix is live.
@@ -216,13 +219,14 @@ These follow ADR 0014, sharpened by the research:
 - review minutes per client-month;
 - the share of cycles that are fix rounds.
 
-**Decisions for the owner before Phase 1:**
-1. **Pilot firm and accountant.** Which firm, and who sits at the keyboard. Phase 1 cannot start without them.
-2. **AI on real files.** Is AI allowed on real client data during the pilot, and is that in writing (UU PDP;
-   [real-month.md](real-month.md) §2)? If not, Phase 1 runs on rules only.
-3. **Pricing model.** The proposal is per firm, by active client-months, with no per-seat fee and no add-ons. Every benchmark shows
-   that per-company pricing hurts firms.
-4. **Approve this roadmap.** On approval it is recorded as an ADR amending ADR 0014's iteration order.
+**Decisions made** (2026-10-16; the owner delegated them; recorded in [ADR 0020](adrs/0020-roadmap-after-the-spine.md)):
+1. **The roadmap is accepted.** It replaces ADR 0014's iteration order.
+2. **AI on real files is off by default during the pilot.** It is switched on only if the firm agrees in writing (UU PDP;
+   [real-month.md](real-month.md) §2). Phase 1 must succeed on rules alone.
+3. **Pricing model:** per firm, by active client-months, with no per-seat fee and no add-ons. The Rupiah amounts are set after
+   Phase 1, from the measured time saved.
+
+**Only the owner can do:** choose the pilot firm and the accountant who sits at the keyboard. Phase 1 cannot start without them.
 
 ## Sources
 - **Zahir:** zahiraccounting.com/id/harga · zahiraccounting.com/id/zahir-accounting-7 · help.zahironline.com (bank reconciliation,
