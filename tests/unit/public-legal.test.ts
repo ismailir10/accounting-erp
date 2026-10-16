@@ -23,8 +23,8 @@ describe.each(pages)("public $name", ({ document }) => {
     expect(article.firstElementChild?.getAttribute("role")).toBe("note");
     expect(article.firstElementChild?.textContent).toContain("Draf");
     expect(dom.querySelector("h1")?.textContent).toBe(document.title);
-    expect(dom.querySelector("time")?.getAttribute("datetime")).toBe("2026-10-11");
-    expect(dom.querySelector("time")?.textContent).toBe("11 Oktober 2026");
+    expect(dom.querySelector("time")?.getAttribute("datetime")).toBe("2026-10-16");
+    expect(dom.querySelector("time")?.textContent).toBe("16 Oktober 2026");
     expect(dom.querySelector(`a[href='${document.relatedHref}']`)?.textContent).toBe(document.relatedLabel);
   });
 
@@ -48,6 +48,16 @@ describe.each(pages)("public $name", ({ document }) => {
     expect(section("akses-dukungan")).toMatch(/bukan ditampilkan sebagai riwayat aktivitas organisasi/);
     expect(section("kontak-pengelola")).toContain("Hubungi pengelola Buku");
     expect(dom.body.textContent).not.toMatch(/Supabase|Anthropic|OpenAI|OpenCode|Vercel/);
+  });
+
+  it("names the operator, the controller/processor split and links every section from the contents", () => {
+    const dom = render(document);
+    const operator = dom.getElementById("pengelola")!.parentElement!.textContent;
+    expect(operator).toMatch(/dikelola oleh Right Jet/);
+    expect(operator).toMatch(/organisasi yang menentukan tujuannya dan pengelola memprosesnya atas nama organisasi/);
+    const contents = Array.from(dom.querySelectorAll("nav[aria-label='Isi halaman'] a"), (a) => a.getAttribute("href"));
+    const headings = Array.from(dom.querySelectorAll("section > h2"), (h) => `#${h.id}`);
+    expect(contents).toEqual(headings);
   });
 
   it("labels every reading section with a unique visible heading", () => {
@@ -89,5 +99,31 @@ describe("public Privacy AI and rights disclosures", () => {
     expect(rights).toMatch(/UU PDP.*akses dan salinan data.*mengoreksi.*menarik persetujuan.*keberatan.*penghapusan data/);
     expect(rights).toMatch(/kewajiban penyimpanan hukum atau akuntansi membatasi penghapusan/);
     expect(dom.getElementById("tujuan-dan-dasar")!.parentElement!.textContent).toMatch(/pelaksanaan perjanjian.*kepentingan sah.*kewajiban hukum.*Persetujuan/);
+  });
+});
+
+describe("public Terms commercial and dispute terms", () => {
+  it("states the free trial, data ownership, liability limits, ending and Indonesian law", () => {
+    const dom = render(PUBLIC_TERMS);
+    const section = (id: string) => dom.getElementById(id)?.parentElement?.textContent;
+    expect(section("biaya")).toMatch(/tidak dikenakan biaya.*kesepakatan terpisah.*tidak menagih apa pun secara otomatis/);
+    expect(section("kepemilikan-data")).toMatch(/tetap menjadi milik organisasi.*tidak menjualnya.*Excel dan PDF/);
+    expect(section("tanggung-jawab")).toMatch(/sebagaimana adanya.*Sejauh diizinkan hukum.*tidak dapat dikecualikan/);
+    expect(section("mengakhiri")).toMatch(/berhenti memakai Buku kapan saja/);
+    expect(section("hukum-dan-sengketa")).toMatch(/hukum Republik Indonesia.*musyawarah dalam 30 hari.*Pengadilan Negeri/);
+  });
+});
+
+describe("public Privacy recipients, cookies and breach notice", () => {
+  it("names recipient categories without vendors, only necessary cookies, and the UU PDP 3 x 24 hour notice", () => {
+    const dom = render(PUBLIC_PRIVACY);
+    const section = (id: string) => dom.getElementById(id)?.parentElement?.textContent;
+    expect(section("penerima-data")).toMatch(/hosting aplikasi dan basis data.*layanan login.*penyedia AI bila fitur AI diaktifkan/);
+    expect(section("penerima-data")).toMatch(/tidak dijual dan tidak dibagikan untuk iklan/);
+    expect(section("cookie")).toMatch(/cookie yang diperlukan untuk login.*sesi dukungan.*penyimpanan peramban/);
+    expect(section("cookie")).toMatch(/tidak memakai cookie analitik, cookie iklan, atau pelacak pihak ketiga/);
+    expect(section("keamanan")).toMatch(/kunci AI dan kata sandi PDF.*dienkripsi/);
+    expect(section("keamanan")).toMatch(/3 x 24 jam sesuai UU PDP.*kepada organisasi untuk isi pembukuannya/);
+    expect(section("tujuan-dan-dasar")).not.toMatch(/Identitas pengelola/);
   });
 });
