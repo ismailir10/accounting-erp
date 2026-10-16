@@ -3,7 +3,7 @@ import type { BankCode } from "@/lib/generated/prisma/enums";
 import type { ParsedStatement } from "@/lib/import/types";
 import { checkContinuity } from "@/lib/import/normalize";
 import { BAL, CLOSE, MON_EN, OPEN, TX, bniDirectCsv, bniDirectXlsx, cimbOctoCsv, cimbPdf, en, idn, mandiriLivinXlsx, p2, permataCsv, xlsxBuffer } from "./bank-fixture";
-import { bniWondrPdf, brimoPdf, mandiriEstatementPdf, makePdf, smbcCombinedPdf, table, type PdfText } from "./pdf-fixture";
+import { bniWondrPdf, brimoPdf, jeniusEstatementPdf, mandiriEstatementPdf, makePdf, smbcCombinedPdf, table, type PdfText } from "./pdf-fixture";
 
 /**
  * One synthetic file per bank export Buku claims to read (`lib/banks.ts` formats), each holding the same five August 2026
@@ -599,6 +599,22 @@ export const LAYOUTS: Layout[] = [
         [[[40, "01 AUG"], [140, "SALDO AWAL"], [480, OPEN.toLocaleString("id-ID")]], ...TX.flatMap((t, i) => wrapped(t, 140, [[40, `${p2(t.d)} AUG`], [140, t.desc[0]], [400, Math.abs(t.amt).toLocaleString("id-ID")], [480, BAL[i].toLocaleString("id-ID")]]))],
         ["Ketentuan Umum"],
       ),
+  },
+  {
+    bank: "SMBC",
+    format: "e-Statement Jenius",
+    file: "jenius-estatement.pdf",
+    // Jenius e-Statement (2025 layout), rebuilt from structure metadata of real statements (labels, token shapes, positions; no
+    // content): a summary page, then Date & Time · Details · Notes · Amount with signed whole amounts and no balance column, between
+    // a Previous Balance and an Ending Balance line.
+    build: () => jeniusEstatementPdf({ opening: OPEN, rows: TX.map((t) => ({ date: `${p2(t.d)} Aug 2026`, details: t.desc, amount: t.amt })) }),
+  },
+  {
+    bank: "SMBC",
+    format: "e-Statement Jenius",
+    file: "jenius-estatement-inline.pdf",
+    // Its second variant: the transactions start on the summary page and no bank name is printed above them.
+    build: () => jeniusEstatementPdf({ inline: true, opening: OPEN, rows: TX.map((t) => ({ date: `${p2(t.d)} Aug 2026`, details: t.desc, amount: t.amt })) }),
   },
   // ---- MT940: one SWIFT format, every bank that issues it ----
   { bank: "BCA", format: "MT940", file: "bca.mt940", build: () => mt940("CENAIDJA", "0000012345") },

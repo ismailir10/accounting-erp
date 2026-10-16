@@ -29,7 +29,7 @@ type Column = { kind: ColKind; x0: number; x1: number };
 
 const HEADER: Record<ColKind, RegExp> = {
   date: /^(tanggal|tgl\.?|date|tanggal transaksi|post(ing)? date|tgl\.? transaksi|trans(action)? date|tgl\.? txn|txn date|tanggal & (waktu|jam)|date & time)$/i,
-  desc: /^(keterangan|uraian|uraian transaksi|deskripsi|description|remark|remarks|trans(action)? description|transaction desc|transaction details?|rincian transaksi|narasi|berita)$/i,
+  desc: /^(keterangan|uraian|uraian transaksi|deskripsi|description|remark|remarks|trans(action)? description|transaction desc|transaction details?|details|rincian transaksi|narasi|berita)$/i,
   debit: /^(debet|debit|mutasi debet|mutasi debit|(uang |dana )?keluar|withdrawals?|pengeluaran)$/i,
   credit: /^(kredit|credit|mutasi kredit|(uang |dana )?masuk|deposits?|pemasukan)$/i,
   amount: /^(mutasi|jumlah|nominal|amount|transaction amount)$/i,
@@ -66,7 +66,7 @@ function holderOfHeader(lines: Line[], format: BankCode): string | undefined {
   const header = tableAt < 0 ? lines : lines.slice(0, tableAt);
   const clean = (text: string | undefined): string | undefined => {
     const value = text?.replace(/^:\s*/, "").trim();
-    if (!value || /^(?:JL\.?|Jalan|Alamat)(?:\s|:|$)/i.test(value) || /^(?:periode|period|tanggal|statement date|cabang|branch|no\.?\s*(?:rekening|rek\.?)|nomor rekening|account (?:no|number)|mata uang|currency|valuta|nama produk|product name|alamat|jalan|jl(?:\.|\s|$)|kantor cabang|saldo|laporan|rekening)\b/i.test(value)) return undefined;
+    if (!value || /^(?:JL\.?|Jalan|Alamat)(?:\s|:|$)/i.test(value) || /^(?:periode|period|tanggal|statement date|cabang|branch|no\.?\s*(?:rekening|rek\.?)|nomor rekening|account (?:no|number)|card (?:no|number)|nomor kartu|mata uang|currency|valuta|nama produk|product name|alamat|jalan|jl(?:\.|\s|$)|kantor cabang|saldo|laporan|rekening)\b/i.test(value)) return undefined;
     return value;
   };
   const positioned = (text: string | undefined): string | undefined => {
@@ -365,6 +365,18 @@ export function detectFormat(headerText: string): BankCode {
   return detectBank(headerText);
 }
 
+/**
+ * The bank a statement names above its table. The Jenius e-Statement prints no bank name above its table when the transactions start
+ * on the summary page: its own column header (exactly Date & Time · Details · Notes · Amount) identifies it then. Never transactions.
+ */
+const JENIUS_HEADER = ["date & time", "details", "notes", "amount"];
+function formatOf(preamble: string, header: Line): BankCode {
+  const named = detectFormat(preamble);
+  if (named !== "GENERIC") return named;
+  const labels = header.cells.map((c) => c.text.replace(/\s+/g, " ").trim().toLowerCase());
+  return labels.length === JENIUS_HEADER.length && labels.every((l, i) => l === JENIUS_HEADER[i]) ? "SMBC" : named;
+}
+
 export function periodOf(text: string): { start: Date; end: Date } | null {
   const range = periodFromText(text);
   if (range) return range;
@@ -407,6 +419,42 @@ function parseDate(text: string, period: { start: Date; end: Date } | null, orde
     if (p.m < period.start.getUTCMonth() + 1 && period.end.getUTCFullYear() > y) y++; // Dec → Jan statements
   }
   return calendarDate(y, p.m, p.d);
+}
+
+/**
+ * Labels printed above their values (Jenius e-Statement: "Account Number … Period" on one line, "<number> … August 2026" on the
+ * next). Each reads only the line right below its label and only the cell under the label, and only when no other reader found
+ * the value: a period that is the whole printed month, an account number that is digits alone.
+ */
+const ACCOUNT_LABEL = /^(account number|nomor rekening|no\.? rekening)$/i;
+const PERIOD_LABEL = /^(period|periode)$/i;
+
+/** A label or value cell without the separators a layout prints beside it ("90011122233 •" when the bullet sits close to the number). */
+const bare = (cell: Cell | null) => (cell?.text ?? "").replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+
+function below(lines: Line[], label: RegExp): Cell | null {
+  for (const [i, line] of lines.entries()) {
+    const head = line.cells.find((c) => label.test(bare(c)));
+    const next = lines[i + 1];
+    if (!head || !next || next.page !== line.page) continue;
+    const centre = (c: Cell) => (c.x0 + c.x1) / 2;
+    const under = next.cells.filter((c) => c.x0 <= head.x1 + 30 && c.x1 >= head.x0 - 30);
+    return under.sort((a, b) => Math.abs(centre(a) - centre(head)) - Math.abs(centre(b) - centre(head)))[0] ?? null;
+  }
+  return null;
+}
+
+function labelledMonth(lines: Line[]): { start: Date; end: Date } | null {
+  const m = bare(below(lines, PERIOD_LABEL)).match(/^([A-Za-z]{3,9})\s+(\d{4})$/);
+  const month = m && MONTHS[m[1].toLowerCase()];
+  if (!m || !month) return null;
+  const y = Number(m[2]);
+  return { start: dateOnly(y, month, 1), end: new Date(Date.UTC(y, month, 0)) };
+}
+
+function labelledAccount(lines: Line[]): string | null {
+  const t = bare(below(lines, ACCOUNT_LABEL));
+  return /^\d[\d-]{5,}\d$/.test(t) ? t.replace(/-/g, "") : null;
 }
 
 /** Points between a lead-in description line and the amount line below it (SMBC prints ~3 pt; rows are ≥ 9 pt apart). */
@@ -483,11 +531,12 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
     throw new ParseError("Tabel transaksi di PDF tidak dikenali (kolom tanggal, keterangan, mutasi/debet-kredit tidak ditemukan). Kirim contoh baris judulnya agar formatnya bisa ditambahkan.");
   }
   const preamble = lines.slice(0, firstHeader).map(lineText).join("\n");
-  const holder = holderOfHeader(lines.slice(0, firstHeader), ctx.format ?? detectFormat(preamble));
+  const format = ctx.format ?? formatOf(preamble, lines[firstHeader]);
+  const holder = holderOfHeader(lines.slice(0, firstHeader), format);
   const currency = currencyOfLines(lines, firstHeader);
   const allText = lines.map(lineText).join("\n");
-  const period = ctx.period ?? periodOf(preamble) ?? periodOf(allText);
-  const order = dateOrderOfLines(lines, firstHeader, ctx.format ?? detectFormat(preamble), period);
+  const period = ctx.period ?? periodOf(preamble) ?? periodOf(allText) ?? labelledMonth(lines.slice(0, firstHeader));
+  const order = dateOrderOfLines(lines, firstHeader, format, period);
   // wondr prints its account in the right-hand product cell, never in a transaction.
   const headerCells = lines.slice(0, firstHeader).flatMap((line) => line.cells);
   const rightColumn = (Math.min(...headerCells.map((cell) => cell.x0)) + Math.max(...headerCells.map((cell) => cell.x1))) / 2;
@@ -501,7 +550,7 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
       .filter((t) => /(no\.?\s*rek|nomor rekening|rekening|account)/i.test(t))
       .map((t) => t.match(/\d[\d-]{5,}\d/)?.[0])
       .find(Boolean)
-      ?.replace(/-/g, "") ?? null;
+      ?.replace(/-/g, "") ?? labelledAccount(lines.slice(0, firstHeader));
 
   const brimo = /laporan\s+transaksi\s+finansial/i.test(preamble) && /nama\s+produk\s*:?\s*britama(?:-IDR)?\b/i.test(preamble);
   const sen = new SenWatch();
@@ -535,7 +584,7 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
   // Description text printed just above a row's amount line (SMBC centres a two-line description on it): held for that row.
   let lead: string[] = [];
   // BCA prints a row's counterparty below it, and across a page break under the repeated header (UC-B1g): the row a new page continues.
-  const bca = (ctx.format ?? detectFormat(preamble)) === "BCA";
+  const bca = format === "BCA";
   let carried: Draft | null = null;
   // The last row of a page, until the next page's header shows whether undated lines below it continue it.
   let pending: Draft | null = null;
@@ -747,7 +796,7 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
   }
   const bounds = period ?? monthBoundsOf(rows);
   return {
-    format: ctx.format ?? detectFormat(preamble),
+    format,
     accountNumber,
     ...(holder ? { holder } : {}),
     currency,

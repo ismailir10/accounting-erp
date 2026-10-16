@@ -294,3 +294,100 @@ export function bcaHolderPdf(opts: { holder?: string | null; labelled?: boolean;
     ]),
   ]]);
 }
+
+/** A row of the Jenius e-Statement below: date, the Details lines, an optional note and a signed whole-Rupiah amount. */
+export type JeniusRow = { date: string; details: string[]; amount: number; time?: string; note?: string; type?: string };
+
+/**
+ * Jenius e-Statement, 2025 layout (FICTIONAL content). Built from structure metadata of real statements only — fixed public labels,
+ * token shapes and positions rounded to 25 pt; no real value. Page 1 summarises the account (total balance, account number and
+ * period, the account table with starting/incoming/outgoing/ending balances, the cards table); the transactions follow under an
+ * English header (Date & Time · Details · Notes · Amount) and a sub-header, between a starting and an ending balance line. A row is
+ * its date, details and signed amount, then the time and a second details line, sometimes a reference and the transaction type.
+ * There is no running-balance column. `inline` is the second variant: columns shifted left, no separator in the account line, and
+ * the transactions starting on page 1 under the summary.
+ */
+export function jeniusEstatementPdf(opts: {
+  rows: JeniusRow[];
+  opening: number;
+  /** Printed ending balance; defaults to opening + Σ rows (pass another value to print a broken chain). */
+  closing?: number;
+  account?: string;
+  period?: string;
+  /** The day the total balance is printed for, e.g. "31 August 2026". */
+  asOf?: string;
+  inline?: boolean;
+  openingLabel?: string;
+  rowsPerPage?: number;
+  userPassword?: string;
+}): Buffer {
+  const fmt = (v: number, signed = false) => `${signed ? (v < 0 ? "-" : "+") : v < 0 ? "-" : ""}${Math.abs(v).toLocaleString("en-US")}`;
+  const closing = opts.closing ?? opts.rows.reduce((t, r) => t + r.amount, opts.opening);
+  const incoming = opts.rows.filter((r) => r.amount > 0).reduce((t, r) => t + r.amount, 0);
+  const outgoing = opts.rows.filter((r) => r.amount < 0).reduce((t, r) => t + r.amount, 0);
+  const label = opts.openingLabel ?? "Previous Balance";
+  const x = opts.inline
+    ? { a: 25, sep: 0, cur: 150, start: 225, startV: 250, inc: 350, out: 450, end: 525, right: 550, date: 25, details: 100, notes: 275, amount: 550 }
+    : { a: 50, sep: 100, cur: 200, start: 300, startV: 325, inc: 400, out: 450, end: 500, right: 525, date: 50, details: 125, notes: 300, amount: 530 };
+  const pages: PdfText[][] = [];
+  let page: PdfText[] = [];
+  let y = 800;
+  const line = (cells: [number, string][], lead = 12) => {
+    for (const [cx, text] of cells) page.push({ x: cx, y, text });
+    y -= lead;
+  };
+  const newPage = () => {
+    pages.push(page);
+    page = [];
+    y = 800;
+  };
+  // Page 1: the summary.
+  line([[x.a, "Account Overview"], [475, `Total Balance (${opts.asOf ?? "31 August 2026"})`]]);
+  line([[x.a, "NASABAH FIKTIF CONTOH"], [x.right, fmt(closing)]], 20);
+  line([[x.a, "Account Number"], ...(x.sep ? ([[x.sep, "–"]] as [number, string][]) : []), [opts.inline ? 550 : 525, "Period"]]);
+  line([[x.a, opts.account ?? "90012345678"], ...(x.sep ? ([[x.sep, "–"]] as [number, string][]) : []), [500, opts.period ?? "August 2026"]], 20);
+  line([[x.a, opts.inline ? "–" : "Currency"]], 20);
+  line([[x.a, "Account"], [x.cur, "Currency"], [x.start, label], [x.inc, "Incoming"], [x.out, "Outgoing"], [x.end, "Ending Balance"]]);
+  line([[x.a, "Active Balance"], [x.cur, "IDR"], [x.startV, fmt(opts.opening)], [x.inc - 25, incoming ? fmt(incoming, true) : "0"], [x.out, fmt(outgoing, true)], [x.right, fmt(closing)]]);
+  line([[x.a, "Total in IDR"], [x.right, fmt(closing)]], 20);
+  line([[x.a, "Cards"]]);
+  line([[x.a, "Name"], [x.cur, "Card Number"], [x.start, label], [x.inc, "Incoming"], [x.out, "Outgoing"], [x.end, "Ending Balance"]]);
+  line([[x.a, "Status"]]);
+  line([[x.a, "–"], [x.cur, "**** **** **** 4321"], [375, "Uses Active Balance"]]);
+  line([[x.a, "Total in IDR"], [550, "0"]], 24);
+  const footer = () => {
+    line([[100, "PT Bank SMBC Indonesia Tbk berizin dan diawasi oleh Otoritas Jasa Keuangan"], [400, "Layanan 1500 365"]]);
+    line([[100, "Bank peserta penjaminan Lembaga Penjamin Simpanan (deposit insurance)"]]);
+  };
+  if (!opts.inline) {
+    footer();
+    newPage();
+  }
+  // The transaction table.
+  const head = () => {
+    line([[x.date, "Date & Time"], [x.details, "Details"], [x.notes, "Notes"], [x.amount - 5, "Amount"]]);
+    line([[x.details, "Transaction Name | Category"], [x.notes, "Transaction Type"]], 14);
+  };
+  line([[x.a, "Active Balance IDR"], [300, "All Transactions In This Statement"], [475, "Incoming :"], [x.right, incoming ? fmt(incoming, true) : "0"]]);
+  line([[x.a, "Opened 01 Jan 2020"], [300, "**** **** **** 4321"], [475, "Outgoing :"], [x.right, fmt(outgoing, true)]], 20);
+  head();
+  line([[x.details, label], [x.right, fmt(opts.opening)]], 14);
+  const perPage = opts.rowsPerPage ?? 18;
+  opts.rows.forEach((r, i) => {
+    if (i > 0 && i % perPage === 0) {
+      newPage();
+      head();
+    }
+    line([[x.date, r.date], [x.details, r.details[0]], ...(r.note ? ([[x.notes, r.note]] as [number, string][]) : []), [x.amount, fmt(r.amount, true)]], 10);
+    line([[x.date, r.time ?? "09:15"], [x.details, r.details[1] ?? `REF - ${String(7000000 + i)}`]], 10);
+    if (r.type !== "") line([[x.details, `TX${String(100 + i)}A | ${r.amount > 0 ? "Transfer" : "Pembayaran"}`], [x.notes, r.type ?? (r.amount > 0 ? "CR Transfer Incoming" : "DB Payment Outgoing")]], 14);
+    else y -= 4;
+  });
+  line([[x.details, "Ending Balance"], [x.right, fmt(closing)]], 24);
+  line([[x.a, "Seluruh transaksi Jenius tercatat dalam e-Statement ini"]]);
+  line([[x.a, "This e-Statement shows the transactions in your account in the period stated in it"]]);
+  line([[x.a, "e-Statement ini diterbitkan oleh bank dan sah tanpa tanda tangan"]]);
+  if (opts.inline) footer();
+  pages.push(page);
+  return makePdf(pages, opts.userPassword !== undefined ? { userPassword: opts.userPassword } : {});
+}
