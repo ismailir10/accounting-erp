@@ -10,7 +10,7 @@ anything CI does not. Cloud agent sandboxes could not reach it at all.
 
 **Decision.**
 1. **Production (`main`, Vercel project `native-erp-v2`, Supabase project `native-erp-v2`) is the only hosted environment.** Staging is
-   retired: no previews, no local-dev Auth against it, no e2e against it. The git branch `staging` stays frozen as history.
+   retired: no previews, no local-dev Auth against it, no e2e against it. The git branch `staging` stays frozen as history (amended 2026-10-16: retired too, see below).
 2. **Development and tests run on a throwaway local stack, never on production.**
    - Postgres: local (`docker compose` or the sandbox cluster).
    - Auth: the local Supabase stack CI already boots, via `npm run auth:local`. It needs Docker, and it writes the local URL and keys
@@ -26,3 +26,6 @@ anything CI does not. Cloud agent sandboxes could not reach it at all.
   pause or delete them.
 - The Google OAuth client must list only the production and `localhost` callbacks.
 - A laptop needs Docker for login in development. Without it, the app runs but stays on its "Akses belum siap" page.
+
+**Amendment, 2026-10-16.** The owner asked for `main` to be the only branch. `staging` held no commit `main` lacks, so its history
+is kept in `main` and the branch itself is retired: it is no longer protected or kept. Decision 1 otherwise stands.

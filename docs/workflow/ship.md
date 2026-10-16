@@ -53,7 +53,7 @@ say only what Buku does today.
   only Vercel build, and PR branches get no preview (`vercel.json`). When CI is green, say it is ready and stop.
 - After the user merges: GitHub deletes the remote task branch. Locally fast-forward `main` from `origin/main`,
   `git fetch --prune`, delete the merged task branch and its worktree, then run the post-merge checks. Never delete
-  `main`; a PR closed unmerged takes its branch with it.
+  `main`. GitHub deletes only merged branches: when a PR is closed unmerged, delete its branch by hand.
 
 ## Post-merge
 

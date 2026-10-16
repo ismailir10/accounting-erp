@@ -57,7 +57,7 @@ A different dev cycle = change agent-workflow upstream and re-sync. Buku-only st
 | Work record | Cycle doc: `docs/cycles/YYYY-MM-DD-<slug>.md` ([shape](docs/workflow/spec.md#rules)) |
 | Read first | The latest `docs/cycles/*.md`, [`docs/adrs/`](docs/adrs/README.md), the §4 skill for the area; [docs/real-data.md](docs/real-data.md) before real client files; `node_modules/next/dist/docs/` for Next.js 16 APIs |
 | Base branch | `main` |
-| Production branch | `main` — every merge is one Vercel production deploy; no promotion step ([ADR 0015](docs/adrs/0015-production-only.md)). `main` is the only long-lived branch; `staging` is retired (all of it is in `main`) |
+| Production branch | `main` — every merge is one Vercel production deploy; no promotion step ([ADR 0015](docs/adrs/0015-production-only.md)). `main` is the only long-lived branch; `staging` is retired (all of it is in `main`; ADR 0015, amended) |
 | Branch name | `task/<slug>` |
 | Isolation | `git fetch origin && git worktree add ../buku-<slug> -b task/<slug> origin/main`, then Setup inside it. A cloud sandbox's own clone is already isolated |
 | Setup | `bash scripts/session-start.sh` (Postgres, deps, migrate, seed if empty; wired as a session-start hook) and `npm run auth:local` (local Supabase Auth, Docker) |
@@ -138,4 +138,4 @@ when a real incident shows the need, and record it as an ADR.
 - PRs are drafts to `main`, body follows `.github/pull_request_template.md`.
 - **Tool-neutral.** Any coding agent (or person) works here the same way: branches `task/<slug>`, no AI-tool names in
   branches, code, docs, commits or PRs, and no AI attribution trailers or "generated with" footers.
-- Branch lifecycle and production deploys: follow [README → Branch workflow](README.md#branch-workflow), the ship skill and [docs/workflow/ship.md](docs/workflow/ship.md). Start new work from main; a task branch lives only until its PR merges or is closed.
+- Branch lifecycle and production deploys: follow [README → Branch workflow](README.md#branch-workflow), the ship skill and [docs/workflow/ship.md](docs/workflow/ship.md). Start new work from main; a task branch lives only until its PR merges or is closed (GitHub deletes merged branches; delete a closed one by hand).
