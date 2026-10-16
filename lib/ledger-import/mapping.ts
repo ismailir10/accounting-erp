@@ -475,6 +475,8 @@ export const NEW_ACCOUNT_FS_LINES = (Object.keys(FS_LINES) as FsLine[]).filter((
 
 // Template codes are skipped too: accounts added to the template later (1135, 1181, 2146 …) are created on first use and must stay free.
 const SPECIAL = new Set(["1190", "1199", "1999", "3200", "3900", "7190", "7200", ...Array.from({ length: 9 }, (_, i) => `110${i + 1}`), ...Array.from({ length: 9 }, (_, i) => `220${i + 1}`), ...COA_TEMPLATE.map((a) => a.code)]);
+/** A code a new account may not take: system codes, the bank ranges and every template code (created on first use elsewhere). */
+export const isReservedCode = (code: string) => SPECIAL.has(code);
 const SECTION_TYPE: Record<string, AccountType> = { ASET_LANCAR: "ASET", ASET_TIDAK_LANCAR: "ASET", LIABILITAS_JANGKA_PENDEK: "LIABILITAS", LIABILITAS_JANGKA_PANJANG: "LIABILITAS", EKUITAS: "EKUITAS" };
 
 /** Next free code under an FS line's range, then under its anchor (1140 → 114001 … 114099, 1140100 … 1140999; sorts right after 1140). */
@@ -501,7 +503,7 @@ export async function createClientAccount(tx: Tx, clientId: string, fsLine: FsLi
   return code;
 }
 
-function newAccountData(fsLine: FsLine, name: string) {
+export function newAccountData(fsLine: FsLine, name: string) {
   const section = FS_LINES[fsLine].section;
   const type: AccountType =
     SECTION_TYPE[section] ?? (fsLine === "PENDAPATAN_USAHA" || fsLine === "PENDAPATAN_LAIN" ? "PENDAPATAN" : "BEBAN");
