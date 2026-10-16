@@ -95,8 +95,13 @@ export default async function NewJournalPage({ params, searchParams }: { params:
                   <div className="text-xs text-muted-foreground">
                     {formatDate(e.date)} · {e.entity.shortName}
                     {e.reversedBy && ` · dibalik ${formatDate(e.reversedBy.date)}`}
-                    {" · "}
-                    <Link href={withParams(`/clients/${client.id}/journals/new`, { period: period.key, salin: e.id })} className="drill" aria-label={`Salin jurnal ${e.memo}`}>Salin</Link>
+                    {/* A foreign-currency journal is not copied: its rate must be typed again (the copy would open empty). */}
+                    {!e.lines.some((l) => l.currency) && (
+                      <>
+                        {" · "}
+                        <Link href={withParams(`/clients/${client.id}/journals/new`, { period: period.key, salin: e.id })} className="drill" aria-label={`Salin jurnal ${e.memo}`}>Salin</Link>
+                      </>
+                    )}
                   </div>
                 </div>
                 <Money className="shrink-0" value={e.lines.reduce((s, l) => s + l.debit, 0n)} currency={e.entity.functionalCurrency} />
