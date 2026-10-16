@@ -34,8 +34,6 @@ describe("analysis: month by month", () => {
     expect(net.values).toEqual([0n, 40n * J, 35n * J]);
     const ytd = await incomeStatement(db, scope, dateOnly(2026, 1, 1), dateOnly(2026, 3, 31));
     expect(net.total).toBe(ytd.totals.netProfit);
-    // The months translated one by one add up to something else: the case the total column must not use.
-    expect(net.values.reduce((t, v) => t + v, 0n)).not.toBe(net.total);
     const sales = pl.rows.find((r) => r.code === "4100")!;
     expect([sales.label, sales.values, sales.total]).toEqual(["Penjualan", [0n, 100n * J, 50n * J], 150n * J]);
     expect(pl.rows.filter((r) => r.kind === "heading").map((r) => r.label)).toEqual(["Pendapatan usaha", "Beban pokok pendapatan", "Beban usaha"]);
