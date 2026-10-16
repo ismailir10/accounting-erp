@@ -49,7 +49,9 @@
 **Mekari Jurnal** (35,000+ companies; part of the Mekari suite, now sold as an SME-to-enterprise ERP)
 - **Pricing.** Essentials is Rp399k/month for 3 users; Plus is Rp899k/month for 5 users. Prices are per company, with no package
   for firms.
-- **Bank data.** "Cashlink" pulls statements by API from about 7 banks: BCA, Mandiri, BNI, CIMB, Danamon. BRI is not among them.
+- **Bank data.** "Cashlink" pulls statements by API from 4–6 banks. Its feature page lists BCA (Corporate and Personal), Mandiri,
+  CIMB Niaga, BNI, BNI Syariah and Danamon as examples. The help article updated in Jul 2026 names four: BCA, BNI, Mandiri and CIMB
+  Niaga. BRI is in neither.
   Each bank needs the owner's signed authorisation. Reconciliation auto-matches on date, description and amount, plus "bank rules".
   No statement file formats are documented.
 - **Reports.** It claims 80+ reports and a combined multi-company view.
@@ -89,7 +91,7 @@ Lead = Buku is ahead · Par = good enough · Gap = worth building · Skip = not 
 | Area | Zahir | Jurnal | Rillet | Buku today | Verdict |
 |---|---|---|---|---|---|
 | Built for | SME owner | SME → enterprise | US finance team | Indonesian accounting firm | **Lead** (only one) |
-| Bank data in | BCA CSV; others retyped | API feeds, ~7 banks, owner's mandate | Plaid + CSV | 25 banks: PDF, CSV, XLSX, MT940, and scans read by OCR; every row proven by the running balance. **3 of 25 formats checked on real files** | **Lead** in coverage, **Gap** in proof |
+| Bank data in | BCA CSV; others retyped | API feeds, 4–6 banks, owner's mandate | Plaid + CSV | 25 banks: PDF, CSV, XLSX, MT940, and scans read by OCR; every row proven by the running balance. **3 of 25 formats checked on real files** | **Lead** in coverage, **Gap** in proof |
 | Matching / classification | date + amount | auto-match + bank rules | ML match, confidence modes, amount cap | transfer match → rules → memory → LLM → review with confidence %. Deterministic matches post at one fixed threshold | Par; **Gap**: per-firm automation dial |
 | Moving an existing client's books in | master-data CSV; transactions are a paid add-on | API | specialist-led, 4–6 weeks | Jurnal, Accurate and Excel GL/Neraca exports, each line traced to `sheet!row` | **Lead** |
 | GL integrity | — | audit trail | native GL | one writer, bigint money, DB triggers, no plugs, `verify:books` | **Lead** |
@@ -140,8 +142,10 @@ Nothing in Phase 2 is worth building until a real accountant closes real months.
    timed. **Record the baseline**: files received → pack sent.
 2. **Then 5 clients for two consecutive months**, closed by the firm's own staff.
 3. **Fix only what the blocker log shows, ranked by minutes lost.** No new modules.
-4. **Promote bank formats to REAL only from real files.** Each real file becomes an anonymised regression fixture
-   ([real-data.md](real-data.md)). A bank is added only when a real client's file arrives.
+4. **Promote bank formats to REAL only from real files.**
+   - **What enters Git:** a new synthetic fixture that reproduces the layout only. Nothing is copied from the real file.
+   - **The real file:** stays in `data/private/` or in production ([real-data.md](real-data.md); AGENTS.md §8).
+   - A bank is added only when a real client's file arrives.
 
 **Exit test:**
 - the baseline is written in a cycle doc;
@@ -231,7 +235,7 @@ These follow ADR 0014, sharpened by the research:
 ## Sources
 - **Zahir:** zahiraccounting.com/id/harga · zahiraccounting.com/id/zahir-accounting-7 · help.zahironline.com (bank reconciliation,
   e-Faktur plugin) · zahir.ai · zahir.co.id/produk/zas · industri.kontan.co.id (Zahir AI launch, Sep 2024).
-- **Jurnal:** jurnal.id/id/harga · jurnal.id/id/fitur/kas-transaksi/cashlink-bank · jurnal.id/id/blog/cara-rekonsiliasi-bank-otomatis
+- **Jurnal:** jurnal.id/id/harga · jurnal.id/id/fitur/kas-transaksi/cashlink-bank · jurnal.id/id/blog/rekonsiliasi-bank-cash-link · jurnal.id/id/blog/cara-rekonsiliasi-bank-otomatis
   · jurnal.id/id/fitur/airene-artificial-intelligence-accounting-software · jurnal.id/en/partnership/consultant ·
   klikpajak.id/blog/pjap-era-coretax · softwareadvice.com/accounting/jurnal-profile.
 - **Rillet:** docs.rillet.com (actions and approvals, audit trail, transaction automation, AI accruals, flux analysis, close the
