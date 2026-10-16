@@ -8,8 +8,17 @@ export type PublicLegalDocument = {
   sections: readonly PublicLegalSection[];
 };
 
-export const PUBLIC_LEGAL_UPDATED = { iso: "2026-10-11", label: "11 Oktober 2026" };
-export const PUBLIC_LEGAL_DRAFT = "Draf untuk ditinjau. Identitas pengelola dan ketentuan ini perlu dikonfirmasi sebelum uji coba eksternal.";
+export const PUBLIC_LEGAL_UPDATED = { iso: "2026-10-16", label: "16 Oktober 2026" };
+export const PUBLIC_LEGAL_DRAFT = "Draf untuk ditinjau pengelola. Nama badan hukum dan alamat pengelola, serta pengadilan yang dipilih, perlu dikonfirmasi sebelum uji coba eksternal.";
+
+const operator: PublicLegalSection = {
+  id: "pengelola",
+  title: "Pengelola layanan",
+  paragraphs: [
+    "Buku dikelola oleh Right Jet (right-jet.com), selanjutnya disebut pengelola. Pertanyaan, keluhan, dan permintaan terkait data diajukan melalui kontak pengelola di akhir halaman ini.",
+    "Untuk data permintaan uji coba dan data akun anggota, pengelola menentukan tujuan dan cara pemrosesannya. Untuk isi pembukuan yang diunggah organisasi, termasuk data klien dan pihak lain di dalamnya, organisasi yang menentukan tujuannya dan pengelola memprosesnya atas nama organisasi untuk menyediakan Buku.",
+  ],
+};
 
 const trialRequest: PublicLegalSection = {
   id: "permintaan-uji-coba",
@@ -53,6 +62,7 @@ export const PUBLIC_TERMS: PublicLegalDocument = {
   relatedHref: "/kebijakan-privasi",
   relatedLabel: "Baca kebijakan privasi",
   sections: [
+    operator,
     {
       id: "penggunaan-buku",
       title: "Pembukuan tetap ditinjau manusia",
@@ -64,11 +74,26 @@ export const PUBLIC_TERMS: PublicLegalDocument = {
     trialRequest,
     trialAccess,
     {
+      id: "biaya",
+      title: "Biaya",
+      paragraphs: [
+        "Uji coba tidak dikenakan biaya, kecuali disepakati lain secara tertulis. Penggunaan berbayar setelah uji coba memerlukan kesepakatan terpisah yang menyebutkan harga, cakupan, dan jangka waktunya. Buku tidak menagih apa pun secara otomatis.",
+      ],
+    },
+    {
       id: "akun-dan-dokumen",
       title: "Akun, izin, dan dokumen",
       paragraphs: [
         "Gunakan data yang Anda berhak unggah dan bagikan, termasuk data klien atau pemilik rekening. Organisasi mengatur anggota, peran, dan penugasan klien. Jaga kredensial akun dan hubungi pengelola bila menduga ada akses tanpa izin.",
         "Jangan gunakan Buku untuk mengakses organisasi lain tanpa izin, mengganggu layanan, atau mengunggah materi melanggar hukum. Buku dapat mencabut akses atau menangguhkan organisasi untuk menangani penyalahgunaan dan masalah akses.",
+      ],
+    },
+    {
+      id: "kepemilikan-data",
+      title: "Data tetap milik Anda",
+      paragraphs: [
+        "Dokumen, transaksi, jurnal, dan laporan yang dibuat dari data organisasi tetap menjadi milik organisasi atau kliennya. Pengelola memprosesnya hanya untuk menyediakan, mengamankan, dan mendukung Buku, tidak menjualnya, dan tidak memakainya untuk iklan.",
+        "Laporan dapat diunduh dalam Excel dan PDF selama akses masih berlaku, termasuk masa baca setelah uji coba. Perangkat lunak, tampilan, dan merek Buku tetap milik pengelola; uji coba memberi hak memakai Buku, bukan hak atas perangkat lunaknya.",
       ],
     },
     support,
@@ -81,6 +106,28 @@ export const PUBLIC_TERMS: PublicLegalDocument = {
         "Perubahan ketentuan akan dicantumkan pada halaman ini dengan tanggal pembaruan. Hubungi pengelola bila Anda memerlukan penjelasan atau kesepakatan khusus sebelum menggunakan Buku.",
       ],
     },
+    {
+      id: "tanggung-jawab",
+      title: "Batas tanggung jawab",
+      paragraphs: [
+        "Selama uji coba, Buku disediakan sebagaimana adanya. Pengelola berupaya menjaga ketersediaan dan ketepatan pengolahan, tetapi tidak menjamin layanan bebas gangguan atau hasil bebas kesalahan.",
+        "Sejauh diizinkan hukum, pengelola tidak bertanggung jawab atas kerugian tidak langsung, kehilangan keuntungan, atau keputusan akuntansi, pajak, dan bisnis yang diambil tanpa meninjau sumber dan hasil pembukuan. Batasan ini tidak mengurangi hak yang menurut hukum tidak dapat dikecualikan, termasuk hak Anda sebagai subjek data pribadi.",
+      ],
+    },
+    {
+      id: "mengakhiri",
+      title: "Mengakhiri penggunaan",
+      paragraphs: [
+        "Organisasi dapat berhenti memakai Buku kapan saja dan meminta penghapusan data melalui kontak pengelola, sebagaimana dijelaskan di bagian penyimpanan. Pengelola dapat mengakhiri uji coba pada tanggal berakhirnya, atau lebih awal untuk menangani penyalahgunaan, risiko keamanan, atau kewajiban hukum, dengan memberi tahu organisasi bila memungkinkan.",
+      ],
+    },
+    {
+      id: "hukum-dan-sengketa",
+      title: "Hukum yang berlaku dan sengketa",
+      paragraphs: [
+        "Ketentuan ini tunduk pada hukum Republik Indonesia dan ditulis dalam bahasa Indonesia. Bila ada perselisihan, para pihak lebih dahulu menyelesaikannya secara musyawarah dalam 30 hari sejak salah satu pihak memberi tahu secara tertulis. Bila tidak tercapai, perselisihan diselesaikan melalui Pengadilan Negeri Jakarta Selatan.",
+      ],
+    },
   ],
 };
 
@@ -90,6 +137,7 @@ export const PUBLIC_PRIVACY: PublicLegalDocument = {
   relatedHref: "/syarat",
   relatedLabel: "Baca syarat penggunaan",
   sections: [
+    operator,
     trialRequest,
     {
       id: "data-ruang-kerja",
@@ -104,7 +152,7 @@ export const PUBLIC_PRIVACY: PublicLegalDocument = {
       title: "Tujuan dan dasar pemrosesan",
       paragraphs: [
         "Dasar pemrosesan disesuaikan dengan tujuan dan keadaan: langkah atas permintaan Anda sebelum layanan diberikan atau pelaksanaan perjanjian untuk uji coba dan pembukuan; kepentingan sah untuk keamanan, pencegahan penyalahgunaan, dan dukungan dengan mempertimbangkan hak Anda; serta kewajiban hukum bila berlaku. Persetujuan digunakan bila diperlukan oleh hukum untuk pemrosesan tertentu.",
-        "Mengirim formulir berarti meminta Buku meninjau dan menghubungi Anda mengenai uji coba, sebagaimana dijelaskan di formulir. Identitas pengelola dan penetapan dasar pemrosesan perlu dikonfirmasi dalam peninjauan draf ini.",
+        "Mengirim formulir berarti meminta Buku meninjau dan menghubungi Anda mengenai uji coba, sebagaimana dijelaskan di formulir. Untuk isi pembukuan, organisasi yang menetapkan dasar pemrosesan atas data klien dan pihak lain yang diunggahnya.",
       ],
     },
     {
@@ -126,6 +174,31 @@ export const PUBLIC_PRIVACY: PublicLegalDocument = {
       paragraphs: [
         "Server aplikasi dan basis data Buku berada di region Singapura. Lokasi ini berbeda dari pemrosesan oleh penyedia AI pihak ketiga; pemrosesan mereka tidak dijamin seluruhnya berlangsung di Singapura.",
         "Ketentuan penyimpanan dan pemrosesan penyedia AI perlu diperiksa sesuai penyedia yang digunakan. Draf ini tidak menjanjikan jangka retensi penyedia, larangan penggunaan untuk pelatihan, atau sertifikasi kepatuhan yang belum diverifikasi. Hubungi pengelola untuk penjelasan sebelum mengirim data yang memerlukan pembatasan khusus, termasuk transfer lintas negara.",
+      ],
+    },
+    {
+      id: "penerima-data",
+      title: "Siapa yang menerima data",
+      paragraphs: [
+        "Pengelola memakai penyedia infrastruktur untuk menjalankan Buku: penyedia hosting aplikasi dan basis data, penyedia layanan login yang juga mengirim email undangan dan pemulihan akun, serta penyedia AI bila fitur AI diaktifkan. Mereka memproses data untuk menjalankan layanan tersebut, bukan untuk kepentingan sendiri dari pengelola.",
+        "Data tidak dijual dan tidak dibagikan untuk iklan. Data dapat diungkapkan bila diwajibkan oleh hukum atau perintah instansi yang berwenang; pengelola akan memberi tahu organisasi bila diizinkan.",
+      ],
+    },
+    {
+      id: "cookie",
+      title: "Cookie dan penyimpanan di peramban",
+      paragraphs: [
+        "Buku memakai cookie yang diperlukan untuk login dan menjaga sesi; cookie penanda sesi dukungan hanya baca bagi petugas Buku, berlaku sampai 60 menit; dan cookie sementara saat admin menghubungkan Google Drive, berlaku 10 menit untuk memastikan persetujuan Google kembali ke peramban yang sama.",
+        "Di penyimpanan peramban perangkat Anda, Buku menyimpan daftar klien yang terakhir dibuka, serta pilihan akun dan pajak di halaman Review yang belum disimpan (beserta penanda baris banknya), agar tidak hilang saat halaman dimuat ulang. Pilihan yang belum disimpan terhapus saat disimpan atau saat tab ditutup.",
+        "Buku tidak memakai cookie analitik, cookie iklan, atau pelacak pihak ketiga. Menghapus cookie akan mengeluarkan Anda dari akun.",
+      ],
+    },
+    {
+      id: "keamanan",
+      title: "Keamanan dan kegagalan pelindungan data",
+      paragraphs: [
+        "Koneksi ke Buku dienkripsi. Akses ke data mengikuti peran dan penugasan klien, setiap perubahan pembukuan dicatat, dan rahasia seperti kunci AI dan kata sandi PDF yang disimpan dienkripsi. Sesi dukungan memerlukan verifikasi dua langkah dan dicatat.",
+        "Bila terjadi kegagalan pelindungan data pribadi, pengelola memberi tahu secara tertulis paling lambat 3 x 24 jam sesuai UU PDP: kepada subjek data dan lembaga yang berwenang untuk data yang pemrosesannya ditentukan pengelola, dan kepada organisasi untuk isi pembukuannya, agar organisasi dapat memenuhi kewajibannya. Pemberitahuan memuat data yang terdampak, kapan dan bagaimana kejadiannya, serta langkah penanganan dan pemulihan.",
       ],
     },
     trialAccess,
