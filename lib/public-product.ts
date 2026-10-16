@@ -8,14 +8,12 @@ export const PUBLIC_BANK_COVERAGE = BANKS.map((bank) => ({
 }));
 export const PUBLIC_BANK_COUNT = PUBLIC_BANK_COVERAGE.length;
 
-export type PublicProductAsset = { file: string; width: number; height: number; bytes: number; sha256: string; description: string };
 export type PublicProductEvidence = {
   period: string;
   firm: { name: string };
   client: { name: string };
   reportEntity: { name: string; currency: string };
-  assets: PublicProductAsset[];
-  source: { amount: string; journalDebit: string; journalCredit: string; fileName: string; rowNumber: number; lines: { code: string; name: string; debit: string; credit: string }[] };
+  source: { date: string; description: string; amount: string; journalDebit: string; journalCredit: string; fileName: string; rowNumber: number; lines: { code: string; name: string; debit: string; credit: string }[] };
   trialBalance: { debit: string; credit: string };
   close: { lockEnabled: boolean; controls: { key: string; scope: string; title: string; status: string; detail: string }[] };
 };

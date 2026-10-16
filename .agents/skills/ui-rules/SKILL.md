@@ -45,6 +45,11 @@ description: Buku UI standard — Ramp-style look (warm grey canvas, near-black 
 Motion is information, not decoration: it says *you arrived*, *this changed* or *this is done*. Otherwise nothing moves.
 - **Approved pieces:** `.page-settle` (every page via `app/(app)/template.tsx`, the auth card), `CountUp` (stat tiles, counts),
   `ProgressFill`, `CheckDraw` (the done mark in `NextStep`), `DotGrid` (auth pages only). Reuse them; don't add a second way to do the same.
+- **Public site only** (`components/app/public-*`): `Reveal` (React Bits AnimatedContent + AnimatedList: settles in once on first scroll into
+  view, `data-stagger` children follow by `--i`), `CountUpOnView` (counts when scrolled into view, full Rupiah), `.trace-draw` (a source →
+  result line draws once). Content already on screen, no-JS, print and reduced motion always show the final state. Never inside the app.
+- **Public illustrations, not screenshots.** The public page draws the product (`components/app/public-illustrations.tsx`) from the verified
+  demo manifest (`public/product/capture-manifest.json`); a neutral bar stands in for any number the demo doesn't have. No app screenshots.
 - **Limits:** ≤ 450 ms, plays once, ease-out. Never on report/ledger tables, rows, inputs or anything the user is typing into; never loops.
 - `prefers-reduced-motion` → no motion at all (the CSS and `useArrival` handle it; new motion must too).
 - Hydrated server HTML never replays (`useArrival`): the value painted first is the value kept. Only client navigation animates.

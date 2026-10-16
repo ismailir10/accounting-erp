@@ -196,7 +196,8 @@ uses; organisations only see their status and their own monthly use. Everything 
 an organisation's *Riwayat*.
 
 **Public product site:** signed-out `/` explains the bank-row → journal → reports → close workflow for accounting firms and
-companies using saved, explicitly synthetic product screenshots. Members keep Beranda or their company's books; Buku admins
+companies with drawn illustrations of the product, built from verified, explicitly synthetic demo figures (no screenshots). Members
+keep Beranda or their company's books; Buku admins
 outside a live support session go to `/backoffice`. Protected routes still require the existing live member/session guards.
 The shared navigation links `/login`, `/daftar`, draft Terms at `/syarat` and draft Privacy at `/kebijakan-privasi`.
 Public pages read `BUKU_SUPPORT_EMAIL` at render time for a validated mailto; an unset/invalid value shows *Hubungi pengelola Buku*.
@@ -219,9 +220,10 @@ npx tsx scripts/capture-public-demo.ts
 Set `PW_CHROMIUM` to an existing Chromium executable when needed (this verification used `/usr/bin/chromium`). The capture command
 refuses hosted app/Auth/database targets, database URL query overrides, and a fixture that differs from generator truth. It uses
 the real demo login, verifies every selected entity's source row against the generated bank files, checks source/journal amounts
-and Neraca Saldo totals, and preserves open-month blockers. It neither reseeds nor writes books nor calls a model. Saved WebP
-views and `public/product/capture-manifest.json` pin KJA Demo & Rekan / Grup Ayam Nusantara / August 2026, the report entity,
-actual figures, control statuses and image dimensions. Rebuild after regeneration so the public page uses the new manifest.
+and Neraca Saldo totals, opens each view on desktop and phone, and preserves open-month blockers. It neither reseeds nor writes
+books nor calls a model, and saves no screenshots. `public/product/capture-manifest.json` pins KJA Demo & Rekan / Grup Ayam
+Nusantara / August 2026, the report entity, actual figures and control statuses; the public illustrations draw from it. Rebuild
+after regeneration so the public page uses the new manifest.
 
 **Trial requests** come from the public `/daftar` page (linked from the home and login pages as *Minta uji coba*); Supabase self-signup stays
 off. Each request waits in *Backoffice → Permintaan*: *Setujui* with an end date creates the organisation, its trial grant and the
