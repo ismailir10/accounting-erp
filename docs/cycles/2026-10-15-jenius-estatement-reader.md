@@ -95,9 +95,24 @@ a migration), a change to an accounting invariant (e.g. the repair rules of acco
   from structure metadata of real files).
 - Fixtures: `jeniusEstatementPdf` (both variants, several pages, notes, card lines in foreign currency, same-day fees, password) and two
   entries in the bank-layout set.
+- Review fixes: a period printed under its label wins over period text in rows; *Notes* is a column of its own (never money); in a
+  table with a Notes column a sign printed apart joins its figure and a figure run into the note is split off, and of two figures under
+  Amount the one nearest the column wins; the bank is named from the header only together with its sub-header, and then forces no
+  day/month order; "Date&Time" reads without spaces.
 - Private kit (not in Git): an independent facts reader for the layout, layout-aware checks and a check against the owner's targets; its
   own fictional monthly series rendered independently of Buku's fixture.
 
 ## Verification
+Fictional data only; real sources are judged privately on the owner's machine.
+- Released `main`: the new reader tests fail with today's refusal (*tidak dikenali*); the other-layout regression was shown to fail on
+  the unscoped amount assembly and pass once scoped.
+- Candidate: parser and import suites pass; the kit's own fictional series reads the same in Buku and in the independent facts reader,
+  every month; the kit self-test passes every scenario, each negative stopping on its intended check.
+- Independent reviews (separate worktrees, own fictional database; served model and effort read from each reviewer's transcript:
+  `claude-opus-5-5`, high): code review ACCEPT after two fix rounds; acceptance-kit review ACCEPT after two fix rounds.
+- Known limits, accepted in review: a page footer right under a page's last row is appended to that row's description (no money moves;
+  the layout's own second details line starts like a footer); a card line's figures printed as separate items would be refused, not
+  misread (the metadata shows one run); a dated line after *Ending Balance* would be read as a row and show as a continuity break.
+- Full attested gates: recorded with the candidate SHA once run.
 
 ## Ship Notes
