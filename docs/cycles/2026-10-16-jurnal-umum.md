@@ -46,19 +46,19 @@ the bank row (file, row) or the imported file row (`sheet!row`) next to every jo
 - **Buku accounts only.** The client-account view (*Akun klien*) keeps its own pages; its export is a follow-up if a firm asks.
 
 ## Acceptance criteria
-- [ ] *Jurnal Umum* lists every journal of the month in date order, each with its date, kind, memo, who posted it, its source (bank
+- [x] *Jurnal Umum* lists every journal of the month in date order, each with its date, kind, memo, who posted it, its source (bank
       account + file + row, or file + `sheet!row`) and its lines; the header shows the count and total debit = total credit.
-- [ ] *Tahun buku s.d. bulan ini* lists from the first month of the client's financial year.
-- [ ] The kind filter and the search narrow the list and the totals; a search by amount finds the journal holding a line of that
+- [x] *Tahun buku s.d. bulan ini* lists from the first month of the client's financial year.
+- [x] The kind filter and the search narrow the list and the totals; a search by amount finds the journal holding a line of that
       amount; an empty result says so and offers to clear the filter.
-- [ ] Every account on a line opens its Buku Besar for the same month and scope.
-- [ ] A mixed-currency group asks for one company instead of listing.
-- [ ] *Unduh Excel* on Jurnal Umum downloads the filtered journals with their lines and source; totals are formulas and balance.
-- [ ] *Unduh Excel* on Buku Besar downloads every account's ledger; on one account's page, that account. Each closing equals the Neraca
+- [x] Every account on a line opens its Buku Besar for the same month and scope.
+- [x] A mixed-currency group asks for one company instead of listing.
+- [x] *Unduh Excel* on Jurnal Umum downloads the filtered journals with their lines and source; totals are formulas and balance.
+- [x] *Unduh Excel* on Buku Besar downloads every account's ledger; on one account's page, that account. Each closing equals the Neraca
       Saldo balance of the same scope and date (test, including a year with prior-year profit).
-- [ ] *Unduh Excel* on Neraca Saldo downloads saldo awal / mutasi / saldo akhir, debit and credit, with total formulas; debit = credit.
-- [ ] The downloads leave the firm board's *Terkirim* untouched.
-- [ ] Works at 390 px without page scroll sideways.
+- [x] *Unduh Excel* on Neraca Saldo downloads saldo awal / mutasi / saldo akhir, debit and credit, with total formulas; debit = credit.
+- [x] The downloads leave the firm board's *Terkirim* untouched.
+- [x] Works at 390 px without page scroll sideways.
 
 ## Verify flows
 1. Accountant, demo client, a month with bank lines: open Jurnal Umum → the count and totals show and balance; open a bank journal's
@@ -99,14 +99,52 @@ None: no migration, no dependency, no auth or permission change (same member che
 on a report changes.
 
 ## Tasks
-- [ ] T1 `lib/reports/general-ledger.ts` (ledger for all or one account, month or YTD, fold) + `lib/reports/journal-register.ts`
+- [x] T1 `lib/reports/general-ledger.ts` (ledger for all or one account, month or YTD, fold) + `lib/reports/journal-register.ts`
       (filters, search, paging, totals) + DB tests.
-- [ ] T2 Excel builders (`lib/reports/ledger-workbook.ts`: Jurnal Umum, Buku Besar, Neraca Saldo) + export routes + unit/DB tests.
-- [ ] T3 Jurnal Umum page + nav entry + download buttons on Buku Besar and Neraca Saldo.
-- [ ] T4 verify-local: walk flows 1–4, screenshots, full gate.
+- [x] T2 Excel builders (`lib/reports/ledger-workbook.ts`: Jurnal Umum, Buku Besar, Neraca Saldo) + export routes + unit/DB tests.
+- [x] T3 Jurnal Umum page + nav entry + download buttons on Buku Besar and Neraca Saldo.
+- [x] T4 verify-local: walk flows 1–4, screenshots, full gate.
 
 ## Implementation
+- `lib/reports/entry-source.ts`: one line naming where a journal came from (bank file + row, file `sheet!row`, document, schedule
+  installment, the journal it reverses) and the Bahasa kind labels, shared with Buku Besar's drawer.
+- `lib/reports/general-ledger.ts`: `generalLedger` (all accounts or one; openings as the trial balance, prior years' profit folded into
+  Saldo Laba), `rangeBounds` (month / financial year to date).
+- `lib/reports/journal-register.ts`: `journalRegister` (kind filter, search by memo, bank text, account code or name, exact amount;
+  totals over the whole filter; 50 per page).
+- `lib/reports/ledger-workbook.ts`: the three Excel builders; `lib/reports/export-context.ts` `ledgerExportContext` (range, IDR check,
+  mixed scopes). Routes: `journals/export`, `ledger/export` (`?account=`), `trial-balance/export`. No `REPORT_EXPORT` event.
+- Page `journals/page.tsx` + `JournalFilters`; `LedgerDownloads` on Buku Besar (index and account) and Neraca Saldo; nav *Jurnal Umum*
+  after Buku Besar.
+- Decision while building: the Buku Besar and Neraca Saldo downloads hide in the *Akun klien* view (they export the Buku chart).
+- Decision while building: a single-currency non-Rupiah scope is refused with a message rather than written as Rupiah (the workbook
+  header says Rupiah). Note for later: the statement workbook (Laporan Keuangan → Excel) writes minor units with the same Rupiah header
+  for a non-IDR entity; not changed here.
 
 ## Verification
+- **Tests:** `tests/db/general-ledger.test.ts` (7: closing = trial balance incl. prior-year fold, February financial year, bank source,
+  register paging / totals / search / kind / reversal, amount parsing), `tests/unit/ledger-workbook.test.ts` (4: rows, formulas, totals),
+  the three routes added to `tests/db/session-revocation.test.ts` (200 for a member, 404 once access is gone), `tests/unit/nav.test.ts`,
+  `e2e/jurnal-umum.spec.ts`.
+- **Task gate:** `npm run lint` exit 0, `npm run typecheck` exit 0, `npm test` 281 files / 2,624 tests passed (720 s).
+- **Full gate:** `npm run build` exit 0; `npm run demo:reset`; `npm run verify:books` → "ALL PASS — 1765 pemeriksaan saldo cocok dengan
+  ground truth"; `npm run test:e2e` 100 passed, 4 failed on the local environment only (`APP_URL` on port 3000 instead of 3200 for
+  `auth-links` and `trial-signup`; no `SETTINGS_SECRET` for the PDF-password specs `new-client-from-files` and `unggah-inbox`). With the
+  environment set as the profile says, those 4 re-ran and passed.
+- **Walk (local, demo admin, Grup Ayam Nusantara, Agustus 2026):**
+  - Jurnal Umum: "47 jurnal · debit Rp 4.131.114.676 · kredit Rp 4.131.114.676 · seimbang"; the first account opened
+    `/ledger/5100?period=2026-08`.
+  - Search `gaji` → 2 journals; search `5.000.000` → 2 journals; *Saldo awal* in August → "Tidak ada jurnal yang cocok dengan filter
+    ini." and *Hapus filter* back to 47; *Mutasi bank* via the select; year to date → 292 bank journals, "1 Januari 2026 – 31 Agustus
+    2026", 6 pages.
+  - Downloads (month and year to date): Neraca Saldo totals debit = credit in every pair of columns; Buku Besar 32 accounts (month) and
+    34 (year to date), every closing equal to the Neraca Saldo row; Jurnal Umum "Jumlah (47 jurnal)" 4.131.114.676 both sides, and 299
+    journals for the year to date matching the Neraca Saldo movement total 28.059.287.783. One account (`account=1101`) → its own
+    file. Unknown client → 404.
+  - 390 px: scroll width 390 = viewport.
+
+Verified locally — 380812c
 
 ## Ship Notes
+- **Deck:** `kantor.html` slide 12 (*Satu buku besar. Paket untuk setiap pembaca.*): the auditor bullet now names Jurnal Umum, Buku
+  Besar and Neraca Saldo; `buku-kantor-akuntan.pdf` regenerated; checked at 1440×900 and 375×812, no overflow.
