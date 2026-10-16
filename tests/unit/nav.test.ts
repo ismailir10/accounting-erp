@@ -14,6 +14,7 @@ describe("sectionOf", () => {
   it("picks the most specific page: /tax/masa is Pajak Masa, /tax is Pajak Badan", () => {
     expect(sectionOf("/tax/masa")?.section.label).toBe("Pajak Masa");
     expect(sectionOf("/tax")?.section.label).toBe("Pajak Badan");
+    expect(sectionOf("/analysis")).toMatchObject({ section: { label: "Analisis keuangan" }, deeper: false });
   });
   it("does not match on a prefix that is not a path segment", () => {
     expect(sectionOf("/ledgerx")).toBeNull();
@@ -41,7 +42,6 @@ describe("switchTarget", () => {
   it("keeps tax/masa and journals/new as pages of their own", () => {
     expect(url(switchTarget("/clients/a1/tax/masa", B).href).pathname).toBe("/clients/b1/tax/masa");
     expect(url(switchTarget("/clients/a1/journals/new", B).href).pathname).toBe("/clients/b1/journals/new");
-    expect(sectionOf("/analysis")).toMatchObject({ section: { label: "Analisis keuangan" }, deeper: false });
   });
   it("falls back to the section from a page under it, and says so", () => {
     const t = switchTarget("/clients/a1/ledger/akun/xyz", B);

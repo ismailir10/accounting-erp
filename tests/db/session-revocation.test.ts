@@ -21,19 +21,19 @@ import { askWorkspaceAction } from "@/app/workspace-actions";
 import IntakePage from "@/app/(app)/documents/[intakeId]/page";
 import SourcePage from "@/app/(app)/documents/source/[versionId]/page";
 import { GET as statements } from "@/app/(app)/clients/[id]/reports/export/route";
+import { GET as analysis } from "@/app/(app)/clients/[id]/analysis/export/route";
 import { GET as pdf } from "@/app/(app)/clients/[id]/reports/export/pdf/route";
 import { GET as management } from "@/app/(app)/clients/[id]/reports/export/management/route";
 import { GET as credit } from "@/app/(app)/clients/[id]/reports/export/credit/route";
 import { GET as tax } from "@/app/(app)/clients/[id]/tax/export/route";
 import { GET as masa } from "@/app/(app)/clients/[id]/tax/masa/export/route";
 import { GET as review } from "@/app/(app)/clients/[id]/review/export/route";
-import { GET as analysis } from "@/app/(app)/clients/[id]/analysis/export/route";
 
 const downloads = [
+  ["analysis/export", analysis],
   ["reports/export", statements], ["reports/export/pdf", pdf],
   ["reports/export/management", management], ["reports/export/credit", credit],
   ["tax/export", tax], ["tax/masa/export", masa], ["review/export", review],
-  ["analysis/export", analysis],
 ] as const;
 
 async function openSession(role: "ADMIN" | "AKUNTAN" = "AKUNTAN") {
