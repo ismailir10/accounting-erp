@@ -72,22 +72,28 @@ function lineRows(items: FsItem[][], prefix: string): TrendRow[] {
   ]);
 }
 
-const withTotal = (r: TrendRow): TrendRow => ({ ...r, total: r.values.reduce((s, v) => s + v, 0n) });
 
 export type MonthlyIncome = { months: MonthCol[]; rows: TrendRow[]; statements: IncomeStatement[] };
 
-/** Laba Rugi per month of the financial year to date (from the books' first month), with a total column = the year to date. Expenses and costs positive; totals signed. */
+/** Laba Rugi per month of the financial year to date (from the books' first month), with a total column = the year-to-date statement. Expenses and costs positive; totals signed. */
 export async function monthlyIncome(db: Db, scope: Scope, year: number, month: number): Promise<MonthlyIncome> {
   const months = await activeMonths(db, scope, year, month);
-  const statements = await Promise.all(months.map((m) => incomeStatement(db, scope, m.start, m.end)));
+  const [statements, ytd] = await Promise.all([
+    Promise.all(months.map((m) => incomeStatement(db, scope, m.start, m.end))),
+    // The total column is the year-to-date statement itself, not a sum of the months: a mixed-currency group translates each month at
+    // that month's average rate but the year to date at the year's, exactly as Laporan Keuangan does.
+    incomeStatement(db, scope, months[0].start, months.at(-1)!.end),
+  ]);
+  const all = [...statements, ytd];
+  const split = (r: TrendRow): TrendRow => ({ ...r, values: r.values.slice(0, -1), total: r.values.at(-1)! });
   const rows: TrendRow[] = PL_LAYOUT.flatMap((g, gi) =>
     "pick" in g
       ? (() => {
-          const body = lineRows(statements.map(g.pick), `pl${gi}`);
+          const body = lineRows(all.map(g.pick), `pl${gi}`).map(split);
           return body.length ? [{ key: `pl${gi}`, label: g.label, kind: "heading" as const, values: [] }, ...body] : [];
         })()
-      : [{ key: g.total, label: g.label, kind: "total" as const, values: statements.map(g.of) }],
-  ).map((r) => (r.kind === "heading" ? r : withTotal(r)));
+      : [split({ key: g.total, label: g.label, kind: "total" as const, values: all.map(g.of) })],
+  );
   return { months, rows, statements };
 }
 

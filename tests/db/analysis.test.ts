@@ -4,6 +4,7 @@ import { postJournal } from "@/lib/ledger/post";
 import { balanceSheet, incomeStatement } from "@/lib/reports/ledger";
 import { activeMonths, days, fiscalMonths, monthlyBalance, monthlyIncome, percent, ratios, times } from "@/lib/reports/analysis";
 import { dateOnly } from "@/lib/format";
+import { upsertRate } from "@/lib/fx/rates";
 
 const J = 1_000_000n;
 
@@ -33,6 +34,8 @@ describe("analysis: month by month", () => {
     expect(net.values).toEqual([0n, 40n * J, 35n * J]);
     const ytd = await incomeStatement(db, scope, dateOnly(2026, 1, 1), dateOnly(2026, 3, 31));
     expect(net.total).toBe(ytd.totals.netProfit);
+    // The months translated one by one add up to something else: the case the total column must not use.
+    expect(net.values.reduce((t, v) => t + v, 0n)).not.toBe(net.total);
     const sales = pl.rows.find((r) => r.code === "4100")!;
     expect([sales.label, sales.values, sales.total]).toEqual(["Penjualan", [0n, 100n * J, 50n * J], 150n * J]);
     expect(pl.rows.filter((r) => r.kind === "heading").map((r) => r.label)).toEqual(["Pendapatan usaha", "Beban pokok pendapatan", "Beban usaha"]);
@@ -84,5 +87,34 @@ describe("analysis: month by month", () => {
     expect([percent(1n, 3n), percent(-1n, 8n), percent(1n, -1n)]).toEqual(["33,3 %", "−12,5 %", null]);
     expect([days(10n, 31n, 31), days(1n, 0n, 30)]).toEqual(["10 hari", null]);
     expect(times(10n ** 30n, 3n)).toBe(`${(10n ** 30n) / 3n},33x`);
+  });
+});
+
+describe("analysis: a group in two currencies", () => {
+  beforeEach(resetDb);
+
+  it("the total column is the translated year to date, as Laporan Keuangan, not the sum of translated months", async () => {
+    const g = await makeGroup();
+    const hc = g.owner.entity;
+    await db.entity.update({ where: { id: hc.id }, data: { functionalCurrency: "SGD", shortName: "HoldCo" } });
+    const acc = async (code: string) => (await db.account.findUniqueOrThrow({ where: { clientId_code: { clientId: g.client.id, code } } })).id;
+    const [bank, modal, beban] = [await acc("1120"), await acc("3100"), await acc("6170")];
+    await db.$transaction(async (tx) => {
+      await postJournal(tx, { entityId: hc.id, date: dateOnly(2026, 1, 15), kind: "ADJUSTMENT", memo: "modal", lines: [{ accountId: bank, debit: 50_000n }, { accountId: modal, credit: 50_000n }] });
+      await postJournal(tx, { entityId: hc.id, date: dateOnly(2026, 2, 10), kind: "ADJUSTMENT", memo: "beban", lines: [{ accountId: beban, debit: 1_000n }, { accountId: bank, credit: 1_000n }] });
+      await postJournal(tx, { entityId: hc.id, date: dateOnly(2026, 3, 10), kind: "ADJUSTMENT", memo: "beban", lines: [{ accountId: beban, debit: 1_000n }, { accountId: bank, credit: 1_000n }] });
+    });
+    for (const [m, spot, avg] of [[1, "12000", "12000"], [2, "12100", "12100"], [3, "12500", "12300"]] as const) {
+      const end = new Date(Date.UTC(2026, m, 0));
+      await upsertRate(db, g.firm.id, { currency: "SGD", quote: "IDR", date: end, kind: "SPOT", rate: spot });
+      await upsertRate(db, g.firm.id, { currency: "SGD", quote: "IDR", date: end, kind: "AVERAGE", rate: avg });
+    }
+    const scope = { clientId: g.client.id, entityIds: [g.pt.entity.id, hc.id] };
+    const pl = await monthlyIncome(db, scope, 2026, 3);
+    const net = pl.rows.find((r) => r.key === "net")!;
+    const ytd = await incomeStatement(db, scope, dateOnly(2026, 1, 1), dateOnly(2026, 3, 31));
+    expect(net.total).toBe(ytd.totals.netProfit);
+    // The months translated one by one add up to something else: the case the total column must not use.
+    expect(net.values.reduce((t, v) => t + v, 0n)).not.toBe(net.total);
   });
 });

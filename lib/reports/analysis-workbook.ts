@@ -26,8 +26,10 @@ export async function analysisWorkbook(meta: WorkbookMeta, year: number, month: 
       }
       const row = ws.addRow([`${r.kind === "account" ? "    " : ""}${r.code ? `${r.code} ` : ""}${r.label}`, ...r.values.map(n)]);
       if (total && r.total !== undefined) {
+        // A SUM of the months where it is one (single currency); a translated group's total is its own year-to-date figure.
         const last = col(months.length);
-        row.getCell(months.length + 2).value = { formula: `SUM(B${row.number}:${last}${row.number})`, result: Number(r.total) };
+        const sums = r.values.reduce((t, v) => t + v, 0n) === r.total;
+        row.getCell(months.length + 2).value = sums ? { formula: `SUM(B${row.number}:${last}${row.number})`, result: Number(r.total) } : n(r.total);
       }
       if (r.kind !== "account") row.font = { bold: r.kind === "total" };
       if (r.kind === "total") row.eachCell((c) => (c.border = { top: { style: "thin" } }));
