@@ -39,16 +39,16 @@ opening difference, tax and FX accounts) can't be moved or removed, and every ch
 - **Riwayat**: one `ACCOUNT` event per change with before / after.
 
 ## Acceptance criteria
-- [ ] *Bagan akun* lists every account grouped by report line with code, name, normal side, balance and line count.
-- [ ] *Tambah akun* with a name and a report line creates the account with the proposed code; it then appears in the Jurnal
+- [x] *Bagan akun* lists every account grouped by report line with code, name, normal side, balance and line count.
+- [x] *Tambah akun* with a name and a report line creates the account with the proposed code; it then appears in the Jurnal
       Penyesuaian account picker and in Review's *Ubah akun*.
-- [ ] A typed code that is taken, reserved, or not 3–10 digits is refused with a message saying why.
-- [ ] *Ubah* renames an account; Buku Besar, Neraca Saldo and the statements show the new name.
-- [ ] Moving an account to another report line of the same type moves it on the Laba Rugi / Neraca; the totals by type don't change.
+- [x] A typed code that is taken, reserved, or not 3–10 digits is refused with a message saying why.
+- [x] *Ubah* renames an account; Buku Besar, Neraca Saldo and the statements show the new name.
+- [x] Moving an account to another report line of the same type moves it on the Laba Rugi / Neraca; the totals by type don't change.
       Report lines of another type or normal side are not offered (and refused if posted).
-- [ ] *Hapus* removes an unused account; for a used one it is refused and the message names what uses it.
-- [ ] A bank account or a system account cannot be moved or removed; a viewer sees the page without the buttons.
-- [ ] Every change appears in Riwayat perubahan.
+- [x] *Hapus* removes an unused account; for a used one it is refused and the message names what uses it.
+- [x] A bank account or a system account cannot be moved or removed; a viewer sees the page without the buttons.
+- [x] Every change appears in Riwayat perubahan.
 
 ## Verify flows
 1. Accountant, demo client: Bagan akun → Tambah akun "Beban Sewa Kendaraan" under Beban umum & administrasi → code 6191 proposed →
@@ -80,12 +80,42 @@ opening difference, tax and FX accounts) can't be moved or removed, and every ch
 None: no migration (the audit kind is a string), no dependency, no AI call. Permission: uses the existing books.write capability.
 
 ## Tasks
-- [ ] T1 `lib/coa/manage.ts` (create, update, remove, usage) + DB tests.
-- [ ] T2 Server actions + Bagan akun page + dialogs + nav + Riwayat label.
-- [ ] T3 verify-local: walk flows 1–4, screenshots, full gate.
+- [x] T1 `lib/coa/manage.ts` (create, update, remove, usage) + DB tests.
+- [x] T2 Server actions + Bagan akun page + dialogs + nav + Riwayat label.
+- [x] T3 verify-local: walk flows 1–4, screenshots, full gate.
 
 ## Implementation
+- `lib/coa/manage.ts`: `createAccount`, `updateAccount`, `removeAccount`, `accountUsage`, `protection`, `moveTargets`,
+  `proposedCode`; `AccountEditError`. Reuses `allocateAccountCode` / `newAccountData` / `isReservedCode` from the mapping module
+  (now exported) so *Buat akun baru* and *Tambah akun* give the same codes.
+- Protected: bank accounts, flagged accounts (intercompany, clearing, suspense, retained, tax-tagged) and every code the ledger posts to
+  by number (`ACCOUNT_CODES` and the withholding codes) — `templateAccounts` refuses a renamed one, so they can't be renamed either.
+- Removal runs under the account's row lock and counts journal lines, rekening, mapped client accounts, schedules, registers,
+  documents, tax records, rules (the client's and the firm's), memory, bank lines (classified or suggested), splits, agings and open
+  proposals.
+- Actions `createAccountAction` / `updateAccountAction` / `removeAccountAction` (books.write); page `accounts/page.tsx` +
+  `ChartOfAccounts`; nav *Bagan akun* first under Pengaturan klien; audit kind `ACCOUNT` ("Bagan akun").
+- Decision while building: *Hapus* shows only for an account with no journal line (cheap to know for every row); the server still
+  checks every other reference and names it.
 
 ## Verification
+- **Tests:** `tests/db/chart-of-accounts.test.ts` (5: create with proposed / typed codes, chart version, Riwayat; refusals; rename +
+  move with the Laba Rugi moving and net profit unchanged; protection; removal and usage), `tests/unit/nav.test.ts`,
+  `tests/unit/action-guards.test.ts` (the new actions reach `requireCapability`), `e2e/bagan-akun.spec.ts`.
+- **Task gate:** lint exit 0, typecheck exit 0, `npm test` 280 files / 2,618 tests passed.
+- **Full gate:** `npm run build` exit 0; `npm run demo:reset`; `npm run verify:books` → "ALL PASS — 1765 pemeriksaan saldo cocok dengan
+  ground truth"; `npm run test:e2e` → 104 passed (9.3 min), including `bagan-akun.spec.ts`.
+- **Walk (local, demo admin, Grup Ayam Nusantara, Agustus 2026):**
+  - 75 accounts by section; no *Ubah* on 1999 or 1101 (locked labels "Akun sistem" / "Akun bank").
+  - *Tambah akun* "Beban Sewa Kendaraan" under Beban umum & administrasi → code 6191 proposed and saved; offered in Jurnal
+    Penyesuaian's picker. A typed 1999 is refused.
+  - 4100 renamed "Penjualan Ayam Hidup" → shown on Laporan Keuangan. 6190 moved to Beban penjualan → net profit before and after
+    "156.543.009 · 148.231.324 · 1.208.350.226".
+  - 6191 removed; 6100's dialog says "Dipakai 12 baris jurnal, jadi tidak bisa dihapus."
+  - Riwayat (Bagan akun) lists the four changes with before → after.
+  - 390 px: scroll width 390 = viewport.
+
+Verified locally — cb12dfb
 
 ## Ship Notes
+- **Deck:** no deck change — the decks don't list chart-of-accounts editing; this is parity with the incumbents, not a sales claim.
