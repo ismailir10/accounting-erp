@@ -28,12 +28,12 @@ a journal whose lines don't say what they are.
   keep covering depreciation, amortisation and single-line accruals.
 
 ## Acceptance criteria
-- [ ] A line note typed in the form is stored and shows in Buku Besar's journal drawer.
-- [ ] With *Balik otomatis* ticked, saving a 31 July accrual also posts its mirror dated 1 August; *Terakhir dicatat* says "dibalik 1
+- [x] A line note typed in the form is stored and shows in Buku Besar's journal drawer.
+- [x] With *Balik otomatis* ticked, saving a 31 July accrual also posts its mirror dated 1 August; *Terakhir dicatat* says "dibalik 1
       Agu 2026"; *Balik jurnal* on it then says it is already reversed.
-- [ ] A 31 December accrual reverses on 1 January of the next year.
-- [ ] A closed next month: the form warns and disables saving; the server refuses both and posts nothing.
-- [ ] *Salin* fills the form from the chosen journal (company, memo, lines, notes; the reversal tick for a reversed accrual); the date
+- [x] A 31 December accrual reverses on 1 January of the next year.
+- [x] A closed next month: the form warns and disables saving; the server refuses both and posts nothing.
+- [x] *Salin* fills the form from the chosen journal (company, memo, lines, notes; the reversal tick for a reversed accrual); the date
       stays the selected month's.
 
 ## Verify flows
@@ -55,12 +55,38 @@ None: no migration (the line memo column exists), no dependency, no AI call. The
 entry.
 
 ## Tasks
-- [ ] T1 `postAdjustment` line notes + `reverseNextMonth`; reversal helpers shared with *Balik jurnal*; DB tests.
-- [ ] T2 Form (line notes, checkbox, warning), action, *Salin* on the page, notes in the ledger drawer; e2e spec.
-- [ ] T3 verify-local: walk flows 1–3, screenshots, full gate.
+- [x] T1 `postAdjustment` line notes + `reverseNextMonth`; reversal helpers shared with *Balik jurnal*; DB tests.
+- [x] T2 Form (line notes, checkbox, warning), action, *Salin* on the page, notes in the ledger drawer; e2e spec.
+- [x] T3 verify-local: walk flows 1–3, screenshots, full gate.
 
 ## Implementation
+- `lib/ledger/adjustment.ts`: `postAdjustment` takes a note per line and `reverseNextMonth`; `firstOfNextMonth`.
+- `lib/ledger/reverse.ts`: `mirrorLines` and `reversalMemo`, shared by *Balik jurnal* and the automatic reversal so both are identical.
+- `components/app/journal-form.tsx`: *Catatan baris* under each account, the *Balik otomatis* checkbox with a closed-month warning,
+  `copy` (`JournalCopy`) to start from another journal. `app/actions.ts` `adjustmentAction` passes both through.
+- `journals/new/page.tsx`: `?salin=<id>` (an adjustment of this client, no foreign-currency line), *Salin* and "dibalik …" on
+  *Terakhir dicatat*. `lib/reports/account-ledger.ts` + `ledger-table.tsx`: line notes in the drawer.
+- Decision while building: *Salin* ticks *Balik otomatis* when the source was reversed exactly on the 1st of its next month (a monthly
+  accrual repeats with its reversal).
 
 ## Verification
+- **Tests:** `tests/db/reverse-entry.test.ts` (+2: notes and the reversal across the year end; a closed next month refuses both and
+  posts nothing), `e2e/jurnal-penyesuaian.spec.ts`.
+- **Task gate:** lint exit 0, typecheck exit 0, `npm test` 279 files / 2,615 tests passed.
+- **Full gate:** `npm run build` exit 0; `npm run verify:books` → "ALL PASS — 1765 pemeriksaan saldo cocok dengan ground truth";
+  `npm run test:e2e` → 103 passed, 1 failed: `tenant-isolation` timed out clicking a checkbox in the team dialog while the machine
+  ran two other suites (14.1 min run). Re-run alone: 1 passed (12.0 s). Not related to journals.
+- **Walk (local, demo admin, Grup Ayam Nusantara; August is closed in the demo, so September):**
+  - 30 Sep accrual 6170 / 2150 Rp 12.500.000, line note "Fee KAP tahap 1", *Balik otomatis pada 1 Oktober 2026* → toast "…dibalik
+    pada 1 Oktober 2026"; *Terakhir dicatat* lists "Pembalik: Akrual jasa audit September (30 Sep 2026) · 1 Okt 2026".
+  - Buku Besar 2150, October: the reversal Rp 12.500.000 debit; its drawer shows "Fee KAP tahap 1".
+  - October → *Salin* → "Disalin dari “Akrual jasa audit September” (30 Sep 2026)…"; memo, 12.500.000, the note, date 2026-10-31,
+    *Balik otomatis* ticked.
+  - PT Jasa Kreatif Digital (March–August closed), 28 Feb with *Balik otomatis* → "Maret 2026 sudah ditutup, jadi jurnal pembaliknya
+    ditolak…", *Simpan* disabled.
+  - 390 px: scroll width 390 = viewport.
+
+Verified locally — 0e6308c
 
 ## Ship Notes
+- **Deck:** no deck change. The decks don't describe the manual journal form; this is parity with the incumbents.
