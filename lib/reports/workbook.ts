@@ -28,10 +28,9 @@ export function excelAmount(v: bigint, currency = "IDR"): number | string {
   const abs = v < 0n ? -v : v;
   const whole = abs / base;
   const text = `${v < 0n ? "-" : ""}${whole}.${String(abs % base).padStart(e, "0")}`;
-  return whole <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(text) : text;
+  // The double must hold every cent: the minor-unit count, not only the whole part, has to be a safe integer.
+  return abs <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(text) : text;
 }
-
-
 
 /** `meta.draft`: why the statements are not final yet (lib/reports/status.ts); printed in red under every sheet's title. Absent = final. */
 export type WorkbookMeta = { firm: string; title: string; draft?: string; /** The amounts' currency (default Rupiah); a sheet may name its own. */ currency?: string };

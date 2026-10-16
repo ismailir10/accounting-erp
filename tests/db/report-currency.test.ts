@@ -72,6 +72,8 @@ describe("reports in the company's own currency", () => {
 
   it("converts exactly, signed, and keeps Rupiah as it was", () => {
     expect([excelAmount(123_456n, "SGD"), excelAmount(-5n, "SGD"), excelAmount(1_234n, "IDR"), excelAmount(-1_234n), excelAmount(1_000n, "JPY")]).toEqual([1234.56, -0.05, 1234, -1234, 1000]);
+    // 90.071.992.547.409,93: the whole part fits a double but the cents don't, so it stays exact text.
+    expect([excelAmount(9_007_199_254_740_993n, "SGD"), excelAmount(9_007_199_254_740_991n, "SGD")]).toEqual(["90071992547409.93", 90071992547409.91]);
     expect([toUnit(1_234_567n, "RIBUAN"), toUnit(1_234_567n, "RIBUAN", 2), toUnit(-150_000n, "RIBUAN", 2), toUnit(77n, "RUPIAH", 2)]).toEqual([1_235n, 1_200n, -200n, 77n]);
   });
 });
