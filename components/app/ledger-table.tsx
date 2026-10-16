@@ -16,6 +16,7 @@ import { SimpleSelect } from "@/components/app/simple-select";
 import { formatMoney } from "@/lib/money";
 import { RECEIPT_KINDS, WITHHOLDING_KINDS, WITHHOLDING_LABEL } from "@/lib/tax/withholding";
 import type { WithholdingKind } from "@/lib/generated/prisma/enums";
+import { ENTRY_KIND_LABEL } from "@/lib/reports/entry-source";
 
 export type LedgerRow = {
   id: string;
@@ -36,7 +37,7 @@ export type LedgerRow = {
   fileSource?: null | { fileName: string; entryRef: string; lineRef: string | null; sourceAccount: string | null; lineMemo: string | null; fx: string | null };
 };
 
-const KIND: Record<string, string> = { OPENING: "Saldo awal", BANK: "Mutasi bank", RECLASS: "Reklasifikasi", ADJUSTMENT: "Penyesuaian", IMPORTED: "Impor buku besar", INVOICE: "Faktur" };
+const KIND: Record<string, string> = ENTRY_KIND_LABEL;
 
 /** Every GL line opens its source: the full journal and — for bank lines — the original statement row, for imports the file row. */
 export function LedgerTable({ rows, opening, currency = "IDR", accounts }: { rows: LedgerRow[]; opening: string; currency?: string; accounts?: AccountOption[] }) {
