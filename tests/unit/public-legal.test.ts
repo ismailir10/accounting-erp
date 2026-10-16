@@ -120,7 +120,8 @@ describe("public Privacy recipients, cookies and breach notice", () => {
     const section = (id: string) => dom.getElementById(id)?.parentElement?.textContent;
     expect(section("penerima-data")).toMatch(/hosting aplikasi dan basis data.*layanan login.*penyedia AI bila fitur AI diaktifkan/);
     expect(section("penerima-data")).toMatch(/tidak dijual dan tidak dibagikan untuk iklan/);
-    expect(section("cookie")).toMatch(/cookie yang diperlukan untuk login.*sesi dukungan.*penyimpanan peramban/);
+    expect(section("cookie")).toMatch(/cookie yang diperlukan untuk login.*sesi dukungan.*60 menit.*Google Drive, berlaku 10 menit/);
+    expect(section("cookie")).toMatch(/penyimpanan peramban.*klien yang terakhir dibuka.*halaman Review yang belum disimpan.*terhapus saat disimpan atau saat tab ditutup/);
     expect(section("cookie")).toMatch(/tidak memakai cookie analitik, cookie iklan, atau pelacak pihak ketiga/);
     expect(section("keamanan")).toMatch(/kunci AI dan kata sandi PDF.*dienkripsi/);
     expect(section("keamanan")).toMatch(/3 x 24 jam sesuai UU PDP.*kepada organisasi untuk isi pembukuannya/);

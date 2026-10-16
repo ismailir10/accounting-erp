@@ -22,7 +22,7 @@ export function LegalPage({ document }: { document: PublicLegalDocument }) {
         <nav aria-label="Isi halaman" className="lg:sticky lg:top-8 lg:self-start">
           <p className="eyebrow text-muted-foreground">Isi halaman</p>
           <ol className="mt-3 space-y-2 border-l pl-4 text-sm">
-            {contents.map((item) => <li key={item.id}><a href={`#${item.id}`} className="text-muted-foreground hover:text-foreground focus-visible:text-foreground">{item.title}</a></li>)}
+            {contents.map((item) => <li key={item.id}><a href={`#${item.id}`} className="drill">{item.title}</a></li>)}
           </ol>
         </nav>
         <div className="min-w-0 space-y-9">

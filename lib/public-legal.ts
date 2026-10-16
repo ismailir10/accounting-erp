@@ -188,7 +188,8 @@ export const PUBLIC_PRIVACY: PublicLegalDocument = {
       id: "cookie",
       title: "Cookie dan penyimpanan di peramban",
       paragraphs: [
-        "Buku memakai cookie yang diperlukan untuk login dan menjaga sesi, serta cookie penanda sesi dukungan hanya baca bagi petugas Buku. Beberapa halaman menyimpan preferensi tampilan, seperti klien terakhir yang dibuka, di penyimpanan peramban perangkat Anda.",
+        "Buku memakai cookie yang diperlukan untuk login dan menjaga sesi; cookie penanda sesi dukungan hanya baca bagi petugas Buku, berlaku sampai 60 menit; dan cookie sementara saat admin menghubungkan Google Drive, berlaku 10 menit untuk memastikan persetujuan Google kembali ke peramban yang sama.",
+        "Di penyimpanan peramban perangkat Anda, Buku menyimpan daftar klien yang terakhir dibuka, serta pilihan akun dan pajak di halaman Review yang belum disimpan (beserta penanda baris banknya), agar tidak hilang saat halaman dimuat ulang. Pilihan yang belum disimpan terhapus saat disimpan atau saat tab ditutup.",
         "Buku tidak memakai cookie analitik, cookie iklan, atau pelacak pihak ketiga. Menghapus cookie akan mengeluarkan Anda dari akun.",
       ],
     },
