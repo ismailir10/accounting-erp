@@ -3,6 +3,7 @@ import { recordEvent } from "@/lib/audit";
 import { ACCOUNT_CODES, FS_LINES, type FsLine } from "@/lib/coa/template";
 import { allocateAccountCode, isReservedCode, NEW_ACCOUNT_FS_LINES, newAccountData } from "@/lib/ledger-import/mapping";
 import { withholdingAccountCode } from "@/lib/tax/withholding";
+import { GUESS_CODES } from "@/lib/classify/fallback";
 import type { Account } from "@/lib/generated/prisma/client";
 
 /**
@@ -23,6 +24,12 @@ export function protection(a: Pick<Account, "code" | "isBank" | "isIntercompany"
   if (a.isIntercompany || a.isClearing || a.isSuspense || a.isRetained || a.taxTag || SYSTEM_CODES.has(a.code)) return "Akun sistem: dipakai Buku lewat kodenya, jadi tidak bisa diubah atau dihapus.";
   return null;
 }
+
+/** Accounts the classifier's simple guess files to (lib/classify/fallback.ts): renamable and movable, never removable — a later import would
+ *  otherwise suggest a code the chart no longer has. */
+const GUESS = new Set<string>(Object.values(GUESS_CODES));
+export const removalBlock = (a: Pick<Account, "code">): string | null =>
+  GUESS.has(a.code) ? "Akun ini dipakai Buku sebagai tebakan bawaan untuk mutasi tanpa aturan, jadi tidak bisa dihapus. Namanya boleh diubah." : null;
 
 /** Report lines an account can be created under or moved to (the ranges *Buat akun baru* uses). */
 export const ACCOUNT_FS_LINES = NEW_ACCOUNT_FS_LINES;
@@ -140,7 +147,7 @@ export async function removeAccount(db: Db, input: { clientId: string; accountId
   await db.$transaction(async (tx) => {
     const a = await tx.account.findFirst({ where: { id: input.accountId, clientId: input.clientId } });
     if (!a) throw new AccountEditError("Akun tidak ditemukan.");
-    const blocked = protection(a);
+    const blocked = protection(a) ?? removalBlock(a);
     if (blocked) throw new AccountEditError(blocked);
     // Under the account's row lock: a posting that commits first is counted, one that starts after waits for the delete and fails on its key.
     await tx.$queryRaw`SELECT id FROM "Account" WHERE id = ${a.id} FOR UPDATE`;

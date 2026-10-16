@@ -28,6 +28,8 @@ export type AccountRow = {
   href: string;
   /** Why it can't be changed here (bank, system), or null. */
   locked: string | null;
+  /** Why it can't be removed though it can be edited (a simple-guess account), or null. */
+  keep: string | null;
   /** Report lines it may move to (same type and normal side). */
   targets: Option[];
 };
@@ -226,7 +228,9 @@ function EditAccount({ clientId, account, hasLocked, onClose }: { clientId: stri
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
-          {account.lines === 0 ? (
+          {account.keep ? (
+            <span className="max-w-xs text-xs text-muted-foreground">{account.keep}</span>
+          ) : account.lines === 0 ? (
             <Button variant="ghost" className="text-fail" onClick={remove} disabled={busy}>Hapus akun</Button>
           ) : (
             <span className="text-xs text-muted-foreground">Dipakai {account.lines.toLocaleString("id-ID")} baris jurnal, jadi tidak bisa dihapus.</span>

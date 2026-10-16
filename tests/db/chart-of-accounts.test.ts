@@ -79,6 +79,9 @@ describe("chart of accounts (Bagan akun)", () => {
     await db.$transaction((tx) => postJournal(tx, { entityId: g.pt.entity.id, date: dateOnly(2026, 9, 5), kind: "ADJUSTMENT", memo: "uji", lines: [{ accountId: feed.id, debit: 1_000n }, { accountId: cash.id, credit: 1_000n }] }));
     await expect(removeAccount(db, { clientId: g.client.id, accountId: feed.id })).rejects.toThrow("Akun 5100 Pembelian Bahan & Barang Dagang masih dipakai: 1 baris jurnal, 1 aturan klasifikasi.");
 
+    // A simple-guess account stays even when unused.
+    await expect(removeAccount(db, { clientId: g.client.id, accountId: (await account(g.client.id, "4910")).id })).rejects.toThrow("tebakan bawaan");
+
     const other = await makeGroup();
     const foreign = await account(other.client.id, "6190");
     await expect(removeAccount(db, { clientId: g.client.id, accountId: foreign.id })).rejects.toThrow("Akun tidak ditemukan.");
