@@ -32,6 +32,7 @@ export function clientStages(modules: string[]): NavStage[] {
       items: [
         { href: "/review", label: "Review transaksi" },
         { href: "/ledger", label: "Buku Besar" },
+        { href: "/journals", label: "Jurnal Umum" },
         { href: "/trial-balance", label: "Neraca Saldo" },
         { href: "/journals/new", label: "Jurnal Penyesuaian" },
         ...MODULE_SECTIONS.filter((m) => modules.includes(m.key)),
