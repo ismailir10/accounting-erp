@@ -79,6 +79,7 @@ export default async function JournalsPage({ params, searchParams }: { params: P
           </a>
         )}
       </div>
+      <NextStep>Periksa jurnal bulan ini; pilih akun di baris jurnal untuk membuka buku besarnya.</NextStep>
       <p className="text-sm text-muted-foreground" data-testid="journals-summary">
         <span className="font-medium text-foreground">{reg.count.toLocaleString("id-ID")} jurnal</span>
         {reg.count > 0 && (

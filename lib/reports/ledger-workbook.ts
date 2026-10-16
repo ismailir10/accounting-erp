@@ -17,7 +17,10 @@ const xlsx = async (wb: ExcelJS.Workbook) => Buffer.from(await wb.xlsx.writeBuff
 /** A date-only value as Excel shows it on any machine (the date at UTC midnight is the date). */
 const day = (d: Date) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 const amount = (v: bigint) => (v === 0n ? null : n(v));
-const result = (v: bigint) => Number(v);
+/** The cached value Excel shows before recalculating: exact only within Number's safe range, else left for Excel to compute. */
+const result = (v: bigint) => (v <= BigInt(Number.MAX_SAFE_INTEGER) && v >= -BigInt(Number.MAX_SAFE_INTEGER) ? Number(v) : undefined);
+/** A SUM over rows `from`..`to`, or a plain zero when the range is empty (a SUM pointing at its own row would be circular). */
+const sumOrZero = (col: string, from: number, to: number, v: bigint) => (to < from ? 0 : { formula: `SUM(${col}${from}:${col}${to})`, result: result(v) });
 
 /** "September 2026", or "1 Januari 2026 – 30 September 2026" for the year to date. */
 export function rangeLabel(range: LedgerRange, start: Date, end: Date) {
@@ -45,8 +48,8 @@ export async function journalWorkbook(meta: WorkbookMeta, subtitle: string, entr
   const credit = entries.reduce((t, e) => t + e.lines.reduce((s, l) => s + l.credit, 0n), 0n);
   const total = ws.addRow([null, null, null, `Jumlah (${entries.length} jurnal)`]);
   total.font = { bold: true };
-  total.getCell(7).value = { formula: `SUM(G${first}:G${Math.max(first, last)})`, result: result(debit) };
-  total.getCell(8).value = { formula: `SUM(H${first}:H${Math.max(first, last)})`, result: result(credit) };
+  total.getCell(7).value = sumOrZero("G", first, last, debit);
+  total.getCell(8).value = sumOrZero("H", first, last, credit);
   total.eachCell((c) => (c.border = { top: { style: "thin" } }));
   ws.views = [{ state: "frozen", ySplit: first - 1 }];
   return xlsx(wb);
@@ -76,10 +79,9 @@ export async function ledgerWorkbook(meta: WorkbookMeta, subtitle: string, accou
     }
     const close = ws.addRow([null, "Saldo akhir"]);
     close.font = { bold: true };
-    const from = open.number + 1;
-    const to = Math.max(from, close.number - 1);
-    close.getCell(6).value = { formula: `SUM(F${from}:F${to})`, result: result(a.debit) };
-    close.getCell(7).value = { formula: `SUM(G${from}:G${to})`, result: result(a.credit) };
+    // An account with an opening and no movement has no line rows: its movement is zero, not a SUM over its own closing row.
+    close.getCell(6).value = sumOrZero("F", open.number + 1, close.number - 1, a.debit);
+    close.getCell(7).value = sumOrZero("G", open.number + 1, close.number - 1, a.credit);
     close.getCell(8).value = { formula: `H${prev}`, result: result(a.closing) };
     close.eachCell((c) => (c.border = { top: { style: "thin" } }));
     ws.addRow([]);
@@ -117,13 +119,10 @@ export async function trialBalanceWorkbook(meta: WorkbookMeta, subtitle: string,
     values.forEach((v, i) => (sums[i] += v));
     ws.addRow([r.account.code, r.account.name, ...("opening" in r && moves ? [...side(r.opening), amount(r.periodDebit), amount(r.periodCredit), ...side(r.net)] : side(r.net))]);
   }
-  const last = Math.max(first, ws.rowCount);
+  const last = ws.rowCount;
   const total = ws.addRow(["", "Jumlah"]);
   total.font = { bold: true };
-  sums.forEach((v, i) => {
-    const col = String.fromCharCode(67 + i);
-    total.getCell(3 + i).value = { formula: `SUM(${col}${first}:${col}${last})`, result: result(v) };
-  });
+  sums.forEach((v, i) => (total.getCell(3 + i).value = sumOrZero(String.fromCharCode(67 + i), first, last, v)));
   total.eachCell((c) => (c.border = { top: { style: "thin" } }));
   return xlsx(wb);
 }

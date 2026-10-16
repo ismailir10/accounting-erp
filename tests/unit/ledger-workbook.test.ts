@@ -54,6 +54,8 @@ describe("ledger workbooks", () => {
     const j = r.findIndex((x) => x[0] === "3200 Saldo Laba");
     expect(r[j + 1][1]).toBe("Saldo awal (termasuk laba rugi tahun-tahun lalu)");
     expect(r[j + 2].at(-1)).toMatch(/^=H\d+→100000000$/);
+    // No movement: zero, never a SUM over its own closing row (Excel would call that circular).
+    expect(r[j + 2].slice(1, 7)).toEqual(["Saldo akhir", null, null, null, 0, 0]);
   });
 
   it("Neraca Saldo: six columns with SUM totals, debit = credit", async () => {
@@ -69,6 +71,11 @@ describe("ledger workbooks", () => {
     expect(r.some((x) => x[0] === "9999")).toBe(false);
     const total = r.at(-1)!;
     expect(total.slice(1)).toEqual(["Jumlah", "=SUM(C10:C13)→640000000", "=SUM(D10:D13)→640000000", "=SUM(E10:E13)→15500000", "=SUM(F10:F13)→15500000", "=SUM(G10:G13)→640000000", "=SUM(H10:H13)→640000000"]);
+  });
+
+  it("an empty export totals to zero instead of a circular SUM", async () => {
+    const r = rows(await read(await journalWorkbook(meta, "September 2026", [])));
+    expect(r.at(-1)!.slice(3)).toEqual(["Jumlah (0 jurnal)", null, null, 0, 0]);
   });
 
   it("names files and ranges", () => {
