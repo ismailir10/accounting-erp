@@ -27,11 +27,13 @@ import { GET as credit } from "@/app/(app)/clients/[id]/reports/export/credit/ro
 import { GET as tax } from "@/app/(app)/clients/[id]/tax/export/route";
 import { GET as masa } from "@/app/(app)/clients/[id]/tax/masa/export/route";
 import { GET as review } from "@/app/(app)/clients/[id]/review/export/route";
+import { GET as budget } from "@/app/(app)/clients/[id]/budget/export/route";
 
 const downloads = [
   ["reports/export", statements], ["reports/export/pdf", pdf],
   ["reports/export/management", management], ["reports/export/credit", credit],
   ["tax/export", tax], ["tax/masa/export", masa], ["review/export", review],
+  ["budget/export", budget],
 ] as const;
 
 async function openSession(role: "ADMIN" | "AKUNTAN" = "AKUNTAN") {

@@ -38,7 +38,7 @@ export function clientStages(modules: string[]): NavStage[] {
         { href: "/close", label: "Tutup Buku" },
       ],
     },
-    { label: "3 · Laporan", items: [{ href: "/reports", label: "Laporan Keuangan" }, { href: "/tax/masa", label: "Pajak Masa" }, { href: "/tax", label: "Pajak Badan" }] },
+    { label: "3 · Laporan", items: [{ href: "/reports", label: "Laporan Keuangan" }, { href: "/tax/masa", label: "Pajak Masa" }, { href: "/tax", label: "Pajak Badan" }, { href: "/budget", label: "Anggaran" }] },
   ];
 }
 
