@@ -7,6 +7,7 @@ const url = (href: string) => new URL(href, "http://x");
 describe("sectionOf", () => {
   it("knows the page and whether the path is under it", () => {
     expect(sectionOf("/trial-balance")).toMatchObject({ section: { label: "Neraca Saldo" }, deeper: false });
+    expect(sectionOf("/accounts")).toMatchObject({ section: { label: "Bagan akun" }, deeper: false });
     expect(sectionOf("/ledger/1101")).toMatchObject({ section: { label: "Buku Besar" }, deeper: true });
     expect(sectionOf("/ledger/akun/xyz")).toMatchObject({ section: { label: "Buku Besar" }, deeper: true });
     expect(sectionOf("")).toMatchObject({ section: { label: "Ringkasan klien" }, deeper: false });
@@ -41,7 +42,6 @@ describe("switchTarget", () => {
   it("keeps tax/masa and journals/new as pages of their own", () => {
     expect(url(switchTarget("/clients/a1/tax/masa", B).href).pathname).toBe("/clients/b1/tax/masa");
     expect(url(switchTarget("/clients/a1/journals/new", B).href).pathname).toBe("/clients/b1/journals/new");
-    expect(sectionOf("/accounts")).toMatchObject({ section: { label: "Bagan akun" }, deeper: false });
   });
   it("falls back to the section from a page under it, and says so", () => {
     const t = switchTarget("/clients/a1/ledger/akun/xyz", B);
