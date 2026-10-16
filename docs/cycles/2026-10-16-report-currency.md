@@ -26,10 +26,10 @@ The mixed group (Gabungan) is not affected: it is translated to Rupiah first.
   currencies).
 
 ## Acceptance criteria
-- [ ] The statement Excel of an SGD company says "Dinyatakan dalam Dolar Singapura" on every sheet and writes 12345.67 for S$ 12.345,67.
-- [ ] The statement PDF prints "12.345,67" under "Dinyatakan dalam Dolar Singapura"; in ribuan, "12,00" under "ribuan Dolar Singapura".
-- [ ] The management pack names the currency and writes dollars with cents.
-- [ ] Rupiah outputs are unchanged (existing tests and `verify:books`).
+- [x] The statement Excel of an SGD company says "Dinyatakan dalam Dolar Singapura" on every sheet and writes 12345.67 for S$ 12.345,67.
+- [x] The statement PDF prints "12.345,67" under "Dinyatakan dalam Dolar Singapura"; in ribuan, "12,00" under "ribuan Dolar Singapura".
+- [x] The management pack names the currency and writes dollars with cents.
+- [x] Rupiah outputs are unchanged (existing tests and `verify:books`).
 
 ## Test seams
 - DB: `tests/db/report-currency.test.ts` (Excel, PDF in both units, management pack, conversion helpers); the existing Rupiah PDF and
@@ -42,12 +42,29 @@ The mixed group (Gabungan) is not affected: it is translated to Rupiah first.
 None: no migration, no dependency, no number in the ledger changes; presentation of existing figures only.
 
 ## Tasks
-- [ ] T1 `toUnit` / `renderFormat` with the currency's exponent; `excelAmount` and the currency name in the workbook header; the statement
+- [x] T1 `toUnit` / `renderFormat` with the currency's exponent; `excelAmount` and the currency name in the workbook header; the statement
       set carries its currency; PDF and management pack follow; tests.
-- [ ] T2 verify-local: an SGD company's page, Excel and PDF; full gate.
+- [x] T2 verify-local: an SGD company's page, Excel and PDF; full gate.
 
 ## Implementation
+- `lib/fx/currency.ts` `currencyName`; `lib/reports/format.ts` `toUnit(v, unit, exponent)` and `renderFormat(…, exponent)` (ribuan =
+  thousands of the major unit, still in minor units); `lib/reports/workbook.ts` `excelAmount`, the sheet header and number format by
+  currency, `WorkbookMeta.currency`; `lib/reports/statement-set.ts` carries `currency`; `lib/reports/pdf.ts` formats and labels with
+  it; `lib/reports/management-pack.ts` writes its amounts with it; the reports page passes the exponent and names the currency.
 
 ## Verification
+- **Tests:** `tests/db/report-currency.test.ts` (4: Excel set, PDF in whole units and ribuan, management pack, conversions); the
+  existing Rupiah PDF and layout tests pass unchanged.
+- **Task gate:** lint exit 0, typecheck exit 0, `npm test` 280 files / 2,617 tests passed.
+- **Full gate:** `npm run build` exit 0; `npm run verify:books` → "ALL PASS — 1765 pemeriksaan saldo cocok dengan ground truth";
+  `npm run test:e2e` → 103 passed.
+- **Walk (local; PT Jasa Kreatif Digital switched to SGD in the local demo database for the walk, reseeded after):**
+  - Laporan Keuangan → "Dinyatakan dalam Dolar Singapura".
+  - Unduh Excel: Neraca header "Dinyatakan dalam Dolar Singapura", a cell 5543683.52 with format `#,##0.00`.
+  - Unduh PDF: "Dinyatakan dalam Dolar Singapura", "Jumlah aset lancar 6.943.683,52".
+  - Laporan manajemen: "Dinyatakan dalam Dolar Singapura".
+
+Verified locally — 6df35d9
 
 ## Ship Notes
+- **Deck:** n/a (a fix).
