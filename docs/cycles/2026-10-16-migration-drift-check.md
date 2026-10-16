@@ -20,22 +20,22 @@ Probe on a fresh local database (2026-10-16):
 - `_prisma_migrations.checksum` is the SHA-256 of each `migration.sql` file as stored.
 
 ## Spec
-- [ ] `scripts/db-drift.sh` runs two read-only checks against `DATABASE_URL`. It stops at the first failure and says what differs, and
+- [x] `scripts/db-drift.sh` runs two read-only checks against `DATABASE_URL`. It stops at the first failure and says what differs, and
       it never prints a URL.
   1. **History** (`scripts/migration-history.mjs`, plain Node and `pg`, inside a `READ ONLY` transaction). Every applied,
      not-rolled-back row in `_prisma_migrations` must name a folder in `prisma/migrations`, and its checksum must equal the SHA-256 of
      that folder's `migration.sql`. Pending and failed migrations are left to `migrate status`.
   2. **Schema**: `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code` must be empty.
-- [ ] `scripts/vercel-build.sh` runs it on the direct URL after `migrate status` and before `next build`. Drift fails the build with
+- [x] `scripts/vercel-build.sh` runs it on the direct URL after `migrate status` and before `next build`. Drift fails the build with
       the differences and the next step.
-- [ ] CI `check` runs `npm run db:drift` right after `prisma migrate deploy`. On a fresh database that proves the check gives no false
+- [x] CI `check` runs `npm run db:drift` right after `prisma migrate deploy`. On a fresh database that proves the check gives no false
       positive, and it catches a `schema.prisma` change that has no migration.
-- [ ] Tests:
+- [x] Tests:
   - the history comparison is unit-tested: extra applied, edited, pending, rolled back, clean;
   - `vercel-build.test.ts` pins the new call order and shows that drift stops the build before `next build`;
   - a DB test runs the real script against a fresh `buku_test` copy: clean passes, a hand-added column fails, an edited checksum
     fails.
-- [ ] Docs:
+- [x] Docs:
   - an ADR 0019 amendment;
   - the README → Schema changes step;
   - the build-hooks open decision closed.
@@ -60,7 +60,22 @@ sensitive paths `.github/workflows/ci.yml` and the build script, as named here.
 ## Tasks
 - [x] T1 History script, drift script, npm script, unit and DB tests.
 - [x] T2 Build script and CI wiring, build test, docs.
-- [ ] T3 Gate: task gate + build + a real drift run on a fictional copy.
+- [x] T3 Gate: task gate + build + a real drift run on a fictional copy.
 
 ## Verification
-(filled during build)
+All runs were local, on fictional databases. Nothing touched production.
+- **Manual runs of `npm run db:drift`:**
+  - fresh migrated database: exit 0 ("62 applied", "No difference detected");
+  - hand-added column: exit 2, names `Client`;
+  - edited checksum plus an unknown applied row: exit 2, both listed and the schema not compared;
+  - unreachable host: exit 1, and the password is not printed.
+- **New tests:** `tests/unit/migration-history.test.ts` (6) and `tests/db/db-drift.test.ts` (3), which runs the real script on a
+  freshly migrated `buku_drift_check` database.
+- **Build test:** `tests/unit/vercel-build.test.ts` has 13 tests. It pins the call order (generate → status → history → schema diff →
+  next build, all on the direct URL) and shows that either kind of drift stops the build before `next build`. The drift scripts
+  contain no writing statement, and the history SQL runs in `BEGIN READ ONLY`.
+- **Task gate:** `npm run lint` exit 0, `npm run typecheck` exit 0, `npm test` with 279 files and 2,609 tests passed (641 s).
+- **Real build:** `scripts/vercel-build.sh` on the local stack, with the integration's variable names pointing at the local
+  database: "Database schema is up to date!", "✓ Migration history matches prisma/migrations (62 applied)", "✓ Database tables
+  match prisma/schema.prisma", "✓ Compiled successfully", exit 0.
+- `verify:books` and e2e not run. No report number, app flow or auth changed.
