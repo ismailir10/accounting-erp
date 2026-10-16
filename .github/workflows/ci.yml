@@ -68,6 +68,10 @@ jobs:
       - run: npm ci
       - run: psql postgresql://buku:buku@localhost:5432/buku -c "CREATE DATABASE buku_test"
       - run: npx prisma migrate deploy
+      # Read-only drift check on the fresh database: proves the production build's check gives no false positive, and fails a
+      # schema.prisma change that has no migration (ADR 0019, amended).
+      - name: Migration drift check
+        run: npm run db:drift
       - name: Lint & typecheck
         run: npm run lint && npm run typecheck
       - name: Unit + DB + ground-truth tests

@@ -36,4 +36,19 @@ every build.
   fails with a message that says what to run.
 - A hosted demo deployment no longer seeds itself; demos run locally (as ADR 0015 already says).
 - `DEMO_ADMIN_*` / `INITIAL_*` left in the Vercel environment are inert and can be removed.
-- Open (operator decision): a read-only drift check before a release with schema changes, designed and tested separately.
+- Open (operator decision): a read-only drift check before a release with schema changes, designed and tested separately. Closed by
+  the amendment below.
+
+**Amendment (2026-10-16, cycle [migration-drift-check](../cycles/2026-10-16-migration-drift-check.md); roadmap Phase 0, ADR 0020).**
+The build also runs a **read-only drift check** (`scripts/db-drift.sh`, `npm run db:drift`) on the non-pooling URL, after
+`migrate status` and before `next build`. Drift fails the build, the same as a pending migration, and no flag skips it.
+1. **History.** Every applied, not-rolled-back row in `_prisma_migrations` must name a folder in `prisma/migrations`, and its checksum
+   must equal the SHA-256 of that `migration.sql`. The check runs in plain Node with `pg`, inside a `READ ONLY` transaction.
+2. **Schema.** `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code` must be empty. It is
+   introspection only, with no shadow database. Decision 1 doubted that such a diff could be validated against the triggers and CHECK
+   constraints. Validated: a database migrated from this checkout diffs clean, and `tests/db/db-drift.test.ts` and CI prove it on
+   every run.
+CI runs the same check after `prisma migrate deploy` on its fresh database. That also catches a `schema.prisma` change that has no
+migration.
+**Limit:** a trigger or CHECK constraint dropped by hand is not detected, because Prisma does not model them. Editing the migration
+that created one is detected.

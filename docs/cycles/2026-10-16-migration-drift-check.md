@@ -59,7 +59,7 @@ sensitive paths `.github/workflows/ci.yml` and the build script, as named here.
 
 ## Tasks
 - [x] T1 History script, drift script, npm script, unit and DB tests.
-- [ ] T2 Build script and CI wiring, build test, docs.
+- [x] T2 Build script and CI wiring, build test, docs.
 - [ ] T3 Gate: task gate + build + a real drift run on a fictional copy.
 
 ## Verification
