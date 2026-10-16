@@ -271,8 +271,11 @@ session and credentials and is ignored by Git.
 
 `main` is the repository default, the base for new work and production. Create a temporary `task/<slug>` branch from current
 `main`, open its PR against `main`, and merge after CI passes — the merge deploys to production. GitHub automatically deletes the
-merged task branch; remove its local copy after returning to `main`. `staging` is frozen history ([ADR 0015](docs/adrs/0015-production-only.md)).
-Both branches are protected from deletion and force-push, and require the CI `check` result.
+merged task branch; remove its local copy after returning to `main`. `main` is the only long-lived branch: the former `staging`
+branch is retired and all of its history is in `main` ([ADR 0015](docs/adrs/0015-production-only.md)). A branch whose PR is closed
+unmerged is deleted with it. The one other branch that may appear is `pr-assets`, an orphan that only holds PR screenshots
+(`scripts/pr-screenshots.sh`) and is never merged; deleting it removes those images from their PR pages. `main` is protected
+from deletion and force-push, and requires the CI `check` result.
 
 Supabase: project `native-erp-v2` (the real workspace, git `main`). Nothing else is hosted; development runs on the local stack.
 

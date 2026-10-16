@@ -7,7 +7,7 @@ Commands and paths: [AGENTS.md § Repo profile](../../AGENTS.md#3-repo-profile).
 
 - The cycle doc's Implementation, Verification (the verify-local block, with the `verify:books` and e2e tails) and Ship
   Notes are filled.
-- The branch is neither `main` nor `staging`. `staging` is frozen history: no new work, no deploys, never a base.
+- The branch is not `main`, and its base is `main` (the only long-lived branch).
 - Big feature? The deck review below is part of this PR, not a follow-up and not a cycle task.
 
 ## PR body
@@ -53,7 +53,7 @@ say only what Buku does today.
   only Vercel build, and PR branches get no preview (`vercel.json`). When CI is green, say it is ready and stop.
 - After the user merges: GitHub deletes the remote task branch. Locally fast-forward `main` from `origin/main`,
   `git fetch --prune`, delete the merged task branch and its worktree, then run the post-merge checks. Never delete
-  `main` or `staging`.
+  `main`; a PR closed unmerged takes its branch with it.
 
 ## Post-merge
 
