@@ -245,6 +245,8 @@ export async function confirmBatch(db: Db, input: ConfirmInput): Promise<{ plan:
 
   // New owners, once per name (same words = same person); a name that is already an entity of the client is that entity.
   const owners = new Map<string, { id: string } | { error: string }>();
+  // Short names stay unique on the client (the ledger import matches by them): a first name already taken falls back to the full name.
+  const shorts = new Set(loaded.entities.map((e) => e.shortName.trim().toLowerCase()));
   for (const a of valid) {
     if (!("newOwner" in a.target)) continue;
     const name = a.target.newOwner.name.trim();
@@ -260,7 +262,10 @@ export async function confirmBatch(db: Db, input: ConfirmInput): Promise<{ plan:
       continue;
     }
     try {
-      const entity = await addEntity(db, input.firmId, input.clientId, { name, shortName: name.split(/\s+/)[0], kind: "PERORANGAN", npwp: "", banks: [] });
+      const first = name.split(/\s+/)[0];
+      const shortName = shorts.has(first.toLowerCase()) ? name : first;
+      const entity = await addEntity(db, input.firmId, input.clientId, { name, shortName, kind: "PERORANGAN", npwp: "", banks: [] });
+      shorts.add(shortName.toLowerCase());
       owners.set(key, { id: entity.id });
     } catch (e) {
       if (!(e instanceof OnboardingError)) throw e;

@@ -15,6 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { isGenericKey } from "@/lib/import/normalize";
 import { LinkTabs } from "@/components/app/link-tabs";
 import { EntitiesCard } from "@/components/app/entities-card";
+import { blockedReason, clientUsage, LAST_ENTITY, numberLocked } from "@/lib/clients/entities";
 import { requireWorkspaceSession } from "@/lib/auth/session";
 import { DeleteClientCard } from "@/components/app/delete-client";
 import { FrameworkCard } from "@/components/app/framework-card";
@@ -56,6 +57,18 @@ export default async function SettingsPage({ params, searchParams }: { params: P
   const tab = TABS.find((t) => t.key === sp.tab) ?? TABS[0];
   // Admin-only like its actions (org.settings, ADR 0018): other members neither see the card nor load the count.
   const keyringCount = tab.key === "perusahaan" && can(member.role, "org.settings") ? await keyringSize(prisma, client.id) : null;
+  // What points at each company and rekening, from the same check the removal re-runs (only an admin sees the reasons).
+  const pointers = tab.key === "perusahaan" ? await clientUsage(prisma, client.id) : null;
+  const entityViews = pointers
+    ? client.entities.map((e) => ({
+        id: e.id, name: e.name, shortName: e.shortName, npwp: e.npwp ?? "", kind: e.kind,
+        blocked: client.entities.length < 2 ? LAST_ENTITY : blockedReason("entity", pointers.entities.get(e.id) ?? []),
+        banks: e.bankAccounts.map((b) => {
+          const u = pointers.banks.get(b.id) ?? [];
+          return { id: b.id, label: b.label, bank: b.bank, number: b.number, code: b.account.code, isOverdraft: b.isOverdraft, numberLocked: numberLocked(u), blocked: blockedReason("bank", u) };
+        }),
+      }))
+    : [];
   const live = Boolean(cfg.apiKey && cfg.model);
   const lastMonth = auto[auto.length - 1];
   const aiLines = auto.reduce((s, a) => s + a.ai, 0);
@@ -68,7 +81,7 @@ export default async function SettingsPage({ params, searchParams }: { params: P
       <NextStep>{tab.next}</NextStep>
       {tab.key === "perusahaan" ? (
         <>
-          <EntitiesCard clientId={client.id} entities={client.entities.map((e) => ({ id: e.id, name: e.name, kind: e.kind, banks: e.bankAccounts.map((b) => ({ id: b.id, label: b.label, number: b.number, code: b.account.code, isOverdraft: b.isOverdraft })) }))} />
+          <EntitiesCard clientId={client.id} entities={entityViews} canEdit={can(member.role, "client.create")} canRemove={can(member.role, "client.delete")} />
           <FrameworkCard clientId={client.id} entities={client.entities.map((e) => ({ id: e.id, name: e.name, framework: e.reportingFramework }))} />
           <FiscalYearCard clientId={client.id} endMonth={client.fiscalYearEndMonth} locked={Boolean(lockedPeriod)} />
           <ModulesCard
