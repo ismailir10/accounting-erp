@@ -16,6 +16,7 @@ export const MODULE_SECTIONS: (NavSection & { key: string })[] = [
 ];
 
 export const SETUP_SECTIONS: NavSection[] = [
+  { href: "/accounts", label: "Bagan akun" },
   { href: "/rates", label: "Kurs" },
   { href: "/settings", label: "Perusahaan & aturan" },
   { href: "/history", label: "Riwayat perubahan" },

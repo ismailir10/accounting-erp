@@ -74,6 +74,7 @@ import { infraErrorMessage } from "@/lib/db-errors";
 import { deleteClient, DeleteClientError } from "@/lib/clients/delete";
 import { EntityEditError, removeBankAccount, removeEntity, renameEntity, updateBankAccount } from "@/lib/clients/entities";
 import { AccessError, requireCapability } from "@/lib/auth/session";
+import { AccountEditError, createAccount, removeAccount, updateAccount } from "@/lib/coa/manage";
 import type { Capability } from "@/lib/auth/permissions";
 import { OrgError } from "@/lib/org";
 import type { FsLine } from "@/lib/coa/template";
@@ -88,7 +89,7 @@ type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; needs
 function fail(e: unknown): { ok: false; error: string; needsPassword?: boolean; needsYear?: boolean; yearGuess?: number | null } {
   if (e instanceof PdfPasswordError) return { ok: false, error: e.message, needsPassword: true };
   if (e instanceof YearNeededError) return { ok: false, error: e.message, needsYear: true, yearGuess: e.guess };
-  if (e instanceof DeleteClientError || e instanceof EntityEditError || e instanceof AccessError || e instanceof OrgError) return { ok: false, error: e.message };
+  if (e instanceof DeleteClientError || e instanceof EntityEditError || e instanceof AccountEditError || e instanceof AccessError || e instanceof OrgError) return { ok: false, error: e.message };
   if (e instanceof ParseError || e instanceof LedgerError || e instanceof CloseError || e instanceof OpeningError || e instanceof FindingError || e instanceof RemoveImportError || e instanceof MoneyError || e instanceof RateError || e instanceof RevaluationError || e instanceof LedgerImportError || e instanceof MappingError || e instanceof EntitySettingsError || e instanceof FormatError || e instanceof SubledgerError || e instanceof FakturError || e instanceof BupotError) return { ok: false, error: e.message };
   const infra = infraErrorMessage(e);
   console.error(e);
@@ -1519,6 +1520,45 @@ export async function clearReportCommentAction(k: { clientId: string; entityId: 
     return { ok: true };
   } catch (e) {
     if (e instanceof CommentError) return { ok: false, error: e.message };
+    return fail(e);
+  }
+}
+
+/** Bagan akun: a new account under a report line (code proposed, or typed). Everyday books work, like *Buat akun baru* in mapping. */
+export async function createAccountAction(clientId: string, input: { fsLine: string; name: string; code?: string }): Promise<Result<{ code: string }>> {
+  try {
+    const client = await writeClient(clientId);
+    const member = await getCurrentMember();
+    const a = await createAccount(prisma, { clientId: client.id, ...input, actorId: member.id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true, code: a.code };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Bagan akun *Ubah*: the name, and the report line within the same type and normal side. */
+export async function updateAccountAction(clientId: string, accountId: string, input: { name: string; fsLine: string }): Promise<Result> {
+  try {
+    const client = await writeClient(clientId);
+    const member = await getCurrentMember();
+    await updateAccount(prisma, { clientId: client.id, accountId, ...input, actorId: member.id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Bagan akun *Hapus*: only an account nothing points at; the refusal names what uses it. */
+export async function removeAccountAction(clientId: string, accountId: string): Promise<Result> {
+  try {
+    const client = await writeClient(clientId);
+    const member = await getCurrentMember();
+    await removeAccount(prisma, { clientId: client.id, accountId, actorId: member.id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
     return fail(e);
   }
 }
