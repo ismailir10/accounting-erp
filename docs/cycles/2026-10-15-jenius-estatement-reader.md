@@ -21,8 +21,8 @@ from the private layout probe: words from a fixed public vocabulary, token shape
    identities of the real sources are not written here). They are used only to judge the private acceptance. Neither the reader nor its
    tests are fitted to them, and no expected fact is derived from Buku.
 5. **Delivery:** branch `task/jenius-estatement-reader` from released `main`. The output of this cycle is a private release candidate
-   (diff plus checksum) for testing on the Mac. No PR, merge or deploy until the owner decides. The held import fix (PR #160) stays
-   separate.
+   (diff plus checksum) for testing on the Mac. No PR, merge or deploy until the owner decides (decided 2026-10-16: merge into
+   `main` on green CI, PR #161; the private acceptance on the Mac stays worth doing). The held import fix (PR #160) stays separate.
 6. **The bank from the layout's own header, narrowly.** Some of these statements print no bank name above the transaction table (the
    name appears only below it). Buku names the bank from the text above the table, never from transactions; when that text names no
    bank and the table's header is exactly *Date & Time · Details · Notes · Amount*, the statement is tagged SMBC. Any other header
@@ -108,11 +108,13 @@ Fictional data only; real sources are judged privately on the owner's machine.
   the unscoped amount assembly and pass once scoped.
 - Candidate: parser and import suites pass; the kit's own fictional series reads the same in Buku and in the independent facts reader,
   every month; the kit self-test passes every scenario, each negative stopping on its intended check.
-- Independent reviews (separate worktrees, own fictional database; served model and effort read from each reviewer's transcript:
-  `claude-opus-5-5`, high): code review ACCEPT after two fix rounds; acceptance-kit review ACCEPT after two fix rounds.
+- Independent reviews (separate worktrees, own fictional database, high effort): code review ACCEPT after two fix rounds;
+  acceptance-kit review ACCEPT after two fix rounds.
 - Known limits, accepted in review: a page footer right under a page's last row is appended to that row's description (no money moves;
   the layout's own second details line starts like a footer); a card line's figures printed as separate items would be refused, not
   misread (the metadata shows one run); a dated line after *Ending Balance* would be read as a row and show as a continuity break.
 - Full attested gates: recorded with the candidate SHA once run.
+- 2026-10-16, merge into `main`: `npm run lint && npm run typecheck && npm test` on `main` with this branch, PR #153 and PR #160 merged
+  together (local tree `3c4b8c4`): 277/277 files, 2597/2597 tests, exit 0. Build, `verify:books` and e2e: see PR #161.
 
 ## Ship Notes
