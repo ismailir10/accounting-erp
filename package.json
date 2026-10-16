@@ -13,6 +13,7 @@
     "ux:sweep": "UX_SWEEP=1 playwright test e2e/ux-sweep.spec.ts",
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
+    "db:drift": "bash scripts/db-drift.sh",
     "demo:reset": "tsx scripts/seed.ts",
     "verify:books": "tsx scripts/verify-books.ts",
     "close:timeline": "tsx scripts/close-timeline.ts",
