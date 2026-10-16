@@ -58,6 +58,18 @@ describe("Anggaran", () => {
     expect(r.hasBudget).toBe(true);
   });
 
+  it("keeps an account whose months net to zero, with the month's activity", async () => {
+    const { g, scope } = await books();
+    const acc = async (code: string) => (await db.account.findUniqueOrThrow({ where: { clientId_code: { clientId: g.client.id, code } } })).id;
+    const post = async (date: Date, lines: [string, bigint, bigint][]) =>
+      db.$transaction(async (tx) => postJournal(tx, { entityId: g.pt.entity.id, date, kind: "ADJUSTMENT", memo: "akrual", lines: await Promise.all(lines.map(async ([c, d, k]) => ({ accountId: await acc(c), debit: d, credit: k }))) }));
+    await post(dateOnly(2026, 2, 28), [["6170", 5n * J, 0n], ["2150", 0n, 5n * J]]);
+    await post(dateOnly(2026, 3, 1), [["2150", 5n * J, 0n], ["6170", 0n, 5n * J]]);
+    const r = await budgetVsActual(db, scope, 2026, 3);
+    const row = r.rows.find((x) => x.code === "6170");
+    expect([row?.month, row?.ytd]).toEqual([[0n, -5n * J], [0n, 0n]]);
+  });
+
   it("the editor grid lists accounts with a budget or actuals this year or last, with last year's months to copy", async () => {
     const { g } = await books();
     const grid = await budgetGrid(db, { clientId: g.client.id, entityId: g.pt.entity.id, year: 2026, month: 3 });

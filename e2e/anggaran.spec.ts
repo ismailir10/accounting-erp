@@ -26,4 +26,6 @@ test("Anggaran: plan per month and compare with the books", async ({ page }) => 
   await expect(page.getByTestId("vs-4100")).toContainText("1.450.000.000");
   await expect(page.getByTestId("vs-6120")).toContainText("50.000.000");
   await expect(page.getByTestId("budget-download")).toBeVisible();
+  await page.getByRole("link", { name: "Realisasi 4100 di Buku Besar" }).click();
+  await expect(page).toHaveURL(/\/ledger\/4100\?/);
 });

@@ -8,6 +8,9 @@ import { formatPeriod, monthName } from "@/lib/format";
  * GET ?entity&period — Anggaran vs realisasi as Excel: the month and the year to date, budget / actual / difference per account, totals.
  * A working paper: no export event. Rupiah scopes only (the workbook writes whole units).
  */
+/** A formula's cached result, left out beyond the safe integer range (Excel recalculates it on open). */
+const result = (v: bigint) => (typeof n(v) === "number" ? Number(v) : undefined);
+
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await exportContext(req, (await params).id);
   if (!ctx) return new Response("Klien tidak ditemukan", { status: 404 });
@@ -26,8 +29,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   book.head(ws, ["Akun", "Anggaran bulan", "Realisasi bulan", "Selisih bulan", `Anggaran s.d. ${monthName(month)}`, `Realisasi s.d. ${monthName(month)}`, "Selisih s.d."]);
   for (const r of vs.rows) {
     const row = ws.addRow([`${r.code ? `${r.code} ` : ""}${r.label}`, n(r.month[0]), n(r.month[1]), null, n(r.ytd[0]), n(r.ytd[1]), null]);
-    row.getCell(4).value = { formula: `C${row.number}-B${row.number}`, result: Number(r.month[1] - r.month[0]) };
-    row.getCell(7).value = { formula: `F${row.number}-E${row.number}`, result: Number(r.ytd[1] - r.ytd[0]) };
+    row.getCell(4).value = { formula: `C${row.number}-B${row.number}`, result: result(r.month[1] - r.month[0]) };
+    row.getCell(7).value = { formula: `F${row.number}-E${row.number}`, result: result(r.ytd[1] - r.ytd[0]) };
     if (r.kind === "total") row.font = { bold: true };
   }
   const body = Buffer.from(await book.wb.xlsx.writeBuffer());

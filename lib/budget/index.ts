@@ -153,13 +153,14 @@ export async function budgetVsActual(db: Db, scope: Scope, year: number, month: 
   const sum = (pairs: [string, bigint][], f: (k: string) => boolean) => pairs.filter(([k]) => f(k)).reduce((s, [, v]) => s + v, 0n);
   const budgetPairs = budgets.map((b) => [`${b.accountId}|${b.year}-${String(b.month).padStart(2, "0")}`, b.amount] as [string, bigint]);
   const actualPairs = [...act.entries()];
+  const used = new Set([...budgetPairs, ...actualPairs].map(([k]) => k.split("|")[0]));
   const rows: VsRow[] = [];
   const totals: Record<"PENDAPATAN" | "BEBAN", { month: [bigint, bigint]; ytd: [bigint, bigint] }> = { PENDAPATAN: { month: [0n, 0n], ytd: [0n, 0n] }, BEBAN: { month: [0n, 0n], ytd: [0n, 0n] } };
   for (const type of ["PENDAPATAN", "BEBAN"] as const) {
     for (const a of accounts.filter((x) => x.type === type)) {
       const of = (pairs: [string, bigint][], monthOnly: boolean) => sum(pairs, (k) => k.startsWith(`${a.id}|`) && (!monthOnly || k.endsWith(key)));
       const r: VsRow = { code: a.code, label: a.name, kind: "account", type, month: [of(budgetPairs, true), of(actualPairs, true)], ytd: [of(budgetPairs, false), of(actualPairs, false)] };
-      if (r.ytd[0] === 0n && r.ytd[1] === 0n && !budgetPairs.some(([k]) => k.startsWith(`${a.id}|`))) continue;
+      if (!used.has(a.id)) continue; // kept when its months net to zero: the activity is still worth seeing
       rows.push(r);
       totals[type].month = [totals[type].month[0] + r.month[0], totals[type].month[1] + r.month[1]];
       totals[type].ytd = [totals[type].ytd[0] + r.ytd[0], totals[type].ytd[1] + r.ytd[1]];

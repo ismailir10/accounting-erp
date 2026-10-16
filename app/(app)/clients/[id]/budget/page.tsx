@@ -115,7 +115,7 @@ export default async function BudgetPage({ params, searchParams }: { params: Pro
             </thead>
             <tbody>
               {vs.rows.map((r, i) => (
-                <VsLine key={`${r.code ?? r.label}-${i}`} row={r} currency={vs.currency} heading={r.kind === "account" && (i === 0 || vs.rows[i - 1].kind === "total")} />
+                <VsLine key={`${r.code ?? r.label}-${i}`} row={r} currency={vs.currency} href={r.code ? withParams(`${base}/ledger/${r.code}`, q) : null} heading={r.kind === "account" && (i === 0 || vs.rows[i - 1].kind === "total")} />
               ))}
             </tbody>
           </table>
@@ -126,7 +126,8 @@ export default async function BudgetPage({ params, searchParams }: { params: Pro
   );
 }
 
-function VsLine({ row, currency, heading }: { row: VsRow; currency: string; heading: boolean }) {
+/** One row; an account's name and its month's actual open Buku Besar for that account and month (each line drills to its source). */
+function VsLine({ row, currency, href, heading }: { row: VsRow; currency: string; href: string | null; heading: boolean }) {
   const diff = (b: bigint, a: bigint) => (
     <span className="inline-flex flex-col items-end">
       <Money value={a - b} currency={currency} />
@@ -144,10 +145,10 @@ function VsLine({ row, currency, heading }: { row: VsRow; currency: string; head
       <tr className={cn(row.kind === "total" && "border-t font-semibold")} data-testid={row.code ? `vs-${row.code}` : `vs-${row.label}`}>
         <td className={cn("sticky left-0 z-10 bg-card py-1.5 pr-3", row.kind === "account" ? "pl-10" : "pl-6")}>
           {row.code && <span className="num text-muted-foreground">{row.code} </span>}
-          {row.label}
+          {href ? <Link href={href} className="drill">{row.label}</Link> : row.label}
         </td>
         <td className="px-3 py-1.5 text-right align-top"><Money value={row.month[0]} currency={currency} muted /></td>
-        <td className="px-3 py-1.5 text-right align-top"><Money value={row.month[1]} currency={currency} /></td>
+        <td className="px-3 py-1.5 text-right align-top">{href ? <Link href={href} className="drill" aria-label={`Realisasi ${row.code} di Buku Besar`}><Money value={row.month[1]} currency={currency} /></Link> : <Money value={row.month[1]} currency={currency} />}</td>
         <td className="px-3 py-1.5 text-right align-top">{diff(row.month[0], row.month[1])}</td>
         <td className="px-3 py-1.5 text-right align-top"><Money value={row.ytd[0]} currency={currency} muted /></td>
         <td className="px-3 py-1.5 text-right align-top"><Money value={row.ytd[1]} currency={currency} /></td>
