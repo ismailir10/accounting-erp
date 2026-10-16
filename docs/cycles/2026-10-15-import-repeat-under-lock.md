@@ -89,13 +89,13 @@ All on fictional data, loopback databases, AI off. Code head `6e41946` (later co
 - Local Auth stack (pinned `supabase@2.118.0`): run on a pre-created Docker network whose default host binding is `127.0.0.1`; every
   published port verified loopback-only before first use (`127.0.0.1:54321`, `:54322`, `:54324`). A first start without that network
   published `0.0.0.0` and was stopped before any use. Keys kept in a mode-600 file outside the worktree, never printed.
-- **Independent reviews** (separate subagents; served model read from their own transcripts):
-  - code: `claude-opus-5-5`, effort high, ACCEPT. Low findings: recovery keys on "same bytes on file" (wording fixed in rule 12 and the
+- **Independent reviews** (separate review sessions, high effort):
+  - code: ACCEPT. Low findings: recovery keys on "same bytes on file" (wording fixed in rule 12 and the
     code comment); the no-source repeat reports zero AI calls like a sequential repeat; removal is not under the import lock (pre-existing,
     no new hazard). Its own probes: three concurrent copies, a waiter with earlier duplicates, the empty-import case; mixed old/new
     deploy: no hazard.
-  - capture harness (below): `claude-opus-5-5`, effort high, ACCEPT with gaps, all applied.
-  - A first research helper (`claude-opus-5-5`, effort high) was stopped before it returned; nothing from it was read or used.
+  - capture harness (below): ACCEPT with gaps, all applied.
+  - A first research helper was stopped before it returned; nothing from it was read or used.
 - **Local e2e, behavioral only.** Some older e2e inputs are not proven fictional, and the specs take 46 direct screenshots that no
   config option turns off. So the suite ran through an **uncommitted verification harness outside the repository** (reviewed twice,
   ACCEPT): every direct screenshot, `page.pdf` and failure context writes nothing; trace, screenshot and video off; a reporter that prints
@@ -114,7 +114,7 @@ All on fictional data, loopback databases, AI off. Code head `6e41946` (later co
     import page with the form shown) found the demo sample control **present with `true` and absent with `false`**: both modes
     **attested**. The suites' own in-run probes failed on probe bugs and are kept as failures, so for the suite runs the flags are
     attested by environment and the effective mode is inferred. `DEMO_MODE` is a runtime read in compiled server code only. Reviewed
-    read-only (`claude-opus-5-5`, high). Limits: one probe sample per mode; synthetic names in server logs (not attached). The server
+    read-only by a separate review session. Limits: one probe sample per mode; synthetic names in server logs (not attached). The server
     line "The destination stream closed early" recurs (8 and 15 in the suites) during varying tests with no failure; it comes from
     React's server renderer when a response closes early; no causal claim. Hashes in the metadata receipt (outside the repository).
   - No screenshot, video, trace or failure-context file written in the repository or the harness output.
@@ -129,9 +129,11 @@ All on fictional data, loopback databases, AI off. Code head `6e41946` (later co
 - No migration, no env var, no dependency. Rollback: revert the merge (no data to undo).
 - Deploy window: both versions take the same account lock and neither double-books. An old waiter still answers the race with the
   retry (today's behaviour); a new waiter recovers. No cutover step is needed for the code itself.
-- Branch: the PR uses the session's assigned branch (`claude/…`), a user-directed exception to the `task/<slug>` rule (AGENTS §8).
+- Branch: the PR uses the session's assigned branch, a user-directed exception to the `task/<slug>` rule (AGENTS §8); it is deleted on merge.
 - **Merge and deploy held** for the owner's separate human cutover confirmation, which is a release decision, not a code risk, in this
   order: (1) resolve the safe CI route, covering both the unit-log reporting in `ci.yml` and the hosted e2e run the merge triggers (the
   capture-safe CI proposal or another route); (2) only then mark the PR ready, and CI `check` must be green on its head; (3) the merge
   itself (= the production deploy). No production data was read or written in this cycle; whether
   production already holds FAILED Unggah lines from this defect is unknown.
+- **Hold released 2026-10-16:** the owner asked for all relevant branch work to be merged into `main` once CI is green; the PR was
+  marked ready and merges on a green `check`.
