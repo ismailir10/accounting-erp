@@ -20,9 +20,9 @@ const DESTINATIONS = [
 // The client menu (lib/nav.ts) in three stages (ADR 0014): Sumber → Buku Besar → Laporan, in working order. The first-run steps
 // (Impor → Saldo Awal → Review → Tutup Buku) read top to bottom and are never collapsed (ui-rules 14). Modules show per client.
 const ICONS: Record<string, typeof Upload> = {
-  "/import": Upload, "/opening": Landmark, "/review": Inbox, "/ledger": BookOpen, "/trial-balance": Scale, "/journals/new": NotebookPen,
+  "/import": Upload, "/analysis": ChartColumn, "/opening": Landmark, "/review": Inbox, "/ledger": BookOpen, "/trial-balance": Scale, "/journals/new": NotebookPen,
   "/receivables": HandCoins, "/inventory": Boxes, "/assets": Warehouse, "/leases": KeyRound, "/benefits": Users, "/close": ClipboardCheck,
-  "/reports": FileSpreadsheet, "/analysis": ChartColumn, "/tax/masa": CalendarCheck, "/tax": ReceiptText, "/rates": Coins, "/settings": ListFilter, "/history": History,
+  "/reports": FileSpreadsheet, "/tax/masa": CalendarCheck, "/tax": ReceiptText, "/rates": Coins, "/settings": ListFilter, "/history": History,
 };
 type Item = NavSection & { icon: typeof Upload };
 const withIcons = (items: NavSection[]): Item[] => items.map((item) => ({ ...item, icon: ICONS[item.href] ?? FileSpreadsheet }));
