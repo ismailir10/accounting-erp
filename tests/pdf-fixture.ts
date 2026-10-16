@@ -334,8 +334,8 @@ export function jeniusEstatementPdf(opts: {
   const pages: PdfText[][] = [];
   let page: PdfText[] = [];
   let y = 800;
-  const line = (cells: [number, string][], lead = 12) => {
-    for (const [cx, text] of cells) page.push({ x: cx, y, text });
+  const line = (cells: ([number, string] | [number, string, number])[], lead = 12) => {
+    for (const [cx, text, size] of cells) page.push({ x: cx, y, text, ...(size ? { size } : {}) });
     y -= lead;
   };
   const newPage = () => {
@@ -383,7 +383,7 @@ export function jeniusEstatementPdf(opts: {
     }
     line([[x.date, r.date], [x.details, r.details[0]], ...(r.note ? ([[x.notes, r.note]] as [number, string][]) : []), [x.amount, fmt(r.amount, true)]], 10);
     // A card payment abroad prints its foreign amount and rate as one run near the Amount column, under the row.
-    line([[x.date, r.time ?? "09:15"], [x.details, r.details[1] ?? `REF - ${String(7000000 + i)}`], ...(r.card ? ([[475, r.card]] as [number, string][]) : [])], 10);
+    line([[x.date, r.time ?? "09:15"], [x.details, r.details[1] ?? `REF - ${String(7000000 + i)}`], ...(r.card ? ([[470, r.card, 6]] as [number, string, number][]) : [])], 10);
     if (r.type !== "") line([[x.details, `TX${String(100 + i)}A | ${r.amount > 0 ? "Transfer" : "Pembayaran"}`], [x.notes, r.type ?? (r.amount > 0 ? "CR Transfer Incoming" : "DB Payment Outgoing")]], 14);
     else y -= 4;
   });

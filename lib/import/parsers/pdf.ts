@@ -659,14 +659,15 @@ function parseLines(lines: Line[], ctx: { period?: { start: Date; end: Date } | 
       }
     }
 
-    // One signed Amount column (no Debet/Kredit): the figure is the one in that column. A sign printed as its own item is the figure's;
+    // One signed Amount column (no Debet/Kredit): the figure is the one in that column. A sign printed as its own item under it is the figure's;
     // a figure run into the text before it ("… catatan-2,500") is split off when it reaches into the column.
     const amountCol = cols.find((c) => c.kind === "amount");
-    if (amountCol && !cols.some((c) => c.kind === "debit" || c.kind === "credit")) {
+    // Only in the layout that prints a Notes column (Jenius): elsewhere a description may end in a figure and the amount follow below.
+    if (amountCol && cols.some((c) => c.kind === "note") && !cols.some((c) => c.kind === "debit" || c.kind === "credit")) {
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
         const next = cells[i + 1];
-        if (/^[+-]$/.test(c.text.trim()) && next && NUMBER.test(next.text) && next.x0 - c.x1 < 12) {
+        if (/^[+-]$/.test(c.text.trim()) && next && NUMBER.test(next.text) && nearest(cols, c, ["amount"]) === amountCol && nearest(cols, next, ["amount"]) === amountCol) {
           cells.splice(i, 2, { x0: c.x0, x1: next.x1, text: `${c.text.trim()}${next.text.trim()}` });
           continue;
         }

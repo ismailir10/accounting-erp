@@ -94,7 +94,21 @@ describe("Jenius e-Statement (2025 layout)", () => {
     expect(runIn.rows[0].description).toContain("Catatan mepet ke nominal");
     const sign = await read(page([{ x: 50, text: "03 Aug 2026" }, { x: 125, text: "Pembayaran Fiktif" }, { x: 516, text: "-" }, { x: 524, text: "45,000" }]));
     expect(sign.rows.map((r) => r.amount)).toEqual([-45_000n]);
-    for (const st of [longNote, runIn, sign]) expect(checkContinuity(st).ok).toBe(true);
+    const farSign = await read(page([{ x: 50, text: "03 Aug 2026" }, { x: 125, text: "Pembayaran Fiktif" }, { x: 480, text: "-" }, { x: 530, text: "45,000" }]));
+    expect(farSign.rows.map((r) => r.amount)).toEqual([-45_000n]);
+    for (const st of [longNote, runIn, sign, farSign]) expect(checkContinuity(st).ok).toBe(true);
+  });
+
+  it("leaves other single-amount layouts as they were: a figure at the end of a description is no amount there", async () => {
+    // Tanggal · Keterangan · Mutasi · Saldo, the description reaching the Mutasi column, the amount and balance on the line below.
+    const st = await read(makePdf([[
+      { x: 40, y: 800, text: "Rekening Koran Fiktif" }, { x: 40, y: 788, text: "Periode : 01 Agu 2026 - 31 Agu 2026" }, { x: 40, y: 776, text: "Saldo Awal 1,000,000.00" },
+      { x: 40, y: 750, text: "Tanggal" }, { x: 110, y: 750, text: "Keterangan" }, { x: 380, y: 750, text: "Mutasi" }, { x: 490, y: 750, text: "Saldo" },
+      { x: 40, y: 738, text: "05/08/2026" }, { x: 110, y: 738, text: "TRF KE BUDI FIKTIF KOREKSI ATAS TRANSAKSI SEBELUMNYA DENGAN NOMINAL LAMA -1,000" },
+      { x: 380, y: 728, text: "250,000.00 DB" }, { x: 480, y: 728, text: "750,000.00" },
+    ]]));
+    expect(st.rows.map((r) => [r.amount, r.balance])).toEqual([[-250_000n, 750_000n]]);
+    expect(checkContinuity(st).ok).toBe(true);
   });
 
   it("reads a footer on every page and a card's foreign amount under the row without taking either for money", async () => {
