@@ -52,7 +52,7 @@ export const BANKS: BankInfo[] = [
   {
     code: "SMBC", name: "SMBC / Jenius", fullName: "PT Bank SMBC Indonesia (d/h BTPN)", group: "Bank swasta & asing", bic: ["SUNIIDJA"],
     detect: /\bSMBC\b|bank smbc indonesia|jenius|\bBTPN\b|touchbiz/i, words: ["SMBC", "JENIUS", "BTPN"],
-    formats: [pdf("Laporan Konsolidasi Rekening (Touchbiz / Jenius)", "REAL")],
+    formats: [pdf("Laporan Konsolidasi Rekening (Touchbiz / Jenius)", "REAL"), pdf("e-Statement Jenius", "REAL")],
   },
   {
     code: "MANDIRI", name: "Mandiri", fullName: "PT Bank Mandiri (Persero) Tbk", group: "Bank besar", bic: ["BMRIIDJA"],
