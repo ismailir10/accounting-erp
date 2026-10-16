@@ -6,11 +6,9 @@
  */
 import "dotenv/config";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { chromium, expect, type Locator, type Page } from "@playwright/test";
-import sharp from "sharp";
 
 const OUTPUT = join(process.cwd(), "public/product");
 const PERIOD = "2026-08";
@@ -107,10 +105,9 @@ async function main() {
     const controls = await runControls(db, client.id, 2026, 8);
     assert(controls.some((c) => c.status !== "PASS") && controls.some((c) => c.status === "PASS"), "Preserve genuine close blockers and passes; completed walkthrough data is refused.");
     const period = await db.period.findUnique({ where: { clientId_year_month: { clientId: client.id, year: 2026, month: 8 } } });
-    assert.notEqual(period?.status, "LOCKED", "August must remain open for the honest blocker screenshot.");
+    assert.notEqual(period?.status, "LOCKED", "August must remain open so the public page shows an honest blocker.");
 
     const browser = await chromium.launch(process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : undefined);
-    const assets: { file: string; width: number; height: number; bytes: number; sha256: string; description: string }[] = [];
     try {
       const context = await browser.newContext({ baseURL: target.origin, viewport: { width: 1440, height: 1700 }, deviceScaleFactor: 1, reducedMotion: "reduce" });
       let signedIn = false;
@@ -132,16 +129,12 @@ async function main() {
       signedIn = true;
       await expect(page.getByText(firm.name, { exact: true }).first()).toBeVisible();
       await mkdir(OUTPUT, { recursive: true });
-      const capture = async (name: string, locator: Locator, description: string, bottom?: Locator) => {
+      // The public page draws its illustrations from these verified values; each view is still opened and checked as the
+      // accountant sees it, on desktop and phone, but nothing is saved as a screenshot.
+      const capture = async (_name: string, locator: Locator, _description: string, bottom?: Locator) => {
         await stable(page);
-        const bounds = bottom ? await locator.boundingBox() : null;
-        const last = bottom ? await bottom.boundingBox() : null;
-        const png = bounds && last
-          ? await page.screenshot({ animations: "disabled", clip: { ...bounds, height: Math.ceil(last.y + last.height - bounds.y + 24) } })
-          : await locator.screenshot({ animations: "disabled" });
-        const { data, info } = await sharp(png).webp({ quality: 86, effort: 6 }).toBuffer({ resolveWithObject: true });
-        await writeFile(join(OUTPUT, name), data);
-        assets.push({ file: `/product/${name}`, width: info.width, height: info.height, bytes: data.byteLength, sha256: createHash("sha256").update(data).digest("hex"), description });
+        await expect(locator).toBeVisible();
+        if (bottom) await expect(bottom).toBeVisible();
       };
       const scope = `period=${PERIOD}&entity=${entity.id}`;
       const base = `/clients/${client.id}`;
@@ -214,10 +207,9 @@ async function main() {
         trialBalance: { debit: tbDebit.toString(), credit: tbCredit.toString(), source: "JournalLine via trialBalanceMovement; UI footer checked against these totals." },
         close: { scope: "All entities in Grup Ayam Nusantara", controls: controls.map((c) => ({ key: c.key, scope: c.scope, title: c.title, status: c.status, detail: c.detail })), lockEnabled: false },
         assertions: { generatorBookChecks: books.checks, syntheticSourceRowsVerified: txs.length, matchingSourceAndBankLeg: true, balancedJournal: true, balancedTrialBalance: true, genuineCloseBlockersAndPasses: true, noBookWritesOrModelActions: true },
-        assets,
       };
       await writeFile(join(OUTPUT, "capture-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-      console.log(JSON.stringify({ period: PERIOD, assertions: manifest.assertions, assets }, null, 2));
+      console.log(JSON.stringify({ period: PERIOD, assertions: manifest.assertions }, null, 2));
     } finally { await browser.close(); }
   } finally { await db.$disconnect(); }
 }

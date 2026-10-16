@@ -2,11 +2,11 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
 import { PublicLanding } from "@/components/app/public-landing";
+import { formatMoney } from "@/lib/money";
 import { PUBLIC_BANK_COUNT, PUBLIC_BANK_COVERAGE } from "@/lib/public-product";
 import capture from "@/public/product/capture-manifest.json";
 import headlineFont from "@/app/fonts/hanken-grotesk-headline-450.json";
@@ -18,7 +18,7 @@ const render = () => {
   return dom;
 };
 
-describe("saved public product evidence", () => {
+describe("public product page", () => {
   it("keeps every headline character in the pinned display font", async () => {
     const text = render().querySelector("h1")!.textContent!;
     const bytes = await readFile(join(process.cwd(), "app/fonts", headlineFont.file));
@@ -45,56 +45,51 @@ describe("saved public product evidence", () => {
     }
   });
 
-  it("pairs three product sections with genuine, labelled responsive screenshots", () => {
+  it("draws the three product sections from the verified demo instead of shipping screenshots", () => {
     const dom = render();
     expect(dom.querySelectorAll("h1")).toHaveLength(1);
     expect(dom.querySelector("h1")?.textContent).toBe("Dari rekening koran ke laporan keuangan.");
-    expect(dom.querySelector("#firm-title")?.closest("section")?.querySelector("figure")).not.toBeNull();
-    expect(dom.querySelector("#company-title")?.closest("section")?.querySelector("figure")).not.toBeNull();
-    const illustration = dom.querySelector("svg[role='img']")!;
-    expect(illustration.getAttribute("aria-label")).toContain(`${capture.source.fileName} baris ${capture.source.rowNumber}`);
-    for (const line of capture.source.lines) expect(illustration.textContent).toContain(line.code);
-    expect(illustration.closest("figure")?.querySelector("figcaption")?.textContent).toContain("Ilustrasi alur berdasarkan data demo sintetis");
-    const figures = [...dom.querySelectorAll("figure")].filter((figure) => figure.querySelector("img"));
-    expect(figures).toHaveLength(6);
-    for (const figure of figures) {
-      expect(figure.querySelector("figcaption")?.textContent).toContain("Data demonstrasi sintetis");
-      const img = figure.querySelector("img")!;
-      expect(img.alt.length).toBeGreaterThan(30);
-      expect(img.getAttribute("width")).toBeTruthy();
-      expect(img.getAttribute("height")).toBeTruthy();
-      if (figure.querySelector("picture")) {
-        expect(figure.querySelector("source")?.getAttribute("media")).toBe("(max-width: 767px)");
-        const mobile = figure.querySelector("source")?.getAttribute("srcset");
-        const url = new URL(mobile!, "http://localhost");
-        const asset = capture.assets.find((entry) => entry.file === url.pathname);
-        expect(asset).toBeDefined();
-        expect(url.searchParams.get("v")).toBe(asset?.sha256);
-      }
+    expect(dom.querySelectorAll("img, picture")).toHaveLength(0);
+    const hero = dom.querySelector("svg[role='img']")!;
+    expect(hero.getAttribute("aria-label")).toContain(`${capture.source.fileName} baris ${capture.source.rowNumber}`);
+    expect(hero.closest("figure")?.querySelector("figcaption")?.textContent).toContain("Ilustrasi alur berdasarkan data demo sintetis");
+
+    const drawing = (title: string) => dom.querySelector(`#${title}`)!.closest("section")!.querySelector("figure [role='img']")!;
+    const caption = (title: string) => dom.querySelector(`#${title}`)!.closest("section")!.querySelector("figure figcaption")!.textContent;
+    for (const title of ["source-title", "firm-title", "company-title"]) {
+      expect(drawing(title)).not.toBeNull();
+      expect(caption(title)).toContain("Ilustrasi dari data demonstrasi sintetis");
     }
-    for (const image of dom.querySelectorAll("img")) {
-      expect(image.getAttribute("loading")).toBe("lazy");
-      const rendered = new URL(image.getAttribute("src")!, "http://localhost");
-      const original = new URL(rendered.searchParams.get("url") ?? rendered.href, "http://localhost");
-      const asset = capture.assets.find((entry) => entry.file === original.pathname);
-      expect(asset).toBeDefined();
-      expect(original.searchParams.get("v")).toBe(asset?.sha256);
+
+    const amount = (value: string) => formatMoney(BigInt(value), "IDR", { bare: true });
+    const source = drawing("source-title");
+    expect(source.getAttribute("aria-label")).toContain(`baris ${capture.source.rowNumber} rekening koran ${capture.source.fileName}`);
+    expect(source.textContent).toContain(`Baris ${capture.source.rowNumber}`);
+    expect(source.textContent).toContain(capture.source.description);
+    for (const line of capture.source.lines) {
+      expect(source.textContent).toContain(line.code);
+      for (const value of [line.debit, line.credit].filter((v) => v !== "0")) expect(source.textContent).toContain(amount(value));
     }
-    expect(dom.body.textContent).toContain(capture.source.fileName);
+    expect(source.textContent).toContain("Debit = kredit");
+
+    const close = drawing("firm-title");
+    const problems = capture.close.controls.filter((control) => control.status !== "PASS");
+    const passes = capture.close.controls.filter((control) => control.status === "PASS");
+    expect(close.getAttribute("aria-label")).toContain(`${problems.length} kontrol perlu dicek dan ${passes.length} lolos`);
+    for (const control of problems.slice(0, 4)) expect(close.textContent).toContain(control.title);
+    expect(close.textContent).toContain(`${passes.length} kontrol lolos`);
+
+    const report = drawing("company-title");
+    expect(report.textContent).toContain(`Rp ${amount(capture.trialBalance.debit)}`);
+    expect(report.textContent).toContain(`${capture.source.fileName} · baris ${capture.source.rowNumber}`);
+
     expect(dom.body.textContent).not.toContain("—");
     expect(dom.body.textContent).not.toMatch(/Supabase|Anthropic|OpenAI|OpenCode|Vercel|revolusioner|powered by AI/);
   });
 
-  it("keeps the published intrinsic dimensions and bytes equal to each actual asset", async () => {
-    for (const asset of capture.assets) {
-      expect(asset.file).toMatch(/^\/product\/[a-z-]+\.webp$/);
-      const bytes = await readFile(join(process.cwd(), "public", asset.file));
-      const metadata = await sharp(bytes).metadata();
-      expect(bytes.length).toBe(asset.bytes);
-      expect(createHash("sha256").update(bytes).digest("hex")).toBe(asset.sha256);
-      expect(metadata.format).toBe("webp");
-      expect(metadata.width).toBe(asset.width);
-      expect(metadata.height).toBe(asset.height);
-    }
+  it("ships no screenshot files and no screenshot entries in the evidence manifest", async () => {
+    expect("assets" in capture).toBe(false);
+    const files = await readdir(join(process.cwd(), "public/product"));
+    expect(files.filter((file) => /\.(webp|png|jpe?g)$/.test(file))).toEqual([]);
   });
 });

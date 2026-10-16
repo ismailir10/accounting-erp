@@ -206,6 +206,8 @@
  * `page-settle` — a page arriving (app/(app)/template.tsx, auth card). Opacity + `translate` with fill-mode `backwards`, so no
  *   transform stays on the wrapper afterwards (a lasting transform would become the containing block of fixed children).
  * `check-draw` — the done mark draws its ring, then its check (components/motion/check-draw.tsx).
+ * `[data-reveal]` — public-site content settling in the first time it scrolls into view (components/motion/reveal.tsx); children
+ *   under `[data-stagger]` follow one by one by their `--i`, and `.trace-draw` lines draw from source to result. Held paused until shown.
  */
 @keyframes page-settle {
   from {
@@ -232,11 +234,56 @@
     animation-duration: 240ms;
     animation-delay: 200ms;
   }
+  [data-reveal="hidden"] {
+    opacity: 0;
+    translate: 0 18px;
+  }
+  [data-reveal="shown"] {
+    transition: opacity 450ms cubic-bezier(0.2, 0.8, 0.2, 1), translate 450ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  [data-reveal="hidden"] [data-stagger] > * {
+    opacity: 0;
+    translate: 0 8px;
+  }
+  [data-reveal="shown"] [data-stagger] > * {
+    transition: opacity 320ms ease-out, translate 320ms ease-out;
+    transition-delay: calc(140ms + var(--i, 0) * 70ms);
+  }
+  .trace-draw {
+    stroke-dasharray: 1 1;
+    stroke-dashoffset: 0;
+    animation: draw-stroke 450ms cubic-bezier(0.23, 1, 0.32, 1) 260ms backwards;
+  }
+  [data-reveal="hidden"] .trace-draw,
+  [data-reveal="hidden"] .check-draw circle,
+  [data-reveal="hidden"] .check-draw path {
+    animation-play-state: paused;
+  }
+  [data-reveal="shown"] .check-draw circle {
+    animation-delay: 420ms;
+  }
+  [data-reveal="shown"] .check-draw path {
+    animation-delay: 620ms;
+  }
   @media (prefers-reduced-motion: reduce) {
     .page-settle,
     .check-draw circle,
-    .check-draw path {
+    .check-draw path,
+    .trace-draw {
       animation: none;
+    }
+    [data-reveal],
+    [data-reveal] [data-stagger] > * {
+      opacity: 1;
+      translate: none;
+      transition: none;
+    }
+  }
+  @media print {
+    [data-reveal],
+    [data-reveal] [data-stagger] > * {
+      opacity: 1;
+      translate: none;
     }
   }
 }

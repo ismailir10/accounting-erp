@@ -38,21 +38,12 @@ test("public product and legal navigation stays usable on desktop and phone", as
       if (item.path === "/") {
         await expect(page.getByRole("link", { name: "Minta akses uji coba", exact: true }).first()).toHaveAttribute("href", "/daftar");
         await expect(page.getByRole("link", { name: "Lihat deck", exact: true })).toHaveAttribute("href", "/deck");
-        const images = page.locator("main img:visible");
-        for (const image of await images.all()) {
-          await image.scrollIntoViewIfNeeded();
-          await expect.poll(() => image.evaluate((node) => (node as HTMLImageElement).complete && (node as HTMLImageElement).naturalWidth > 0)).toBe(true);
-        }
-        expect(await images.evaluateAll((nodes) => nodes.every((node) => (node as HTMLImageElement).alt.length > 20))).toBe(true);
-        if (width === 390) {
-          for (const label of ["Lihat daftar periksa lengkap", "Lihat Neraca Saldo lengkap"]) {
-            const disclosure = page.getByText(label, { exact: true });
-            await disclosure.click();
-            const detail = disclosure.locator("..").locator("img");
-            await detail.scrollIntoViewIfNeeded();
-            await expect.poll(() => detail.evaluate((node) => (node as HTMLImageElement).complete && (node as HTMLImageElement).naturalWidth > 0)).toBe(true);
-            await disclosure.click();
-          }
+        await expect(page.locator("main img")).toHaveCount(0);
+        // Illustrations settle in as the reader scrolls; every one ends fully visible with its demo label.
+        for (const figure of await page.locator("main figure").all()) {
+          await figure.scrollIntoViewIfNeeded();
+          await expect.poll(() => figure.evaluate((node) => getComputedStyle(node.querySelector("[data-reveal]") ?? node).opacity)).toBe("1");
+          await expect(figure.locator("figcaption")).toContainText(/data demo|demonstrasi sintetis/);
         }
         await page.evaluate(() => scrollTo(0, 0));
       }
@@ -73,6 +64,8 @@ test("public arrival motion respects reduced motion and metadata resolves", asyn
     expect(await page.locator(".page-settle").first().evaluate((element) => getComputedStyle(element).animationName)).toBe("none");
   }
   await page.goto("/");
+  // Reduced motion: nothing below the fold is ever hidden, so the page reads in full without scrolling.
+  await expect(page.locator("[data-reveal='hidden']")).toHaveCount(0);
   for (const shape of await page.locator(".check-draw circle, .check-draw path").all()) {
     expect(await shape.evaluate((element) => getComputedStyle(element).animationName)).toBe("none");
   }
