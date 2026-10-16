@@ -23,13 +23,21 @@ from the private layout probe: words from a fixed public vocabulary, token shape
 5. **Delivery:** branch `task/jenius-estatement-reader` from released `main`. The output of this cycle is a private release candidate
    (diff plus checksum) for testing on the Mac. No PR, merge or deploy until the owner decides. The held import fix (PR #160) stays
    separate.
+6. **The bank from the layout's own header, narrowly.** Some of these statements print no bank name above the transaction table (the
+   name appears only below it). Buku names the bank from the text above the table, never from transactions; when that text names no
+   bank and the table's header is exactly *Date & Time · Details · Notes · Amount*, the statement is tagged SMBC. Any other header
+   keeps today's rule. To be challenged in review.
+7. **No change to duplicate handling.** The layout prints no running balance, so a row cannot be proven to be one already on file by
+   its date and amount alone. The same file imported again writes nothing (its bytes prove it); a reissue of a month in other bytes is
+   refused whole without changes, as Buku already does for sources without balances (accounting-rules 12). Changing that would be an
+   invariant change and re-open the gate.
 
 ## Acceptance criteria
 - [ ] A Jenius/JFB 2025 e-statement in the layout the metadata describes is read automatically on Unggah: account, period, opening,
   every row (date, signed amount, running balance) and closing, tagged as SMBC.
 - [ ] Every fictional month's running balance is continuous; a fictional file with a row removed shows the break (existing rule).
 - [ ] A month spread over several pages reads as one statement; repeated page headers and footers are never rows.
-- [ ] The same file imported again writes nothing; an overlapping statement's repeated rows are recognised as duplicates.
+- [ ] The same file imported again writes nothing; a month reissued in other bytes is refused whole and writes nothing.
 - [ ] Every layout Buku already reads still reads the same (all bank-layout fixtures and SMBC tests pass; `verify:books` ALL PASS).
 - [ ] The bank catalogue lists the new format with its evidence level, so the coverage test requires its fixture.
 - [ ] A PDF that is no known statement is still refused with today's message.
@@ -80,6 +88,15 @@ a migration), a change to an accounting invariant (e.g. the repair rules of acco
 - [ ] T7 Private release candidate (patch, checksums) for the owner's private acceptance — accept: owner's acceptance result recorded.
 
 ## Implementation
+- Reader (`lib/import/parsers/pdf.ts`): *Details* is a description label; a period printed as a month under a *Period* label and an
+  account number under an *Account Number* label are read when no other reader found them, ignoring separators printed beside them;
+  the bank is named from the exact Jenius header when nothing above the table names one; *Card Number* is no holder name.
+  *Previous Balance* and *Ending Balance* were already opening and closing labels. Catalogue entry *e-Statement Jenius* (REAL: built
+  from structure metadata of real files).
+- Fixtures: `jeniusEstatementPdf` (both variants, several pages, notes, card lines in foreign currency, same-day fees, password) and two
+  entries in the bank-layout set.
+- Private kit (not in Git): an independent facts reader for the layout, layout-aware checks and a check against the owner's targets; its
+  own fictional monthly series rendered independently of Buku's fixture.
 
 ## Verification
 
