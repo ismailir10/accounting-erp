@@ -64,7 +64,7 @@ test("Wawasan: trend and margin equal their tables; a group asks for one company
 });
 
 /**
- * Wawasan, flow 2: PT Jasa Kreatif Digital, July 2026 — 6170 Beban Jasa Profesional is over the threshold with its three largest lines and
+ * Wawasan, flow 2: PT Jasa Kreatif Digital, July 2026 — 6170 Beban Jasa Profesional is over the threshold with its one line and
  * their source, opens its Buku Besar, and a typed explanation, once approved, is in the management pack's Perubahan Akun. It is removed
  * at the end so the demo stays as seeded. (CI has no AI key: *Susun dengan AI* is covered by DB tests with MockProvider.)
  */

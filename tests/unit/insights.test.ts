@@ -45,16 +45,26 @@ describe("trend", () => {
     const flat = trend(months(2), [fig(100n * J, 50n * J), fig(100n * J, 50n * J)], "IDR");
     expect(flat.sentence).toBe("Pendapatan Februari 2026 Rp 100.000.000, sama dengan Januari 2026; laba bersih Rp 40.000.000, sama dengan Januari 2026.");
     expect(flat.metrics[0].run).toBeNull();
-    const fromZero = trend(months(2), [fig(0n, 0n, 0n), fig(50n * J, 0n, 0n)], "IDR");
+    const fromZero = trend(months(2), [fig(0n, 0n), fig(50n * J, 0n, 0n)], "IDR");
     expect(fromZero.metrics[0].changePercent).toBeNull();
     expect(fromZero.sentence).toMatch(/^Pendapatan Februari 2026 Rp 50\.000\.000, naik Rp 50\.000\.000 dari Januari 2026/);
+  });
+
+  it("months before the first Laba Rugi figure (the opening month) are not part of the trend", () => {
+    const t = trend(months(4, 2), [fig(0n, 0n, 0n), fig(100n * J, 60n * J), fig(120n * J, 70n * J), fig(110n * J, 60n * J)], "IDR");
+    const revenue = t.metrics.find((m) => m.key === "revenue")!;
+    expect(revenue).toMatchObject({ previous: 120n * J, average: 110n * J });
+    expect(revenue.low).toMatchObject({ key: "2026-03", value: 100n * J });
+    const only = trend(months(2, 2), [fig(0n, 0n, 0n), fig(100n * J, 60n * J)], "IDR");
+    expect(only.compared).toBe(false);
+    expect(only.sentence).toBe("Maret 2026 adalah bulan pertama tahun buku ini yang berisi laba rugi, jadi belum ada bulan pembanding.");
   });
 
   it("the first month of the year has nothing to compare", () => {
     const t = trend(months(1, 7), [fig(100n * J, 50n * J)], "IDR");
     expect(t.compared).toBe(false);
     expect(t.metrics[0]).toMatchObject({ previous: null, change: null, average: null, run: null });
-    expect(t.sentence).toBe("Juli 2026 adalah bulan pertama tahun buku ini, jadi belum ada bulan pembanding.");
+    expect(t.sentence).toBe("Juli 2026 adalah bulan pertama tahun buku ini yang berisi laba rugi, jadi belum ada bulan pembanding.");
   });
 });
 

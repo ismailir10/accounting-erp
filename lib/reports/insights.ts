@@ -21,6 +21,7 @@ export function figuresOf(s: IncomeStatement): Figures {
 }
 
 const abs = (v: bigint) => (v < 0n ? -v : v);
+const hasProfitAndLoss = (f: Figures) => f.revenue !== 0n || f.cogs !== 0n || f.grossProfit !== 0n || f.operatingProfit !== 0n || f.netProfit !== 0n;
 type Month = Pick<MonthCol, "key" | "label" | "year" | "month">;
 
 export type TrendKey = "revenue" | "grossProfit" | "netProfit";
@@ -62,7 +63,12 @@ export function runOf(values: bigint[]): { up: boolean; months: number } | null 
  * Tren: pendapatan, laba kotor and laba bersih of the last month in `months` against the month before, against the average of the year's
  * earlier months, the run and the year's highest and lowest month (the first of equal months). `figures[i]` is `months[i]`'s statement.
  */
-export function trend(months: Month[], figures: Figures[], currency: string): Trend {
+export function trend(allMonths: Month[], allFigures: Figures[], currency: string): Trend {
+  // Months before the first with any Laba Rugi figure (the books' opening month holds only the Saldo Awal) are not part of the year's
+  // trend: counted, they would be its "lowest month" at zero and pull the average down.
+  const from = Math.min(Math.max(0, allFigures.findIndex(hasProfitAndLoss)), allMonths.length - 1);
+  const months = allMonths.slice(from);
+  const figures = allFigures.slice(from);
   const i = months.length - 1;
   const metrics = TREND.map(({ key, label }): TrendMetric => {
     const values = figures.map((f) => f[key]);
@@ -94,7 +100,7 @@ export function trend(months: Month[], figures: Figures[], currency: string): Tr
 function trendSentence(months: Month[], metrics: TrendMetric[], currency: string): string {
   const now = months.at(-1)!;
   const month = formatPeriod(now.year, now.month);
-  if (months.length < 2) return `${month} adalah bulan pertama tahun buku ini, jadi belum ada bulan pembanding.`;
+  if (months.length < 2) return `${month} adalah bulan pertama tahun buku ini yang berisi laba rugi, jadi belum ada bulan pembanding.`;
   const before = months.at(-2)!;
   const last = formatPeriod(before.year, before.month);
   const m = (v: bigint) => formatMoney(abs(v), currency);
