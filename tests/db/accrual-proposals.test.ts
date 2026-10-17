@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import ExcelJS from "exceljs";
 import { db, makeGroup, resetDb } from "../helpers";
-import { accrualProposals, NO_CREDIT } from "@/lib/adjust/accruals";
+import { AccrualFieldError, accrualProposals, DECIDED, dismissAccrual, NO_CREDIT, postAccrual } from "@/lib/adjust/accruals";
+import { trialBalance } from "@/lib/reports/ledger";
+import { journalRegister } from "@/lib/reports/journal-register";
+import { accountLedger } from "@/lib/reports/account-ledger";
+import { generalLedger } from "@/lib/reports/general-ledger";
+import { entryOrigins } from "@/lib/reports/entry-origin";
 import { importStatement } from "@/lib/import/pipeline";
 import { isGenericKey } from "@/lib/import/normalize";
 import { reviewTransaction } from "@/lib/review";
@@ -10,7 +15,7 @@ import { createSchedule } from "@/lib/adjust/schedules";
 import { postAdjustment } from "@/lib/ledger/adjustment";
 import { acceptCheck, importSourceAccounts, postImport, stageImport } from "@/lib/ledger-import/post";
 import { acceptMappings, suggestMappings } from "@/lib/ledger-import/mapping";
-import { dateOnly } from "@/lib/format";
+import { dateOnly, periodBounds } from "@/lib/format";
 
 // Usulan akrual (cycle 2026-10-18-usulan-akrual): proposals per counterparty, read from the books built through the real pipeline.
 type G = Awaited<ReturnType<typeof makeGroup>>;
@@ -289,5 +294,123 @@ describe("accrual proposals", () => {
     const found = await august(g);
     expect(found.map((p) => [p.credit, p.blocked])).toEqual(Array(3).fill([null, null]));
     expect(NO_CREDIT).toBe("Pilih akun kredit (liabilitas): bagan akun klien tidak punya 2150.");
+  });
+});
+
+describe("deciding an accrual proposal", () => {
+  beforeEach(resetDb);
+
+  const decide = (g: G, key: string, edit?: Parameters<typeof postAccrual>[1]["edit"]) => postAccrual(db, { firmId: g.firm.id, clientId: g.client.id, key, edit, now: NOW });
+  const dismiss = (g: G, key: string) => dismissAccrual(db, { firmId: g.firm.id, clientId: g.client.id, key, now: NOW });
+  /** Net (debit − credit) of an account in the PT's trial balance at a month's end. */
+  const tb = async (g: G, month: number, code: string) => (await trialBalance(db, { clientId: g.client.id, entityIds: [g.pt.entity.id] }, periodBounds(2026, month).end)).find((r) => r.account.code === code)?.net ?? 0n;
+  const adjustments = (g: G) => db.journalEntry.count({ where: { entityId: g.pt.entity.id, kind: "ADJUSTMENT" } });
+
+  it("Setujui posts one ADJUSTMENT on the month's last day and its mirror on the 1st of the next, stores it POSTED with its entry, and the card leaves", async () => {
+    const { g } = await qaBooks();
+    const bersih = (await august(g)).find((p) => p.counterparty === BERSIH)!;
+    const before = { expense: await tb(g, 8, "6190"), accrued: await tb(g, 8, "2150"), sep: await tb(g, 9, "2150") };
+    const entry = await decide(g, bersih.key);
+    const lines = (id: string) => db.journalLine.findMany({ where: { entryId: id }, include: { account: true }, orderBy: { debit: "desc" } }).then((ls) => ls.map((l) => [l.account.code, l.debit, l.credit, l.memo]));
+    expect([entry.kind, entry.date, entry.memo]).toEqual(["ADJUSTMENT", dateOnly(2026, 8, 31), `Akrual ${BERSIH} Agu 2026`]);
+    expect(await lines(entry.id)).toEqual([["6190", jt(4.2), 0n, BERSIH], ["2150", 0n, jt(4.2), BERSIH]]);
+    const reversal = await db.journalEntry.findUniqueOrThrow({ where: { reversesId: entry.id } });
+    expect([reversal.kind, reversal.date, reversal.memo]).toEqual(["ADJUSTMENT", dateOnly(2026, 9, 1), `Pembalik: Akrual ${BERSIH} Agu 2026 (31 Agu 2026)`]);
+    expect(await lines(reversal.id)).toEqual([["2150", jt(4.2), 0n, BERSIH], ["6190", 0n, jt(4.2), BERSIH]]);
+    const stored = await db.proposedEntry.findUniqueOrThrow({ where: { key: bersih.key } });
+    expect(stored).toMatchObject({ source: "ACCRUAL", status: "POSTED", entryId: entry.id, year: 2026, month: 8, memo: bersih.memo, reason: bersih.rationale, refs: bersih.refs, lines: [{ accountCode: "6190", debit: "4200000", credit: "0" }, { accountCode: "2150", debit: "0", credit: "4200000" }] });
+    expect((await august(g)).map((p) => p.counterparty)).toEqual([TELKOM, ANDALAS]);
+    // Trial balance: August's expense and 2150 up by the amount; September back.
+    expect([await tb(g, 8, "6190") - before.expense, await tb(g, 8, "2150") - before.accrued, await tb(g, 9, "2150") - before.sep]).toEqual([jt(4.2), -jt(4.2), 0n]);
+    // Jurnal Umum, the Buku Besar drawer and the Excel source column name where it came from.
+    const august31 = periodBounds(2026, 8);
+    const register = (await journalRegister(db, { clientId: g.client.id, entityIds: [g.pt.entity.id] }, { ...august31, kinds: null, search: null }, "all")).entries;
+    expect(register.find((e) => e.id === entry.id)!.origin).toBe(`Usulan akrual (riwayat ${BERSIH})`);
+    const expense = await db.account.findUniqueOrThrow({ where: { clientId_code: { clientId: g.client.id, code: "6190" } } });
+    const { rows } = await accountLedger(db, { accountId: expense.id, entityIds: [g.pt.entity.id], ...august31, normalBalance: "DEBIT" });
+    expect(rows.filter((r) => r.origin).map((r) => r.origin)).toEqual([`Usulan akrual (riwayat ${BERSIH})`]);
+    const [gl] = await generalLedger(db, { clientId: g.client.id, entityIds: [g.pt.entity.id] }, august31.start, august31.end, { accountCode: "2150" });
+    expect(gl.lines.map((l) => l.source)).toEqual([expect.stringContaining(`Usulan akrual (riwayat ${BERSIH})`)]);
+  });
+
+  it("Ubah posts the typed amount and accounts; 0, a bank, clearing or 1999 account and a non-liability credit are refused with a field message", async () => {
+    const { g } = await qaBooks();
+    const [telkom, andalas] = await august(g);
+    const refused = async (edit: Parameters<typeof decide>[2], field: string, message: string) => {
+      const e = await decide(g, andalas.key, edit).catch((x) => x);
+      expect([e instanceof AccrualFieldError, e.field, e.message]).toEqual([true, field, message]);
+    };
+    await refused({ amount: "0" }, "amount", "Nominal harus lebih dari nol.");
+    await refused({ amount: "abc" }, "amount", expect.stringContaining("tidak bisa dibaca"));
+    const bank = (await db.bankAccount.findUniqueOrThrow({ where: { id: g.pt.banks[0].id }, include: { account: true } })).account.code;
+    for (const code of [bank, "1199", "1190", "1999"]) await refused({ debitCode: code }, "debit", "Akun debit tidak boleh akun bank, kliring (1190/1199) atau 1999.");
+    for (const code of [bank, "6120", "1170"]) await refused({ creditCode: code }, "credit", "Akun kredit harus akun liabilitas, bukan bank, kliring (1190/1199) atau 1999.");
+    await refused({ creditCode: "9999" }, "credit", "Akun 9999 tidak ada di bagan akun klien.");
+    expect(await adjustments(g)).toBe(0);
+    // Telkom: Rp 450.000 instead of Rp 500.000, credit 2150 kept.
+    const entry = await decide(g, telkom.key, { amount: "450.000", creditCode: "2150" });
+    expect((await db.journalLine.findMany({ where: { entryId: entry.id }, include: { account: true }, orderBy: { debit: "desc" } })).map((l) => [l.account.code, l.debit, l.credit])).toEqual([["6130", 450_000n, 0n], ["2150", 0n, 450_000n]]);
+    // The proposal keeps Buku's lines; the origin says what changed.
+    expect((await db.proposedEntry.findUniqueOrThrow({ where: { key: telkom.key } })).lines).toEqual([{ accountCode: "6130", debit: "500000", credit: "0" }, { accountCode: "2150", debit: "0", credit: "500000" }]);
+    expect((await entryOrigins(db, [entry.id])).get(entry.id)).toBe(`Usulan akrual (riwayat ${TELKOM}) diubah dari Rp 500.000`);
+    // Other accounts post as typed: Andalas on 6160 against 2120.
+    const other = await decide(g, andalas.key, { debitCode: "6160", creditCode: "2120" });
+    expect((await db.journalLine.findMany({ where: { entryId: other.id }, include: { account: true }, orderBy: { debit: "desc" } })).map((l) => [l.account.code, l.debit])).toEqual([["6160", jt(7.5)], ["2120", 0n]]);
+    expect((await entryOrigins(db, [other.id])).get(other.id)).toBe(`Usulan akrual (riwayat ${ANDALAS})`);
+  });
+
+  it("Tolak stores the decision: gone for the month, back next month while the vendor is still missing", async () => {
+    const { g, bca } = await qaBooks();
+    const andalas = (await august(g)).find((p) => p.counterparty === ANDALAS)!;
+    await dismiss(g, andalas.key);
+    expect(await db.proposedEntry.findUniqueOrThrow({ where: { key: andalas.key } })).toMatchObject({ source: "ACCRUAL", status: "DISMISSED", entryId: null });
+    expect((await august(g)).map((p) => p.counterparty)).toEqual([TELKOM, BERSIH]);
+    await expect(dismiss(g, andalas.key)).rejects.toThrow(DECIDED);
+    await expect(decide(g, andalas.key)).rejects.toThrow(DECIDED);
+    // September's statement without Andalas: it is proposed again for September (May–July against an empty August).
+    await statement(bca, 2026, 9, [[10, BERSIH, jt(4.2)], [12, PLN, jt(2.3)], [14, TELKOM, jt(0.5)]]);
+    const september = await accrualProposals(db, g.client.id, 2026, 9, { now: NOW });
+    expect(september.map((p) => [p.counterparty, p.amount])).toEqual([[ANDALAS, jt(7.5)]]);
+  });
+
+  it("refuses, posting nothing, when the payment arrived meanwhile, when already decided, or when the next month is locked", async () => {
+    const { g, bca } = await qaBooks();
+    const [telkom, andalas, bersih] = await august(g);
+    // The payment arrives between the page and the click.
+    await statement(bca, 2026, 8, [[30, BERSIH, jt(4.2)]], 31, 30);
+    await expect(decide(g, bersih.key)).rejects.toThrow(`Pembayaran ${BERSIH} 30 Agu 2026 sudah masuk; usulan ini tidak berlaku lagi.`);
+    await expect(dismiss(g, bersih.key)).rejects.toThrow(`Pembayaran ${BERSIH} 30 Agu 2026 sudah masuk; usulan ini tidak berlaku lagi.`);
+    // Decided twice.
+    await decide(g, telkom.key);
+    await expect(decide(g, telkom.key)).rejects.toThrow(DECIDED);
+    expect(await adjustments(g)).toBe(2);
+    // September locked: the card says so first, and the click posts nothing.
+    await db.period.upsert({ where: { clientId_year_month: { clientId: g.client.id, year: 2026, month: 9 } }, update: { status: "LOCKED" }, create: { firmId: g.firm.id, clientId: g.client.id, year: 2026, month: 9, status: "LOCKED" } });
+    expect((await august(g)).find((p) => p.key === andalas.key)!.blocked).toBe("1 Sep 2026 sudah dikunci, jadi pembaliknya tidak bisa dicatat.");
+    await expect(decide(g, andalas.key)).rejects.toThrow("1 Sep 2026 sudah dikunci, jadi pembaliknya tidak bisa dicatat.");
+    expect(await adjustments(g)).toBe(2);
+    expect(await db.proposedEntry.count({ where: { key: andalas.key } })).toBe(0);
+    // A key of another client, or one that was never proposed, posts nothing either.
+    const other = await makeGroup();
+    await expect(postAccrual(db, { firmId: other.firm.id, clientId: other.client.id, key: andalas.key, now: NOW })).rejects.toThrow("Usulan akrual ini tidak berlaku lagi. Muat ulang halaman.");
+    await expect(decide(g, `ACCRUAL:${g.pt.entity.id}:2026-08:6120:bank:SIAPA SAJA`)).rejects.toThrow("Usulan akrual ini tidak berlaku lagi. Muat ulang halaman.");
+  });
+
+  it("a payee card with a manual-accrual warning still approves; a chart without 2150 needs a liability picked", async () => {
+    const { g } = await qaBooks();
+    await postAdjustment(db, { clientId: g.client.id, entityId: g.pt.entity.id, date: dateOnly(2026, 8, 31), memo: "Akrual kebersihan Agustus", lines: [{ accountCode: "6190", debit: "4.000.000", credit: "" }, { accountCode: "2150", debit: "", credit: "4.000.000" }] });
+    const warned = (await august(g)).find((p) => p.warning)!;
+    expect(warned.counterparty).toBe(BERSIH);
+    await decide(g, warned.key);
+    expect(await db.proposedEntry.findUniqueOrThrow({ where: { key: warned.key } })).toMatchObject({ status: "POSTED" });
+    // Another chart without 2150: *Setujui* waits for a liability, then posts against it.
+    await resetDb();
+    const { g: g2 } = await qaBooks();
+    await db.account.delete({ where: { clientId_code: { clientId: g2.client.id, code: "2150" } } });
+    const [telkom] = await august(g2);
+    const e = await decide(g2, telkom.key).catch((x) => x);
+    expect([e instanceof AccrualFieldError, e.field, e.message]).toEqual([true, "credit", NO_CREDIT]);
+    const entry = await decide(g2, telkom.key, { creditCode: "2120" });
+    expect((await db.journalLine.findMany({ where: { entryId: entry.id, credit: { gt: 0n } }, include: { account: true } })).map((l) => l.account.code)).toEqual(["2120"]);
   });
 });

@@ -98,6 +98,10 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
       account of a payee's history covered through M's end, rule 22c; a ledger-fed company has imported lines in M). A manual accrual
       on the account in M (an ADJUSTMENT crediting a liability, or an ACCRUAL schedule's instalment) hides a ledger bucket and warns
       on a payee or supplier card. Every history line is cited as `jl:<id>`, so the amount drills to its bank row or `sheet!row`.
+    - **Posted only by the accountant's click** (*Setujui*, `postAccrual`): one SERIALIZABLE transaction re-checks that the proposal is
+      undecided and still missing, posts Dr the account / Cr 2150 on M's last day and its mirror on the 1st of M+1 (`reversesId` set)
+      through Jurnal Penyesuaian's own writer (`postAdjustmentTx`, *Balik otomatis*; a locked M+1 refuses both), and stores the
+      `ProposedEntry` (source ACCRUAL) POSTED with its entry. *Tolak* stores it DISMISSED, for M only. Nothing else proposes accruals.
 
 ## Money
 5b. **Fixed-asset register** (`lib/assets`): a `FixedAsset` per entity (fiscal group, fiscal method, acquisition date, cost, residual,
@@ -441,7 +445,10 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     cited bank lines any other way (several lines at once) gets no draft, never a free journal. A cited journal line or entry
     (`jl:`/`je:`, as the ledger anomaly scans cite) counts as its bank line when it came from one, and every account that line posts
     to (classification, tax split, suspense) is part of it. Group-level
-    controls get words only. Deterministic proposals (e.g. 1999 corrections) use the same table.
+    controls get words only. Deterministic proposals (1999 corrections, accruals from history — rule 5a, source ACCRUAL, stored only when
+    decided) use the same table. An accrual is an estimate, so unlike a draft its amount may be changed before *Setujui* (`parseMoney`,
+    > 0), as may its accounts: the debit never a bank, clearing (1190/1199) or 1999 account, the credit a liability, none of those. The
+    stored proposal keeps Buku's lines; the entry holds what was posted, and its origin says "diubah dari Rp …".
     A draft that moves a bank line is not created, shown as blocked and refused on post when an `ADJUSTMENT` of that entity, dated from
     the line's date to the period end, already moves exactly its amount off its account (`priorCorrection`): never correct twice.
     Drafts for a PT or foreign company never see the Prive line (3300); a CV's or an individual's may.

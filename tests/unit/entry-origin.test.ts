@@ -8,6 +8,11 @@ describe("entry origin", () => {
     expect(originText({ kind: "draft", source: "SUSPENSE", control: null })).toBe("Koreksi selisih 1999");
   });
 
+  it("names an approved accrual by the history it came from, and the amount Buku proposed when another was posted", () => {
+    expect(originText({ kind: "accrual", counterparty: "HJ MARYAM SEWA GUDANG", changedFrom: null })).toBe("Usulan akrual (riwayat HJ MARYAM SEWA GUDANG)");
+    expect(originText({ kind: "accrual", counterparty: "TELKOM INDIHOME", changedFrom: "Rp 500.000" })).toBe("Usulan akrual (riwayat TELKOM INDIHOME) diubah dari Rp 500.000");
+  });
+
   it("names the Coretax file and row of a booked faktur", () => {
     expect(originText({ kind: "faktur", fileName: "faktur-agu.xlsx", sourceRef: "Sheet1!4" })).toBe("Faktur Coretax faktur-agu.xlsx Sheet1!4");
   });

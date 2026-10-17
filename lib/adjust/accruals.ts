@@ -6,7 +6,10 @@ import { openingDate, statementCoverage } from "@/lib/controls/coverage";
 import { installments, owed } from "@/lib/adjust/schedules";
 import { todayWib } from "@/lib/checklist/rules";
 import { dateOnly, formatDate, formatMonthYear, monthName, periodBounds } from "@/lib/format";
-import { formatMoney } from "@/lib/money";
+import { formatMoney, parseMoney } from "@/lib/money";
+import { LedgerError } from "@/lib/ledger/post";
+import { postAdjustmentTx } from "@/lib/ledger/adjustment";
+import type { ProposalLine } from "@/lib/adjust/proposals";
 
 /**
  * Usulan akrual (cycle 2026-10-18-usulan-akrual, accounting-rules 5a / 20b): an expense that recurs every month from the same
@@ -395,4 +398,140 @@ async function manualAccruals(db: Db, entityId: string, year: number, month: num
     if (due && !out.has(s.debitAccountId)) out.set(s.debitAccountId, { memo: s.memo, amount: formatMoney(due.amount, currency) });
   }
   return out;
+}
+
+// ---- the decision (*Setujui*, *Ubah*, *Tolak*) ----
+
+/** A refusal tied to one field of *Ubah* (shown under it). */
+export class AccrualFieldError extends LedgerError {
+  constructor(
+    readonly field: "amount" | "debit" | "credit",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export const DECIDED = "Usulan akrual ini sudah diputuskan.";
+const GONE = "Usulan akrual ini tidak berlaku lagi. Muat ulang halaman.";
+
+/** *Ubah*: a new amount (major units, typed) and accounts; blank keeps Buku's. */
+export type AccrualEdit = { amount?: string | null; debitCode?: string | null; creditCode?: string | null };
+
+/** How a counterparty reads when its proposal is no longer computed (a refusal's words). */
+async function labelOf(db: Db | Tx, clientId: string, code: string, bucket: Bucket) {
+  if (bucket.kind === "bank") return bucket.merchantKey;
+  if (bucket.kind === "contact") return (await db.contact.findFirst({ where: { id: bucket.contactId, clientId }, select: { name: true } }))?.name ?? "";
+  const a = await db.account.findFirst({ where: { clientId, code }, select: { name: true } });
+  return `${code} ${a?.name ?? ""}`.trim();
+}
+
+const arrivedText = (label: string, a: Arrival) => `Pembayaran ${label} ${formatDate(a.date)} sudah masuk; usulan ini tidak berlaku lagi.`;
+
+/** The proposal behind a key as it reads now, or the reason it no longer exists (decided, the payment arrived, or anything else). */
+export async function currentAccrual(db: Db, clientId: string, key: string, now?: Date): Promise<AccrualProposal> {
+  const k = parseAccrualKey(key);
+  const entity = k ? await db.entity.findFirst({ where: { id: k.entityId, clientId }, select: { id: true } }) : null;
+  if (!k || !entity) throw new LedgerError(GONE);
+  const found = (await accrualProposals(db, clientId, k.year, k.month, { entityIds: [k.entityId], now })).find((p) => p.key === key);
+  if (found) return found;
+  if (await db.proposedEntry.findUnique({ where: { key }, select: { id: true } })) throw new LedgerError(DECIDED);
+  const account = await db.account.findFirst({ where: { clientId, code: k.code }, select: { id: true } });
+  const [first] = account ? await arrivals(db, k.entityId, account.id, k.bucket, k.year, k.month) : [];
+  if (first) throw new LedgerError(arrivedText(await labelOf(db, clientId, k.code, k.bucket), first));
+  throw new LedgerError(GONE);
+}
+
+/** Buku's own lines, as the decision stores them (the entry holds what was posted). */
+const proposedLines = (p: AccrualProposal): ProposalLine[] => [
+  { accountCode: p.account.code, debit: p.amount.toString(), credit: "0" },
+  { accountCode: p.credit?.code ?? "", debit: "0", credit: p.amount.toString() },
+];
+
+const stored = (firmId: string, clientId: string, p: AccrualProposal) => ({
+  firmId,
+  clientId,
+  entityId: p.entity.id,
+  year: p.year,
+  month: p.month,
+  source: "ACCRUAL" as const,
+  key: p.key,
+  memo: p.memo,
+  lines: proposedLines(p),
+  reason: p.rationale,
+  refs: p.refs,
+});
+
+const isCode = (e: unknown, code: string) => (e as { code?: string } | null)?.code === code;
+
+/**
+ * *Setujui* (with *Ubah*'s edits): one SERIALIZABLE transaction that re-checks the proposal is still undecided and still missing, posts
+ * the ADJUSTMENT on the month's last day and its mirror on the 1st of the next month through Jurnal Penyesuaian's own writer
+ * (`postAdjustmentTx`, *Balik otomatis*), and stores the decision POSTED with its entry. A locked next month refuses both.
+ */
+export async function postAccrual(db: Db, input: { firmId: string; clientId: string; key: string; edit?: AccrualEdit; actorId?: string | null; now?: Date }) {
+  const p = await currentAccrual(db, input.clientId, input.key, input.now);
+  if (p.blocked) throw new LedgerError(p.blocked);
+  const edit = input.edit ?? {};
+  let amount = p.amount;
+  if (edit.amount?.trim()) {
+    try {
+      amount = parseMoney(edit.amount, p.entity.functionalCurrency);
+    } catch (e) {
+      throw new AccrualFieldError("amount", e instanceof Error ? e.message : "Nominal tidak bisa dibaca.");
+    }
+  }
+  if (amount <= 0n) throw new AccrualFieldError("amount", "Nominal harus lebih dari nol.");
+  const debitCode = edit.debitCode?.trim() || p.account.code;
+  const creditCode = edit.creditCode?.trim() || p.credit?.code;
+  if (!creditCode) throw new AccrualFieldError("credit", NO_CREDIT);
+  const chart = new Map((await db.account.findMany({ where: { clientId: input.clientId, code: { in: [debitCode, creditCode] } } })).map((a) => [a.code, a]));
+  const debit = chart.get(debitCode);
+  const credit = chart.get(creditCode);
+  const special = (a: { isBank: boolean; isClearing: boolean; isIntercompany: boolean; isSuspense: boolean }) => a.isBank || a.isClearing || a.isIntercompany || a.isSuspense;
+  if (!debit) throw new AccrualFieldError("debit", `Akun ${debitCode} tidak ada di bagan akun klien.`);
+  if (special(debit)) throw new AccrualFieldError("debit", "Akun debit tidak boleh akun bank, kliring (1190/1199) atau 1999.");
+  if (!credit) throw new AccrualFieldError("credit", `Akun ${creditCode} tidak ada di bagan akun klien.`);
+  if (special(credit) || credit.type !== "LIABILITAS") throw new AccrualFieldError("credit", "Akun kredit harus akun liabilitas, bukan bank, kliring (1190/1199) atau 1999.");
+  if (debit.id === credit.id) throw new AccrualFieldError("credit", "Akun debit dan kredit harus berbeda.");
+  const note = p.counterparty.slice(0, 200);
+  try {
+    return await db.$transaction(
+      async (tx) => {
+        if (await tx.proposedEntry.findUnique({ where: { key: p.key }, select: { id: true } })) throw new LedgerError(DECIDED);
+        const [first] = await arrivals(tx, p.entity.id, p.account.id, p.bucket, p.year, p.month);
+        if (first) throw new LedgerError(arrivedText(p.counterparty, first));
+        const entry = await postAdjustmentTx(tx, {
+          entityId: p.entity.id,
+          date: p.date,
+          memo: p.memo,
+          lines: [
+            { accountId: debit.id, debit: amount, credit: 0n, memo: note },
+            { accountId: credit.id, debit: 0n, credit: amount, memo: note },
+          ],
+          reverseNextMonth: true,
+          actorId: input.actorId,
+        });
+        await tx.proposedEntry.create({ data: { ...stored(input.firmId, input.clientId, p), status: "POSTED", entryId: entry.id, decidedById: input.actorId ?? null, decidedAt: new Date() } });
+        return entry;
+      },
+      { isolationLevel: "Serializable", timeout: 60_000 },
+    );
+  } catch (e) {
+    if (isCode(e, "P2002")) throw new LedgerError(DECIDED);
+    if (isCode(e, "P2034")) throw new LedgerError("Buku sedang diubah bersamaan; coba catat lagi.");
+    throw e;
+  }
+}
+
+/** *Tolak*: the decision is stored DISMISSED for that month; the counterparty is evaluated afresh next month. */
+export async function dismissAccrual(db: Db, input: { firmId: string; clientId: string; key: string; actorId?: string | null; now?: Date }) {
+  const p = await currentAccrual(db, input.clientId, input.key, input.now);
+  try {
+    await db.proposedEntry.create({ data: { ...stored(input.firmId, input.clientId, p), status: "DISMISSED", decidedById: input.actorId ?? null, decidedAt: new Date() } });
+  } catch (e) {
+    if (isCode(e, "P2002")) throw new LedgerError(DECIDED);
+    throw e;
+  }
+  return p;
 }

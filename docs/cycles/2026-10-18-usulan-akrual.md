@@ -290,7 +290,7 @@ migration: stop and ask.
       rationale and refs; remove the recurring-cost branch from the ledger candidates. Accept: unit + DB tests for the rule and every
       "no card" case; schedule-candidates suite green. (reuse: `scanLedger` materiality, `statementCoverage`, `isGenericKey`,
       `formatMoney`)
-- [ ] T2 Writer: share *Balik otomatis* between `postAdjustment` and the accrual post; `postAccrual` (recheck, post, store POSTED) and
+- [x] T2 Writer: share *Balik otomatis* between `postAdjustment` and the accrual post; `postAccrual` (recheck, post, store POSTED) and
       `dismissAccrual`; the actions; the entry origin; accounting-rules 5a and 20b. Accept: DB tests for *Setujui*, *Ubah*, *Tolak* and
       refusals; `reverse-entry` unchanged. (deps: T1)
 - [ ] T3 Kotak *Usulan akrual*: queue kind and counts, the card with *Setujui* / *Ubah* / *Tolak*, blocked and warning lines; Jurnal
@@ -313,6 +313,13 @@ migration: stop and ask.
   it proposed for ledger-fed books over six seeded rounds is proposed again unless it falls in a decided exclusion — account, band,
   refund or materiality; at least 15 kept), `tests/db/schedule-candidates.test.ts` (accrual cases moved out; no candidate is
   ACCRUAL), `tests/db/demo.test.ts` (no accrual proposal in any demo month).
+- T2: `lib/ledger/adjustment.ts` (`postAdjustmentTx`: the *Balik otomatis* writer, minor units in, shared by Jurnal Penyesuaian and
+  the accrual post), `lib/adjust/accruals.ts` (`currentAccrual`, `postAccrual` — SERIALIZABLE recheck of decided and arrival, post,
+  store POSTED — `dismissAccrual`, `AccrualFieldError`), `app/actions.ts` (`postAccrualAction`, `dismissAccrualAction` behind
+  `books.write`; a field refusal returns `fields`), `lib/reports/entry-origin.ts` ("Usulan akrual (riwayat …)", "diubah dari Rp …"),
+  accounting-rules 5a and 20b. Dedicated actions rather than an id prefix on `postProposalAction`: an accrual takes an amount and two
+  accounts, a draft only account codes. Tests: `tests/db/accrual-proposals.test.ts` (*deciding*), `tests/unit/entry-origin.test.ts`;
+  `reverse-entry`, `adjustment`, `entry-origin` (DB) unchanged and green.
 
 ## Verification
 

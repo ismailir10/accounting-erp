@@ -68,6 +68,7 @@ import { explainControl, ExplainError, type ControlExplanation } from "@/lib/con
 import { ReasoningError, reasoningFor, reasoningSteps, type ReasoningStep } from "@/lib/approvals/reasoning";
 import { dismissProposal, postProposal } from "@/lib/adjust/proposals";
 import { postSuspenseCorrection, SUSPENSE_NOT_DISMISSABLE, SUSPENSE_PREFIX } from "@/lib/adjust/suspense";
+import { AccrualFieldError, dismissAccrual, postAccrual } from "@/lib/adjust/accruals";
 import { AiBudgetError } from "@/lib/ai/budget";
 import { AI_LONG_TIMEOUT_MS, AiAnswerError } from "@/lib/ai/provider";
 import { aiRunForView, scheduleAiRun } from "@/lib/ai/background";
@@ -1434,6 +1435,35 @@ export async function dismissProposalAction(clientId: string, proposalId: string
     const actorId = (await getCurrentMember()).id;
     if (proposalId.startsWith(SUSPENSE_PREFIX)) return { ok: false, error: SUSPENSE_NOT_DISMISSABLE };
     await dismissProposal(prisma, { clientId: client.id, proposalId, actorId });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * *Usulan akrual* (cycle 2026-10-18-usulan-akrual): *Setujui* — with *Ubah*'s amount and accounts, blank keeps Buku's — posts the accrual
+ * and its reversal on the 1st of the next month; *Tolak* stores the decision for the month. The card's id is the proposal's key; the
+ * writer recomputes the proposal from the books, so a crafted key posts nothing that isn't proposed. A refusal tied to a field says which.
+ */
+export async function postAccrualAction(clientId: string, key: string, edit?: { amount?: string; debitCode?: string; creditCode?: string }): Promise<Result> {
+  try {
+    const client = await writeClient(clientId);
+    const text = (v: unknown) => (typeof v === "string" ? v : null);
+    await postAccrual(prisma, { firmId: client.firmId, clientId: client.id, key: String(key), edit: { amount: text(edit?.amount), debitCode: text(edit?.debitCode), creditCode: text(edit?.creditCode) }, actorId: (await getCurrentMember()).id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    if (e instanceof AccrualFieldError) return { ok: false, error: e.message, fields: { [e.field]: e.message } };
+    return fail(e);
+  }
+}
+
+export async function dismissAccrualAction(clientId: string, key: string): Promise<Result> {
+  try {
+    const client = await writeClient(clientId);
+    await dismissAccrual(prisma, { firmId: client.firmId, clientId: client.id, key: String(key), actorId: (await getCurrentMember()).id });
     revalidatePath(`/clients/${client.id}`, "layout");
     return { ok: true };
   } catch (e) {
