@@ -7,6 +7,7 @@ const url = (href: string) => new URL(href, "http://x");
 describe("sectionOf", () => {
   it("knows the page and whether the path is under it", () => {
     expect(sectionOf("/trial-balance")).toMatchObject({ section: { label: "Neraca Saldo" }, deeper: false });
+    expect(sectionOf("/accounts")).toMatchObject({ section: { label: "Bagan akun" }, deeper: false });
     expect(sectionOf("/ledger/1101")).toMatchObject({ section: { label: "Buku Besar" }, deeper: true });
     expect(sectionOf("/ledger/akun/xyz")).toMatchObject({ section: { label: "Buku Besar" }, deeper: true });
     expect(sectionOf("")).toMatchObject({ section: { label: "Ringkasan klien" }, deeper: false });
