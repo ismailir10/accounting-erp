@@ -4,6 +4,8 @@ import { askWorkspace, getWorkspaceOverview, resolveWorkspaceScope, workspaceQue
 import { postJournal } from "@/lib/ledger/post";
 import { dateOnly } from "@/lib/format";
 import { createIntake } from "@/lib/evidence/store";
+import { approvalCounts } from "@/lib/approvals/queue";
+import { createSchedule, postAllDue } from "@/lib/adjust/schedules";
 
 beforeEach(resetDb);
 
@@ -282,4 +284,27 @@ it("answers a related-party balance from the client's accounts that name the gro
   const later = await askWorkspace(db, { firmId: g.firm.id, clientIds: "ALL" }, { scope, period: "2026-08", question: "Berapa laba PT Uji bulan Desember 2026?" });
   expect(later.scope.period).toBe("2026-12");
   expect(later.limitations.join(" ")).toContain("belum ada jurnal pada Desember 2026");
+});
+
+it("the firm board's Persetujuan cell counts the client's Kotak for the month, every company, and links there", async () => {
+  const g = await makeGroup();
+  const line = async (entity: typeof g.pt, hash: string, day: number) => {
+    const bank = entity.banks[0];
+    const imp = await db.statementImport.create({ data: { firmId: g.firm.id, bankAccountId: bank.id, fileName: `${hash}.csv`, format: "BCA", periodStart: dateOnly(2026, 8, 1), periodEnd: dateOnly(2026, 8, 31), openingBalance: 0n, closingBalance: 0n, rowCount: 1, continuityOk: true } });
+    return db.bankTransaction.create({ data: { firmId: g.firm.id, entityId: entity.entity.id, bankAccountId: bank.id, importId: imp.id, date: dateOnly(2026, 8, day), description: `UJI ${hash}`, merchantKey: `UJI ${hash}`, direction: "OUT", amount: -10n, rowNumber: 1, rawRow: "synthetic", hash, status: "NEEDS_REVIEW", method: "HEURISTIC", confidence: 0.3, reason: "uji", suggestedCode: "6190" } });
+  };
+  await line(g.pt, "a", 3);
+  await line(g.owner, "b", 4);
+  await createSchedule(db, { clientId: g.client.id, entityId: g.pt.entity.id, kind: "DEPRECIATION", memo: "Penyusutan mesin", debitCode: "6180", creditCode: "1219", amount: "1.200.000", months: 12, startYear: 2026, startMonth: 8 });
+  const counts = await approvalCounts(db, { clientId: g.client.id, year: 2026, month: 8 });
+  expect(counts.total).toBe(3);
+  // Scoped to one company, the board still counts the whole client (closing is a client operation), and the link opens all of it.
+  for (const scope of [undefined, `entity:${g.pt.entity.id}`]) {
+    const [row] = (await getWorkspaceOverview(db, { firmId: g.firm.id, clientIds: "ALL" }, { scope, period: "2026-08" })).clients;
+    expect(row.approvals).toBe(counts.total);
+    const href = new URL(row.approvalsHref, "https://buku.example");
+    expect([href.pathname, href.searchParams.get("period"), href.searchParams.get("entity")]).toEqual([`/clients/${g.client.id}/approvals`, "2026-08", "combined"]);
+  }
+  await postAllDue(db, { clientId: g.client.id, year: 2026, month: 8 });
+  expect((await getWorkspaceOverview(db, { firmId: g.firm.id, clientIds: "ALL" }, { period: "2026-08" })).clients[0].approvals).toBe(2);
 });

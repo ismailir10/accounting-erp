@@ -203,7 +203,7 @@ If traceability turns out to need a column after all, that is a migration: stop 
       Accept: flows 1, 3 and 4 on the dev server. Reuse: `reviewAction`, `postProposalAction` / `dismissProposalAction`,
       `postInstallmentAction` / `postAllDueAction`, `bookFakturAction`, `accountantHints`, `MethodBadge`, `Money`, `LinkTabs`,
       `NextStep`. (deps: T1)
-- [ ] T3 Firm board: a per-client `approvals` count in `getWorkspaceOverview`, the *Persetujuan* column linking to Kotak, and the
+- [x] T3 Firm board: a per-client `approvals` count in `getWorkspaceOverview`, the *Persetujuan* column linking to Kotak, and the
       investor-demo doc line. Accept: the board count = Kotak total (DB test). (deps: T1; can run parallel with T2)
 - [ ] T4 Entry origin.
       - `reviewTransactionTx` records the suggestion and the RECLASS id on its `CLASSIFY` event.
@@ -229,6 +229,10 @@ If traceability turns out to need a column after all, that is a migration: stop 
   open / done / locked / viewer), one card per kind with divided rows, every button an existing action; Review opens on `?tx=<id>`;
   the menu lists *Kotak persetujuan* first in stage 2. `postAllDueAction` takes an optional `entityId` so *Catat semua* in a
   one-company scope posts only that company's instalments (`postAllDue` already took it; a foreign id matches no schedule).
+- T3: `lib/workspace/index.ts`, `components/app/workspace-overview.tsx`, `tests/db/workspace.test.ts`, `docs/demo/investor-demo.md`,
+  `README.md` — each board client carries `approvals` (`approvalCounts` for the month, every company) and `approvalsHref`
+  (`/approvals?…&entity=combined`); the *Review* column is *Persetujuan* ("N usulan" / "Selesai"). The client-level `openReview` /
+  `reviewHref` had no other reader and went; Beranda's per-company *Periksa N transaksi* tasks are unchanged.
 
 ## Verification
 
