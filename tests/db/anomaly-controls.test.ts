@@ -3,7 +3,8 @@ import { db, makeGroup, resetDb } from "../helpers";
 import { makePdf, table } from "../pdf-fixture";
 import { importStatement } from "@/lib/import/pipeline";
 import { CLOSE_SIGNOFFS, lockPeriod, runControls } from "@/lib/controls";
-import { scanLedger } from "@/lib/controls/anomaly";
+import { FLUX_PERCENT, scanLedger } from "@/lib/controls/anomaly";
+import { DEFAULT_AUTOMATION, saveAutomation } from "@/lib/settings/automation";
 import { postJournal } from "@/lib/ledger/post";
 import { dateOnly } from "@/lib/format";
 
@@ -56,6 +57,63 @@ describe("ledger anomaly controls", () => {
     expect(k.flux.detail).toBe("6130 Beban Listrik, Air & Internet Rp 12.000.000 vs rata-rata 3 bln Rp 5.000.000 (+140%)");
     expect(k.flux.href).toBe(`/clients/${c}/ledger/6130?period=2026-08&entity=${pt}`);
     expect(k.sanity).toBeUndefined();
+  });
+
+  it("applies the firm's Ambang fluktuasi: the Rupiah floor and the percent each unflag, the defaults equal the fixed rule", async () => {
+    const { g, pt, c } = await baseline();
+    await post(pt, c, dateOnly(2026, 8, 10), "1130", "4100", 100_000_000n);
+    await post(pt, c, dateOnly(2026, 8, 20), "6130", "1130", 12_000_000n); // +140 %, Δ 7 jt
+    const set = (fluxFloor: string, fluxPercent: string) => saveAutomation(db, { firmId: g.firm.id, settings: { transfer: true, rules: true, memory: true, cap: "", fluxFloor, fluxPercent } });
+    const flagged = async () => (await scanLedger(db, c, pt, 2026, 8)).flux.map((f) => f.account.code);
+    const untouched = await scanLedger(db, c, pt, 2026, 8);
+    expect(untouched.thresholds).toEqual({ floor: null, percent: Number(FLUX_PERCENT), ignoredFloor: null });
+    expect(DEFAULT_AUTOMATION.fluxPercent).toBe(Number(FLUX_PERCENT));
+    expect(untouched.flux.map((f) => f.account.code)).toEqual(["6130"]);
+
+    await set("", "141");
+    expect(await flagged()).toEqual([]);
+    expect((await byKind(c, pt)).flux).toBeUndefined();
+    await set("", "140");
+    expect(await flagged()).toEqual(["6130"]);
+    await set("7.000.001", "50");
+    expect(await flagged()).toEqual([]);
+    await set("7.000.000", "50");
+    expect(await flagged()).toEqual(["6130"]);
+    // A floor below materiality changes nothing: max(materiality, floor).
+    await set("1", "50");
+    expect(await flagged()).toEqual(["6130"]);
+    // Back to the defaults: the scan reads exactly as before any setting was saved.
+    await set("", "50");
+    expect(await scanLedger(db, c, pt, 2026, 8)).toEqual(untouched);
+  });
+
+  it("flip, dormant and duplicates and the materiality are unchanged by the flux thresholds", async () => {
+    const { g, pt, c } = await baseline();
+    await post(pt, c, dateOnly(2026, 8, 10), "1130", "4100", 100_000_000n);
+    await post(pt, c, dateOnly(2026, 8, 20), "6130", "1130", 12_000_000n);
+    await post(pt, c, dateOnly(2026, 8, 22), "4110", "1130", 2_000_000n); // flip
+    await post(pt, c, dateOnly(2026, 8, 14), "6150", "1130", 3_000_000n); // dormant: never used
+    await post(pt, c, dateOnly(2026, 8, 10), "6170", "2110", 3_000_000n, { memo: "a" });
+    await post(pt, c, dateOnly(2026, 8, 12), "6170", "2110", 3_000_000n, { memo: "b" }); // dup
+    const before = await scanLedger(db, c, pt, 2026, 8);
+    expect([before.flux.length, before.flip.length, before.dormant.length, before.dup.length]).toEqual([1, 1, 4, 1]); // dormant: 4110, 6150, 6170, 2110
+    await saveAutomation(db, { firmId: g.firm.id, settings: { transfer: true, rules: true, memory: true, cap: "", fluxFloor: "999.999.999.999", fluxPercent: "1000" } });
+    const after = await scanLedger(db, c, pt, 2026, 8);
+    expect(after.flux).toEqual([]);
+    expect({ ...after, flux: before.flux, thresholds: before.thresholds }).toEqual(before);
+  });
+
+  it("a company kept in another currency ignores the Rupiah floor and keeps the percent", async () => {
+    const { g, pt, c } = await baseline();
+    await db.entity.update({ where: { id: pt }, data: { functionalCurrency: "USD" } });
+    await post(pt, c, dateOnly(2026, 8, 10), "1130", "4100", 100_000_000n);
+    await post(pt, c, dateOnly(2026, 8, 20), "6130", "1130", 12_000_000n); // Δ 7.000.000 minor units (USD 70.000)
+    await saveAutomation(db, { firmId: g.firm.id, settings: { transfer: true, rules: true, memory: true, cap: "", fluxFloor: "999.999.999", fluxPercent: "50" } });
+    const usd = await scanLedger(db, c, pt, 2026, 8);
+    expect(usd.thresholds).toEqual({ floor: null, percent: 50, ignoredFloor: 999_999_999n });
+    expect(usd.flux.map((f) => f.account.code)).toEqual(["6130"]);
+    await saveAutomation(db, { firmId: g.firm.id, settings: { transfer: true, rules: true, memory: true, cap: "", fluxFloor: "999.999.999", fluxPercent: "141" } });
+    expect((await scanLedger(db, c, pt, 2026, 8)).flux).toEqual([]);
   });
 
   it("needs two baseline months for flux", async () => {

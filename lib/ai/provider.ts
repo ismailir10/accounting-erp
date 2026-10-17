@@ -211,7 +211,8 @@ export function parseCloseReview(text: string, input: CloseReviewInput): CloseRe
  */
 export type ControlExplainInput = { client: string; period: string; currency: string; accounts: { code: string; name: string }[]; control: CloseReviewControl; canDraft: boolean; entities?: CloseReviewEntity[] };
 export type ControlExplainEntry = { memo: string; lines: { accountCode: string; side: "D" | "K"; amount: string }[] };
-export type ControlExplainAnswer = { explanation: string; suggestion: string; refs: string[]; note: string; entry: ControlExplainEntry | null };
+/** `dropped`: how many citations of this answer were outside the rows sent and discarded (ADR 0009 rule 3); only the count is kept. */
+export type ControlExplainAnswer = { explanation: string; suggestion: string; refs: string[]; note: string; entry: ControlExplainEntry | null; dropped: number };
 export type ControlExplainResult = ControlExplainAnswer & { promptTokens: number; completionTokens: number; model: string };
 export const CONTROL_EXPLAIN_PROMPT_VERSION = "control-explain-v2";
 export const CONTROL_EXPLAIN_MAX_TOKENS = 12000;
@@ -251,8 +252,11 @@ export function parseControlExplain(text: string, input: ControlExplainInput): C
   const suggestion = typeof value.suggestion === "string" ? tidyAiText(value.suggestion, 300) : "";
   const note = typeof value.note === "string" ? tidyAiText(value.note, 300) : "";
   const own = new Set(input.control.rows.map((r) => r.id));
-  const refs = Array.isArray(value.refs) ? [...new Set(value.refs.filter((x): x is string => typeof x === "string" && own.has(x)))].slice(0, 10) : [];
-  return { explanation, suggestion, refs, note, entry: input.canDraft ? groundedEntry(value.entry, input, new Set(refs)) : null };
+  const cited: unknown[] = Array.isArray(value.refs) ? [...new Set(value.refs as unknown[])] : [];
+  const refs = cited.filter((x): x is string => typeof x === "string" && own.has(x)).slice(0, 10);
+  // Counted, never kept: the discarded strings are untrusted model text (cycle 2026-10-17-lihat-alasan).
+  const dropped = cited.filter((x) => typeof x !== "string" || !own.has(x)).length;
+  return { explanation, suggestion, refs, note, entry: input.canDraft ? groundedEntry(value.entry, input, new Set(refs)) : null, dropped };
 }
 
 /** A draft journal survives only if every account is in the chart, it balances, and every amount is a cited row's amount. */
@@ -588,13 +592,16 @@ export class MockProvider implements AiProvider {
     const fallback = JSON.stringify({ text, refs: [line?.id ?? series?.id].filter(Boolean) });
     return { ...parseFluxExplanation(this.fluxAnswer ?? fallback, input), promptTokens: 40, completionTokens: 30, model: this.model };
   }
+  /** A recorded *Jelaskan* answer for tests (JSON as a model sends it); null = the deterministic reclass below. */
+  explainAnswer: string | null = null;
   async explainControl(input: ControlExplainInput): Promise<ControlExplainResult> {
     this.calls++;
     const row = input.control.rows.find((r) => r.account && r.amount);
     const amount = row?.amount.replace(/^-/, "") ?? "";
     // Deterministic draft for tests: move the first cited row off its account to 2210 (a reclass).
     const entry = input.canDraft && row ? { memo: `Reklasifikasi ${row.text}`.slice(0, 120), lines: [{ accountCode: row.account, side: "D" as const, amount }, { accountCode: "2210", side: "K" as const, amount }] } : null;
-    const answer = parseControlExplain(JSON.stringify({ explanation: `Uji: ${input.control.title}`, suggestion: "Periksa baris yang dikutip.", refs: row ? [row.id] : [], note: `Dicek: ${input.control.title}`, entry }), input);
+    const fallback = JSON.stringify({ explanation: `Uji: ${input.control.title}`, suggestion: "Periksa baris yang dikutip.", refs: row ? [row.id] : [], note: `Dicek: ${input.control.title}`, entry });
+    const answer = parseControlExplain(this.explainAnswer ?? fallback, input);
     return { ...answer, promptTokens: 40, completionTokens: 30, model: this.model };
   }
   async classify(items: AiItem[]): Promise<AiResult> {

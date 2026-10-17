@@ -11,7 +11,7 @@ Automated end to end by `e2e/investor-demo.spec.ts` — if you change this scrip
 > days per client per month. Buku does it in minutes, and every number traces back to the bank line it came from."
 
 ### 1. Beranda — the firm's month-end at a glance (30 s)
-- **Kemajuan tutup buku** is the firm board: per client, *Sumber* (data complete?), *Persetujuan* (the client's Kotak persetujuan: proposals waiting for a click), *Tutup buku* and *Terkirim*. Grup Ayam shows *1 kurang* under Sumber.
+- **Kemajuan tutup buku** is the firm board: per client, *Sumber* (data complete?), *Persetujuan* (the client's Kotak persetujuan: proposals waiting for a click), *Checklist* (the close checklist: *Belum diatur* on the demo until someone accepts Buku's list), *Tutup buku* and *Terkirim*. Grup Ayam shows *1 kurang* under Sumber.
 - Three main destinations: Beranda (with the task list), Dokumen, Laporan. Shared client/company and period selectors govern the work.
 - Ask **Apa yang menghambat tutup buku?** and inspect the cited close controls. Answers keep their original context when selectors change.
 - On **Beranda** open **Semua pekerjaan** and choose **Lengkapi 1 rekening koran** for Grup Ayam Nusantara. The held-back bank statement remains the next live step.

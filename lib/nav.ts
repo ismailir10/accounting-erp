@@ -38,6 +38,7 @@ export function clientStages(modules: string[]): NavStage[] {
         { href: "/trial-balance", label: "Neraca Saldo" },
         { href: "/journals/new", label: "Jurnal Penyesuaian" },
         ...MODULE_SECTIONS.filter((m) => modules.includes(m.key)),
+        { href: "/checklist", label: "Checklist tutup buku" },
         { href: "/close", label: "Tutup Buku" },
       ],
     },

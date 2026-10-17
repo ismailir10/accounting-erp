@@ -60,7 +60,7 @@ test("add a client, set opening balance, import a locked PDF, bank reconciles", 
 
   // The banner now points on (review or close); the reconciliation is checked on the close page.
   await expect(page.getByTestId("next-step")).toContainText("Saldo awal semua entitas sudah dicatat.");
-  await page.getByRole("link", { name: "Tutup Buku" }).first().click();
+  await page.getByRole("link", { name: "Tutup Buku", exact: true }).click();
   const recon = page.getByTestId("control-bank").filter({ hasText: "Rekonsiliasi Mandiri Giro" });
   await expect(recon).toContainText("Lolos");
 });

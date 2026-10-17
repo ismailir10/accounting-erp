@@ -241,6 +241,10 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     the Kode Objek Pajak (24 = PPh 23, 28 = 4(2), 22, 27 = 26); a pair matched on the amount but of another kind is *beda jenis*. A
     *pembetulan* counts; cancelled, replaced, rejected and draft slips don't. Equal to the Rupiah, no allowance. Control `bupot:<entity>`
     exists only once slips for the masa were imported. The shared matcher is `lib/tax/coretax-match.ts`.
+    **The BPPU import file** (`lib/tax/coretax-bppu.ts`, cycle 2026-10-17-bppu-files) is the other way round: one slip per outgoing line of
+    the masa with PPh 23 / 4(2) / 22, its detail (KOP, rate in hundredths of a percent, DPP, document, a recipient when the line has none)
+    in `WithholdingSlip` — metadata, never posted, never the line's `whtKind` / `whtAmount`. The file has no PPh, so a slip goes in only
+    when DPP × rate is within Rp 1 of the withheld amount (bigint); a line matched to a counted *dibuat* slip is *Sudah ada di Coretax*.
 6. `bigint` **minor units of the entity's functional currency** everywhere in the domain (ADR 0006). IDR has exponent 0,
    so for IDR entities that is whole Rupiah, as before. Parse with `parseRupiah()` / `parseMinor()` (handles `1.234.567,00`,
    `1,234,567.00`, `(2.500)`), format with `formatRupiah()` / `formatMoney(value, currency)`. Convert to `Number` only for chart
@@ -311,8 +315,15 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
 13a. **Tax remittances file to the liability they clear** (firm rules, `lib/classify/rules.ts`, by words or by the KAP-KJS code on the state receipt — 411121, 411124, 411128, 411125-100/-200, 411211): PPh 21 → 2140, PPh 23 → 2141, PPh 4(2) / final → 2145, PPh 29 → 2146, PPN → 2130, PPh 25 → 1180
     (prepaid, rule 5d), Bea Meterai → 7100. A payment that reads as a state tax payment without naming the tax (MPN, DJP, SSP, KPP, kode billing; regional taxes excluded) gets a HEURISTIC suggestion 2145 for review (`taxPaymentSuggestion`), never an expense and no AI call. A remittance without the withholding booked leaves that liability **debit**, which the sanity control *Saldo berlawanan dengan sifat akun* raises
     — book the withholding (payroll, or rule 5h) rather than moving the remittance. A rule whose account the client's chart lacks is skipped (`matchRule(…, codes)`), never a failed import.
-14. **Only deterministic methods (TRANSFER/RULE/MEMORY, confidence ≥ 0.9) auto-post.** AI and heuristic results
+14. **Only deterministic methods (TRANSFER/RULE/MEMORY, confidence ≥ 0.9) auto-post, and only when the firm's dial allows it, at or
+    below its cap** (*Otomasi kantor*, `Firm.autoPost*`, `decidePosting` in `lib/classify/dial.ts`). AI and heuristic results
     post to **1999** with `NEEDS_REVIEW` and a prefilled suggestion. Reviewer accept → reclass + Memory upsert.
+    The dial can only send more to Review: a source switched off, or a line whose absolute amount is above the cap, waits on 1999 with
+    its method, confidence and suggestion kept and a reason saying why ("Otomasi aturan dimatikan …", "Di atas batas otomasi (Rp …)");
+    it is never in the AI-only bulk accept. A held transfer pair is still linked; a held line never moves or re-posts a half imported
+    earlier (in Review it is linked and takes the transfer suggestion; on the transfer account it is linked; posted elsewhere it stays
+    unlinked and untouched, named in the new line's reason). Changing the dial affects new imports only. Defaults (all on, no cap) = the
+    behaviour before the dial.
     An AI suggestion of a trade receivable for money in (or a trade payable for money out) while the entity's books hold none to settle
     **by the row's date** is replaced by the simple guess's account (4100 / 6190; 4910 / 3300 for a person, `lib/classify/fallback.ts`) at 0.55, still
     method AI, with a reason naming the original account and why (`lib/ai/unbacked.ts`, import and *Minta saran AI*); it never posts, is never
@@ -420,6 +431,9 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     A draft that moves a bank line is not created, shown as blocked and refused on post when an `ADJUSTMENT` of that entity, dated from
     the line's date to the period end, already moves exactly its amount off its account (`priorCorrection`): never correct twice.
     Drafts for a PT or foreign company never see the Prive line (3300); a CV's or an individual's may.
+    The parse counts the citations it discards (outside the rows sent, or not an id) and the cached answer stores that **count only**
+    (`dropped` in the `EvidenceAiCache` JSON, same key; never the discarded strings, which are untrusted model text). *Lihat alasan* shows it;
+    an answer cached before the count existed reads "tidak tercatat" (`lib/approvals/reasoning.ts`, read-only, no call).
 20c. **Catatan manajemen** (`lib/reports/report-comment.ts`, I5b): the model gets only the computed commentary sentences (never ledger
     rows) and may reword them. Every number token of a draft must appear in those sentences (`foreignNumbers`); an AI draft with any other
     number is never saved. Only the accountant's click saves a note (their own wording may hold other numbers, with a warning). A note
@@ -452,7 +466,11 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
 22b. **Ledger anomaly scans** (`lib/controls/anomaly.ts`, ADR 0009 amendment) read journal lines, not bank rows, so ledger-fed
     clients get the same scrutiny. Movement excludes OPENING entries; baseline = the months with activity among the 3 before the
     period; materiality = 1 % of the baseline's average monthly P&L volume (all movement when the baseline has no P&L, e.g. a holding). **Flux** (P&L account differs from its baseline average by
-    ≥ materiality and ≥ 50 %; the account itself moved in ≥ 2 baseline months), **flip** (P&L month movement against its `normalBalance`), **dormant** (movement on an
+    ≥ max(materiality, the firm's *Selisih minimal*) and ≥ the firm's *Perubahan minimal* % of it, default 50 % and no Rp floor —
+    `Firm.fluxFloor` / `fluxPercent`, Pengaturan kantor → Otomasi; the Rupiah floor applies only to a company kept in Rupiah, never
+    compared with another currency's minor units; the account itself moved in ≥ 2 baseline months). `scanLedger` reads the firm's
+    thresholds itself, so the control, Wawasan, the management pack, *Susun dengan AI* eligibility and the AI close review always flag
+    the same accounts; materiality, flip, dormant and dup never use them. **Flip** (P&L month movement against its `normalBalance`), **dormant** (movement on an
     account with none in 3 active prior months: *akun baru* or *bergerak lagi*), **dup** (identical entries ≤ 3 days apart; two
     bank-derived entries never pair, two rows of one ledger file only with the same memo, OPENING/RECLASS never). All REVIEW, never FAIL;
     7190/7200 exempt from flux/flip. The AI close review may send the flagged accounts' month series and the month's journal lines behind
@@ -467,6 +485,6 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
 24. Every row has `firmId`. Server actions resolve the client through `getClientForFirm()` before any write.
 25. **Deleting a client** (`lib/clients/delete.ts`) is not a ledger correction: an admin removes a client entered by mistake or a test
     copy after typing its exact name. Everything that is its books (entities, accounts, periods, journals, bank and ledger imports,
-    memories, client rules, proposals, invoices, assets, schedules, leases, employee benefits, tax records, stock counts, evidence, Temuan, change log) goes in one
+    memories, client rules, proposals, invoices, assets, schedules, leases, employee benefits, tax records, stock counts, evidence, Temuan, close checklist, change log) goes in one
     transaction; firm rules, rates, mortality tables and
     AI caches stay. A new table that references a client or entity must be added to that function.

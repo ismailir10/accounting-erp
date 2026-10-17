@@ -2,6 +2,7 @@ import { readSheets, cellText, cellDate } from "@/lib/ledger-import/read";
 import type { RawCell, RawSheet } from "@/lib/ledger-import/types";
 import { ParseError } from "@/lib/import/types";
 import { centsToMinor, parseCents } from "@/lib/money";
+import { kopKind } from "@/lib/tax/bppu-codes";
 
 /**
  * A Coretax bukti potong (BPPU, Unifikasi) export (I5d): the slips the company made for what it withheld (*dibuat*: the recipient's
@@ -63,11 +64,8 @@ const yearOf = (c: RawCell | undefined) => {
 
 /** The kind: the Kode Objek Pajak's first group (24-104-01 → PPh 23), else the Jenis Pajak words. */
 export function kindOf(kop: string, jenis: string): BupotKind {
-  const k = kop.replace(/\s/g, "").match(/^(\d{2})/)?.[1];
-  if (k === "24") return "PPH_23";
-  if (k === "28") return "PPH_4_2";
-  if (k === "22") return "PPH_22";
-  if (k === "27") return "PPH_26";
+  const k = kopKind(kop);
+  if (k) return k;
   const j = norm(jenis);
   if (/4\s*\(?\s*2\s*\)?|final/.test(j)) return "PPH_4_2";
   if (/\b23\b/.test(j)) return "PPH_23";

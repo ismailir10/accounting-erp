@@ -5,6 +5,9 @@ import { createIntake, hash, json } from "@/lib/evidence/store";
 import type { EvidenceUnit } from "@/lib/evidence/types";
 import { createInvoice } from "@/lib/receivables/invoices";
 import { setInvoiceFakturItem } from "@/lib/receivables/faktur-identity";
+import { importStatement } from "@/lib/import/pipeline";
+import { reviewTransaction } from "@/lib/review";
+import { setWithholdingSlip } from "@/lib/tax/withholding-slip";
 
 // Keep the verified identity unchanged across requests. Membership, grants, client
 // assignments, guards, pages and download handlers all use the real test database.
@@ -30,6 +33,7 @@ import { GET as credit } from "@/app/(app)/clients/[id]/reports/export/credit/ro
 import { GET as tax } from "@/app/(app)/clients/[id]/tax/export/route";
 import { GET as masa } from "@/app/(app)/clients/[id]/tax/masa/export/route";
 import { GET as coretax } from "@/app/(app)/clients/[id]/tax/masa/coretax/route";
+import { GET as coretaxBppu } from "@/app/(app)/clients/[id]/tax/masa/coretax-bppu/route";
 import { GET as review } from "@/app/(app)/clients/[id]/review/export/route";
 import { GET as budget } from "@/app/(app)/clients/[id]/budget/export/route";
 import { GET as journals } from "@/app/(app)/clients/[id]/journals/export/route";
@@ -41,7 +45,7 @@ const downloads = [
   ["analysis/export", analysis],
   ["reports/export", statements], ["reports/export/pdf", pdf],
   ["reports/export/management", management], ["reports/export/credit", credit],
-  ["tax/export", tax], ["tax/masa/export", masa], ["tax/masa/coretax", coretax], ["review/export", review],
+  ["tax/export", tax], ["tax/masa/export", masa], ["tax/masa/coretax", coretax], ["tax/masa/coretax-bppu", coretaxBppu], ["review/export", review],
   ["journals/export", journals], ["ledger/export", ledger], ["trial-balance/export", trialBalance],
   ["receivables/statement", receivableStatement],
   ["budget/export", budget],
@@ -55,6 +59,12 @@ async function openSession(role: "ADMIN" | "AKUNTAN" = "AKUNTAN") {
   await db.entity.update({ where: { id: g.pt.entity.id }, data: { npwp: "0012345678015000" } });
   const invoice = await createInvoice(db, { clientId: g.client.id, entityId: g.pt.entity.id, direction: "SALES", contactName: "PT Pembeli", contactNpwp: "0098765432101200", number: "INV-1", issueDate: "2026-08-10", dpp: "1000000", ppn: "110000", counterCode: "4100" });
   await setInvoiceFakturItem(db, { clientId: g.client.id, invoiceIds: [invoice.id], kind: "B", unit: "UM.0030" });
+  // One bukti potong ready for Coretax (cycle 2026-10-17-bppu-files), so the BPPU download has a slip to hold.
+  const statement = "Tanggal;Keterangan;Debet;Kredit;Saldo\n01/08/2026;SALDO AWAL;;;10000000\n21/08/2026;JASA KONSULTAN;980000;0;9020000\n";
+  await importStatement(db, { bankAccountId: g.pt.banks[0].id, fileName: "bca.csv", data: Buffer.from(statement), provider: null });
+  const paid = await db.bankTransaction.findFirstOrThrow({ where: { entityId: g.pt.entity.id, description: "JASA KONSULTAN" } });
+  await reviewTransaction(db, { bankTxId: paid.id, accountCode: "6170", taxTag: null, withholding: { kind: "PPH_23", amount: 20_000n } });
+  await setWithholdingSlip(db, { clientId: g.client.id, bankTransactionId: paid.id, contactName: "PT Pembeli", kop: "24-104-03", dpp: "1.000.000", documentType: "CommercialInvoice", documentNumber: "B-1", documentDate: "2026-08-20" });
   const intake = await createIntake(db, g.firm.id, g.client.id);
   const text = "Sumber sintetis pencabutan akses";
   const unit: EvidenceUnit = {

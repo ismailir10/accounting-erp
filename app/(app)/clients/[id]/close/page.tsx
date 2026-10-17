@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { loadClientPage } from "@/lib/client-page";
 import type { SearchParams } from "@/lib/scope";
 import { CLOSE_SIGNOFFS, closeReadiness, earlierOpenMonth, laterLockedMonth, runControls } from "@/lib/controls";
-import { requireWorkspaceSession } from "@/lib/auth/session";
+import { accessView, requireWorkspaceSession } from "@/lib/auth/session";
 import { formatDate, formatDateTime, formatPeriod } from "@/lib/format";
 import { NextStep, PageHeader } from "@/components/app/page-header";
 import { setupProgress } from "@/lib/setup-progress";
@@ -26,6 +26,10 @@ import { CompletenessCard } from "@/components/app/completeness-card";
 import { CloseHistoryCard } from "@/components/app/close-history-card";
 import { HISTORY_MIN_MONTHS, historyMonths } from "@/lib/controls/history";
 import { isAdminRole } from "@/lib/auth/permissions";
+import { checklistMonth, sumberOf, unfinishedBeforeLock } from "@/lib/checklist/view";
+import { tickProblem } from "@/lib/checklist/rules";
+import { LOCKED_SIGNOFF } from "@/lib/checklist/write";
+import { withParams } from "@/lib/scope";
 
 export const metadata = { title: "Tutup Buku" };
 
@@ -44,12 +48,13 @@ export default async function ClosePage({ params, searchParams }: { params: Prom
   ].filter(Boolean);
   const label = formatPeriod(period.year, period.month);
   // Closing goes in order, reopening in reverse; only an admin reopens, with a reason that stays in the log.
-  const [before, after, { member }, unlockRows] = await Promise.all([
+  const [before, after, session, unlockRows] = await Promise.all([
     earlierOpenMonth(prisma, client.id, period.year, period.month),
     laterLockedMonth(prisma, client.id, period.year, period.month),
     requireWorkspaceSession(),
     prisma.periodUnlockLog.findMany({ where: { clientId: client.id }, orderBy: { createdAt: "desc" }, take: 5, include: { unlockedBy: { select: { name: true } } } }),
   ]);
+  const { member } = session;
   if (before) blockers.unshift(`Tutup buku ${formatPeriod(before.year, before.month)} dulu, bulan sebelumnya masih terbuka`);
   const open = controls.find((c) => c.key === "suspense" && c.status === "REVIEW");
   const missing = controls.find((c) => c.key.startsWith("bank:") && c.detail.includes("belum diimpor"));
@@ -75,6 +80,22 @@ export default async function ClosePage({ params, searchParams }: { params: Prom
   const history = before ? await historyMonths(prisma, client.id, period) : [];
   const historyRange = history.length ? `${formatPeriod(history[0].year, history[0].month)} – ${formatPeriod(history.at(-1)!.year, history.at(-1)!.month)}` : "";
   const monthKey = (m: { year: number; month: number }) => `${m.year}-${String(m.month).padStart(2, "0")}`;
+  // Checklist tutup buku: the sign-offs follow their task's Pelaksana once the month's checklist has them; the unfinished tasks warn
+  // the lock, never block it (accounting-rules 23 is unchanged). *Tutup buku* and *Laporan dikirim* can't be done before the lock.
+  const checklist = await checklistMonth(prisma, { clientId: client.id, year: period.year, month: period.month, facts: { controls, sumber: sumberOf(completeness, period.year, period.month) } });
+  const checklistHref = withParams(`${base}/checklist`, { period: period.key });
+  const checklistOpen = unfinishedBeforeLock(checklist.rows);
+  const access = accessView({ access: session.access, member, support: session.support });
+  const signoffTask = (key: string) => checklist.rows.find((r) => r.kind === "SIGNOFF" && r.key === key);
+  const signoffBlock = (key: string): string | null => {
+    const task = signoffTask(key);
+    if (!access.canWrite) return access.reason;
+    if (!task) return null;
+    if (locked) return LOCKED_SIGNOFF;
+    if (task.status === "DIREVIU") return "Sudah direviu. Batalkan reviunya di checklist dulu untuk mengubah.";
+    if (!task.done && task.gone.assignee) return task.problem;
+    return tickProblem(member, { assigneeId: task.assignee.id });
+  };
   return (
     <div className="space-y-6">
       <PageHeader title="Tutup Buku" description={`${label}`} actions={<ScopeBar entities={[]} periods={periodOptions} period={period.key} />} />
@@ -160,7 +181,8 @@ export default async function ClosePage({ params, searchParams }: { params: Prom
         month={period.month}
         periodLabel={label}
         controls={controls}
-        signoffs={CLOSE_SIGNOFFS.map((s) => { const row = p?.signoffs.find((x) => x.key === s.key); return { key: s.key, label: s.label, done: Boolean(row), by: row ? `${row.doneBy?.name ?? "Sistem"} · ${formatDateTime(row.doneAt)}` : null }; })}
+        signoffs={CLOSE_SIGNOFFS.map((s) => { const row = p?.signoffs.find((x) => x.key === s.key); return { key: s.key, label: s.label, done: Boolean(row), by: row ? `${row.doneBy?.name ?? "Sistem"} · ${formatDateTime(row.doneAt)}` : null, pelaksana: signoffTask(s.key)?.assignee.name ?? null, blocked: signoffBlock(s.key) }; })}
+        checklist={checklist.hasTemplate && checklist.rows.length ? { href: checklistHref, open: checklistOpen } : null}
         locked={locked}
         lockedAt={p?.lockedAt ? `${formatDateTime(p.lockedAt)} oleh ${p.lockedBy?.name ?? "Sistem"}` : null}
         blockers={blockers}
