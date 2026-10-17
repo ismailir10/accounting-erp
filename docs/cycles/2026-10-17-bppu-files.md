@@ -262,7 +262,7 @@ construction) every month before the SPT Masa PPh Unifikasi. Also the partner, w
 - [x] T3 `lib/tax/coretax-bppu.ts` `bppuDraft` (candidates, *Sudah ada* via `bupotRecon` DIBUAT matches, prefill from settled invoice /
       exact division / last slip, every block reason; the company identity check shared with `coretax-faktur.ts`) — accept: DB tests for
       every inclusion, prefill and block rule. (Deps: T1, T2.)
-- [ ] T4 Download route `tax/masa/coretax-bppu` (`?entity&period`), `recordBupotDownload`, server action, identity sheet's holder label
+- [x] T4 Download route `tax/masa/coretax-bppu` (`?entity&period`), `recordBupotDownload`, server action, identity sheet's holder label
       — accept: route DB tests (member 200, stranger and revoked 404, no `REPORT_EXPORT`). (Deps: T3.)
 - [ ] T5 The *Dipotong oleh perusahaan* list in *Bukti potong (Unifikasi)* with counts, the slip sheet, the identity sheet, the download,
       footnote and hint; README Pajak Masa line — accept: Playwright flows 1 and 3, `qa-tax-split` green. (Deps: T4.)
@@ -302,6 +302,13 @@ construction) every month before the SPT Masa PPh Unifikasi. Also the partner, w
   - Decision: the last slip's KOP is carried to a recipient's next line only when it is of the line's kind, with its document type
     (never its number, date or DPP).
   - Decision: an in-review line is listed with *every* reason (Review first), so the slip can be prepared while Review is pending.
+- T4: `app/(app)/clients/[id]/tax/masa/coretax-bppu/route.ts`, `lib/reports/export-log.ts`, `app/actions.ts`,
+  `lib/receivables/faktur-identity.ts`, `lib/tax/coretax-codes.ts`, `tests/db/coretax-bppu-route.test.ts`,
+  `tests/db/session-revocation.test.ts` — the download (`?entity&period`, the workbook's access through `exportContext`; 400 with the
+  reason when nothing is *Siap* or the company blocks; file `bppu-<company>-YYYY-MM.xml`), audited by `recordBupotDownload`
+  (`BUKTI_POTONG`, subject `coretax-bppu:<entity>:YYYY-MM`, a support session to the support log through the shared `logDownload`);
+  `setWithholdingSlipAction` through `writeClient` (`books.write`); `setContactTaxIdentityAction` takes `holder` (*pembeli* /
+  *penerima*) so the identity sheet's messages name the recipient.
 
 ## Verification
 

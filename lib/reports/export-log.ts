@@ -58,3 +58,19 @@ export async function recordFakturDownload(db: Db, e: { clientId: string; entity
     }),
   );
 }
+
+/** The Coretax BPPU XML (cycle 2026-10-17-bppu-files): a `BUKTI_POTONG` event, never `REPORT_EXPORT` (*Terkirim* stays as it was). */
+export async function recordBupotDownload(db: Db, e: { clientId: string; entityId: string; scope: string; year: number; month: number; count: number }) {
+  const summary = `XML bukti potong ${e.scope} masa ${formatPeriod(e.year, e.month)} diunduh: ${e.count} bukti potong`;
+  await logDownload(db, e.clientId, summary, (actorId) =>
+    recordEvent(db, {
+      clientId: e.clientId,
+      entityId: e.entityId,
+      kind: "BUKTI_POTONG",
+      subject: `coretax-bppu:${e.entityId}:${e.year}-${String(e.month).padStart(2, "0")}`,
+      summary,
+      after: { count: e.count },
+      actorId,
+    }),
+  );
+}
