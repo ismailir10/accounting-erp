@@ -172,9 +172,11 @@ test("checklist tutup buku: Buku's list accepted, ticked by the Pelaksana, revie
     await page.getByTestId("checklist-save").click();
     await expect(page.getByText("Tugas ditambahkan")).toBeVisible();
     await page.goto(`${base}/close?period=2026-08`);
-    for (const key of ["adjust", "review"]) {
-      await page.locator(`#signoff-${key}`).click(); // an admin covers for the Pelaksana
-      await expect(page.locator(`#signoff-${key}`)).toBeChecked();
+    for (const label of ["Jurnal penyesuaian (penyusutan, akrual) sudah dicatat", "Laporan keuangan sudah direview partner"]) {
+      // The visible checkbox, not `#signoff-…`: that id sits on the checkbox's hidden form input, which is never clickable.
+      const box = page.getByTestId("signoff").filter({ hasText: label }).getByRole("checkbox");
+      await box.click(); // an admin covers for the Pelaksana
+      await expect(box).toBeChecked();
     }
     for (let note = page.getByRole("button", { name: "Beri catatan" }).first(); await note.count(); note = page.getByRole("button", { name: "Beri catatan" }).first()) {
       await note.click();
