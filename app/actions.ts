@@ -31,6 +31,7 @@ import { createInvoice, voidInvoice, type InvoiceInput } from "@/lib/receivables
 import { setContactChannel } from "@/lib/receivables/channels";
 import { setCreditLimit } from "@/lib/receivables/credit-limit";
 import { setContactTaxIdentity, setInvoiceFakturItem } from "@/lib/receivables/faktur-identity";
+import { setWithholdingSlip } from "@/lib/tax/withholding-slip";
 import { settleFifo, settleWithReclass, tagAdvance, unsettle } from "@/lib/receivables/settle";
 import { candidateViews, type CandidateView } from "@/lib/receivables/view";
 import { postCkpn, saveCkpnSetting, type CkpnSettingInput } from "@/lib/receivables/ckpn";
@@ -713,8 +714,11 @@ export async function setCreditLimitAction(input: { clientId: string; contactId:
   }
 }
 
-/** A buyer's tax identity for the Coretax faktur file (NPWP / NIK / NITKU / address / email); an empty field clears it. */
-export async function setContactTaxIdentityAction(input: { clientId: string; contactId: string; npwp: string; nik: string; nitku: string; address: string; email: string }): Promise<Result> {
+/**
+ * A contact's tax identity for the Coretax files (NPWP / NIK / NITKU / address / email); an empty field clears it. `holder` names the
+ * contact in the messages: the faktur's buyer (default) or the bukti potong's recipient.
+ */
+export async function setContactTaxIdentityAction(input: { clientId: string; contactId: string; npwp: string; nik: string; nitku: string; address: string; email: string; holder?: "pembeli" | "penerima" }): Promise<Result> {
   try {
     const client = await writeClient(input.clientId);
     await setContactTaxIdentity(prisma, {
@@ -725,12 +729,40 @@ export async function setContactTaxIdentityAction(input: { clientId: string; con
       nitku: String(input.nitku ?? ""),
       address: String(input.address ?? ""),
       email: String(input.email ?? ""),
+      holder: input.holder === "penerima" ? "penerima" : "pembeli",
       actorId: (await getCurrentMember()).id,
     });
     revalidatePath(`/clients/${client.id}`, "layout");
     return { ok: true };
   } catch (e) {
     return editFail(e);
+  }
+}
+
+/**
+ * The bukti potong detail of one withheld payment (cycle 2026-10-17-bppu-files): recipient when the line has none, KOP, rate, DPP and
+ * reference document. `books.write`, as recording the withholding is; metadata only, so a locked month is no bar.
+ */
+export async function setWithholdingSlipAction(input: { clientId: string; bankTransactionId: string; contactId?: string | null; contactName?: string | null; kop: string; rate?: string | null; dpp: string; documentType: string; documentNumber: string; documentDate: string }): Promise<Result> {
+  try {
+    const client = await writeClient(input.clientId);
+    await setWithholdingSlip(prisma, {
+      clientId: client.id,
+      bankTransactionId: String(input.bankTransactionId ?? ""),
+      contactId: input.contactId ? String(input.contactId) : null,
+      contactName: input.contactName ? String(input.contactName) : null,
+      kop: String(input.kop ?? ""),
+      rate: input.rate ? String(input.rate) : null,
+      dpp: String(input.dpp ?? ""),
+      documentType: String(input.documentType ?? ""),
+      documentNumber: String(input.documentNumber ?? ""),
+      documentDate: String(input.documentDate ?? ""),
+      actorId: (await getCurrentMember()).id,
+    });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
   }
 }
 

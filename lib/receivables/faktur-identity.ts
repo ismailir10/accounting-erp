@@ -14,21 +14,33 @@ export const ADDRESS_MAX = 300;
 export const EMAIL_MAX = 120;
 export const ITEM_NAME_MAX = 200;
 
-export type ContactTaxIdentityInput = { clientId: string; contactId: string; npwp: string; nik: string; nitku: string; address: string; email: string; actorId?: string | null };
+export type ContactTaxIdentityInput = {
+  clientId: string;
+  contactId: string;
+  npwp: string;
+  nik: string;
+  nitku: string;
+  address: string;
+  email: string;
+  /** Who the contact is in the file: the faktur's buyer (default) or the bukti potong's recipient (cycle 2026-10-17-bppu-files). */
+  holder?: "pembeli" | "penerima";
+  actorId?: string | null;
+};
 
 const FIELD_LABEL = { npwp: "NPWP", nik: "NIK", nitku: "NITKU", address: "alamat", email: "email" } as const;
 type Field = keyof typeof FIELD_LABEL;
 
-/** Sets the buyer's NPWP / NIK / NITKU / address / email; an empty field clears it. NITKU equal to the head office default is stored as null. */
+/** Sets the buyer's (or a bukti potong recipient's) NPWP / NIK / NITKU / address / email; an empty field clears it. NITKU equal to the head office default is stored as null. */
 export async function setContactTaxIdentity(db: Db, input: ContactTaxIdentityInput) {
   const contact = await db.contact.findFirst({ where: { id: input.contactId, clientId: input.clientId } });
-  if (!contact) throw new LedgerError("Pelanggan tidak ditemukan.");
+  const holder = input.holder ?? "pembeli";
+  if (!contact) throw new LedgerError(holder === "pembeli" ? "Pelanggan tidak ditemukan." : "Penerima tidak ditemukan.");
   const fields: Record<string, string> = {};
   const npwp = normalizeNpwp(input.npwp ?? "");
   if (npwp === null) fields.npwp = "NPWP berisi 15 atau 16 angka, boleh dengan titik dan strip.";
   const nik = digitsOnly(input.nik);
   if (nik === null || (nik && !NIK.test(nik))) fields.nik = "NIK berisi 16 angka.";
-  const nitku = fields.npwp ? null : readNitku(input.nitku, npwp ? npwp16(npwp) : null, "pembeli");
+  const nitku = fields.npwp ? null : readNitku(input.nitku, npwp ? npwp16(npwp) : null, holder);
   if (nitku && !nitku.ok) fields.nitku = nitku.error;
   const address = (input.address ?? "").trim().replace(/\s+/g, " ");
   if (address.length > ADDRESS_MAX) fields.address = `Alamat paling panjang ${ADDRESS_MAX} karakter.`;

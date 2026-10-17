@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Buku: bukti potong PPh Unifikasi (BPPU) untuk impor Coretax, format DJP bppu.xml / converter v.3, belum diuji dengan unggahan nyata. 3 bukti potong. -->
+<BpuBulk xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+	<TIN>0012345678015000</TIN>
+	<ListOfBpu>
+		<Bpu>
+			<TaxPeriodMonth>8</TaxPeriodMonth>
+			<TaxPeriodYear>2026</TaxPeriodYear>
+			<CounterpartTin>0098765432101200</CounterpartTin>
+			<IDPlaceOfBusinessActivityOfIncomeRecipient>0098765432101200000000</IDPlaceOfBusinessActivityOfIncomeRecipient>
+			<TaxCertificate>N/A</TaxCertificate>
+			<TaxObjectCode>24-104-03</TaxObjectCode>
+			<TaxBase>10000000</TaxBase>
+			<Rate>2</Rate>
+			<Document>CommercialInvoice</Document>
+			<DocumentNumber>INV-77</DocumentNumber>
+			<DocumentDate>2026-08-15</DocumentDate>
+			<IDPlaceOfBusinessActivity>0012345678015000000000</IDPlaceOfBusinessActivity>
+			<GovTreasurerOpt>N/A</GovTreasurerOpt>
+			<SP2DNumber xsi:nil="true"/>
+			<WithholdingDate>2026-08-21</WithholdingDate>
+		</Bpu>
+		<Bpu>
+			<TaxPeriodMonth>8</TaxPeriodMonth>
+			<TaxPeriodYear>2026</TaxPeriodYear>
+			<CounterpartTin>3174061502560010</CounterpartTin>
+			<IDPlaceOfBusinessActivityOfIncomeRecipient>3174061502560010000000</IDPlaceOfBusinessActivityOfIncomeRecipient>
+			<TaxCertificate>N/A</TaxCertificate>
+			<TaxObjectCode>28-403-02</TaxObjectCode>
+			<TaxBase>10000000</TaxBase>
+			<Rate>10</Rate>
+			<Document>Contract</Document>
+			<DocumentNumber>SPK/08/2026</DocumentNumber>
+			<DocumentDate>2026-08-01</DocumentDate>
+			<IDPlaceOfBusinessActivity>0012345678015000000000</IDPlaceOfBusinessActivity>
+			<GovTreasurerOpt>N/A</GovTreasurerOpt>
+			<SP2DNumber xsi:nil="true"/>
+			<WithholdingDate>2026-08-25</WithholdingDate>
+		</Bpu>
+		<Bpu>
+			<TaxPeriodMonth>8</TaxPeriodMonth>
+			<TaxPeriodYear>2026</TaxPeriodYear>
+			<CounterpartTin>0111222333444000</CounterpartTin>
+			<IDPlaceOfBusinessActivityOfIncomeRecipient>0111222333444000000001</IDPlaceOfBusinessActivityOfIncomeRecipient>
+			<TaxCertificate>N/A</TaxCertificate>
+			<TaxObjectCode>28-409-22</TaxObjectCode>
+			<TaxBase>15727371</TaxBase>
+			<Rate>1.75</Rate>
+			<Document>CommercialInvoice</Document>
+			<DocumentNumber>B&amp;R &lt;08&gt;/2026</DocumentNumber>
+			<DocumentDate>2026-08-31</DocumentDate>
+			<IDPlaceOfBusinessActivity>0012345678015000000000</IDPlaceOfBusinessActivity>
+			<GovTreasurerOpt>N/A</GovTreasurerOpt>
+			<SP2DNumber xsi:nil="true"/>
+			<WithholdingDate>2026-08-31</WithholdingDate>
+		</Bpu>
+	</ListOfBpu>
+</BpuBulk>

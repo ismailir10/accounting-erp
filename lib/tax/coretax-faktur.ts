@@ -53,15 +53,19 @@ export type FakturDraft = {
 
 const ORDER: Record<DraftStatus, number> = { BLOCKED: 0, READY: 1, IN_CORETAX: 2 };
 
-function sellerOf(e: { npwp: string | null; nitku: string | null }): { seller: FakturSeller | null; reasons: Reason[] } {
+/**
+ * The company's own identity in a Coretax file (the faktur's seller, the bukti potong's withholder): its NPWP16 and NITKU (default the
+ * head office). Either one wrong blocks the whole file. Shared with `coretax-bppu.ts`.
+ */
+export function companyIdentity(e: { npwp: string | null; nitku: string | null }, what: "faktur" | "bukti potong"): { id: FakturSeller; reasons: [] } | { id: null; reasons: { code: "COMPANY_NPWP" | "COMPANY_NITKU"; text: string; fix: "COMPANY" }[] } {
   const tin = npwp16(e.npwp);
   if (!tin) {
-    const text = e.npwp ? `NPWP perusahaan (${e.npwp}) bukan 15 atau 16 angka.` : "NPWP perusahaan belum diisi, jadi faktur tidak bisa dibuat.";
-    return { seller: null, reasons: [{ code: "COMPANY_NPWP", text, fix: "COMPANY" }] };
+    const text = e.npwp ? `NPWP perusahaan (${e.npwp}) bukan 15 atau 16 angka.` : `NPWP perusahaan belum diisi, jadi ${what} tidak bisa dibuat.`;
+    return { id: null, reasons: [{ code: "COMPANY_NPWP", text, fix: "COMPANY" }] };
   }
   const idtku = e.nitku ?? headOfficeNitku(tin);
-  if (!NITKU.test(idtku) || !idtku.startsWith(tin)) return { seller: null, reasons: [{ code: "COMPANY_NITKU", text: `NITKU perusahaan (${idtku}) harus 22 angka diawali NPWP-nya.`, fix: "COMPANY" }] };
-  return { seller: { tin, idtku }, reasons: [] };
+  if (!NITKU.test(idtku) || !idtku.startsWith(tin)) return { id: null, reasons: [{ code: "COMPANY_NITKU", text: `NITKU perusahaan (${idtku}) harus 22 angka diawali NPWP-nya.`, fix: "COMPANY" }] };
+  return { id: { tin, idtku }, reasons: [] };
 }
 
 /** Every reason a row can't go into the file yet, and its buyer when it can. */
@@ -127,7 +131,7 @@ export async function fakturKeluaranDraft(db: Db, input: { clientId: string; ent
     : [];
   const lastBy = new Map(last.map((l) => [l.contactId, l]));
 
-  const { seller, reasons: companyReasons } = sellerOf(e);
+  const { id: seller, reasons: companyReasons } = companyIdentity(e, "faktur");
   const rows: DraftRow[] = invoices.map((inv) => {
     const own = isItemKind(inv.fakturItemKind) && isUnit(inv.fakturUnit);
     const prev = own ? null : lastBy.get(inv.contactId);
