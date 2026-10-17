@@ -65,6 +65,7 @@ import { MAX_UPLOAD_BYTES } from "@/lib/upload";
 import { postRevaluation, RevaluationError } from "@/lib/fx/revalue";
 import { reviewClose, type CloseReviewView } from "@/lib/controls/ai-review";
 import { explainControl, ExplainError, type ControlExplanation } from "@/lib/controls/explain";
+import { ReasoningError, reasoningFor, reasoningSteps, type ReasoningStep } from "@/lib/approvals/reasoning";
 import { dismissProposal, postProposal } from "@/lib/adjust/proposals";
 import { postSuspenseCorrection, SUSPENSE_NOT_DISMISSABLE, SUSPENSE_PREFIX } from "@/lib/adjust/suspense";
 import { AiBudgetError } from "@/lib/ai/budget";
@@ -95,7 +96,7 @@ type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; needs
 function fail(e: unknown): { ok: false; error: string; needsPassword?: boolean; needsYear?: boolean; yearGuess?: number | null } {
   if (e instanceof PdfPasswordError) return { ok: false, error: e.message, needsPassword: true };
   if (e instanceof YearNeededError) return { ok: false, error: e.message, needsYear: true, yearGuess: e.guess };
-  if (e instanceof DeleteClientError || e instanceof EntityEditError || e instanceof AccountEditError || e instanceof AccessError || e instanceof OrgError) return { ok: false, error: e.message };
+  if (e instanceof DeleteClientError || e instanceof EntityEditError || e instanceof AccountEditError || e instanceof AccessError || e instanceof OrgError || e instanceof ReasoningError) return { ok: false, error: e.message };
   if (e instanceof ParseError || e instanceof LedgerError || e instanceof CloseError || e instanceof OpeningError || e instanceof FindingError || e instanceof RemoveImportError || e instanceof MoneyError || e instanceof RateError || e instanceof RevaluationError || e instanceof LedgerImportError || e instanceof MappingError || e instanceof EntitySettingsError || e instanceof FormatError || e instanceof SubledgerError || e instanceof FakturError || e instanceof BupotError || e instanceof ChecklistError) return { ok: false, error: e.message };
   const infra = infraErrorMessage(e);
   console.error(e);
@@ -1397,6 +1398,19 @@ export async function explainControlAction(clientId: string, year: number, month
       console.error(e);
       return { ok: false, error: "AI tidak tersedia saat ini. Kontrol tetap berjalan; coba lagi nanti." };
     }
+    return fail(e);
+  }
+}
+
+/**
+ * *Lihat alasan* (cycle 2026-10-17-lihat-alasan): the steps behind an AI bank line or AI draft of the client. Reads only — anyone who
+ * may read the books, viewers included; no AI call, no budget, nothing stored. Another client's item is "Usulan tidak ditemukan."
+ */
+export async function reasoningAction(clientId: string, itemId: string): Promise<Result<{ steps: ReasoningStep[] }>> {
+  try {
+    const client = await clientFor("books.read", clientId);
+    return { ok: true, steps: reasoningSteps(await reasoningFor(prisma, { firmId: client.firmId, clientId: client.id }, String(itemId))) };
+  } catch (e) {
     return fail(e);
   }
 }

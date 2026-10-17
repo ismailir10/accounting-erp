@@ -265,23 +265,23 @@ If the recomputed key can't match the demo's AI lines reliably, linking a line t
 and ask.
 
 ## Tasks
-- [ ] T1 Bank-line reasoning (`lib/approvals/reasoning.ts`) and the CSV writer, plus DB and unit tests.
+- [x] T1 Bank-line reasoning (`lib/approvals/reasoning.ts`) and the CSV writer, plus DB and unit tests.
       - Reasoning: the steps, the payload rebuilt as the prompt builds it, the cache match over candidate descriptions × models, the
         replacement, and the checks (whitelist, bulk rule, hints count).
       - Accept: the bank seams pass, and every demo AI review line matches.
       - Reuse: `aiCacheKey`, `aiScope`, `aiAccounts`, `isClassifiable`, `demoteUnbacked`'s reason, `bulkAcceptable` / `isSureSuggestion`,
         `accountantHints`, `entrySource`; `draftCsv`'s cell rules as a model.
-- [ ] T2 Count dropped *Jelaskan* citations.
+- [x] T2 Count dropped *Jelaskan* citations.
       - `parseControlExplain` returns `dropped`. The provider passes it through. `explainControl` stores it in the cached answer and
         keeps it on a cache hit.
       - `MockProvider` gets a recorded explain answer (as `fluxAnswer`).
       - accounting-rules 20b line, ADR 0009 note.
       - Accept: the parse unit test and the DB cache test. (Parallel with T1.)
-- [ ] T3 Draft reasoning, in the same module.
+- [x] T3 Draft reasoning, in the same module.
       - The control, `controlSnapshot` against the stored snapshot, rows with cited marks, the dropped count from the cache row, the
         checks and the blocked or stale state.
       - Accept: the draft seams pass. (deps: T2)
-- [ ] T4 UI and download.
+- [x] T4 UI and download.
       - The `ReasoningPanel` disclosure on Review's AI items and Kotak's AI bank and draft cards, the read-only `reasoningAction`
         (`books.read`), and the GET `/clients/[id]/approvals/alasan?item=` CSV route (item checked against the client).
       - README's Kotak and Review rows.
@@ -292,6 +292,66 @@ and ask.
         (deps: T4)
 
 ## Implementation
+- Plan: T1–T4 inline by one build worker, in order (T1 and T3 share `lib/approvals/reasoning.ts`, T4 renders both; a fan-out would
+  have split one module). T5's e2e spec is written here; the walk, screenshots and the full gate run centrally in verify-local.
+- T1: `lib/approvals/reasoning.ts`, `lib/csv.ts`, `tests/db/reasoning-bank.test.ts`, `tests/unit/reasoning.test.ts`,
+  `tests/db/demo.test.ts` — the bank-line read model: the line's cache key is recomputed from its own inputs (client, chart version,
+  entity kind, today's chart as `aiScope` + `aiAccounts` build it, counterparty and direction) over candidate descriptions (its own, then
+  its import's, then the counterparty's newest, ≤ 50, cut to 80 characters) × candidate models (the firm's `AiUsage` models, the
+  configured one, `demo-seed`), one `findMany` by `cacheKey`. A row counts only when the line still reads as made from it (as given,
+  replaced or capped by `demoteUnbacked`), so an equal answer under another description doesn't stand in. Every demo AI line in Review
+  matches (`demo.test.ts`, the live upload's line included): no schema column needed. The CSV writer: semicolon, BOM, CRLF, quoting,
+  formula cells (`= + - @`, tab, CR) neutralised with an apostrophe, plain integers kept as numbers.
+- T2: `lib/ai/provider.ts`, `lib/controls/explain.ts`, `tests/unit/close-explain.test.ts`, `tests/db/close-explain.test.ts`,
+  accounting-rules 20b, ADR 0009 note — `parseControlExplain` returns `dropped` (distinct citations outside the rows sent, or not an
+  id); `explainControl` adds the provider's count to its own re-check's, stores it in the cached answer's JSON and keeps the stored
+  count on a cache hit (re-reading filtered refs can't recount it). `MockProvider.explainAnswer` replays a recorded answer.
+- T3: `lib/approvals/reasoning.ts`, `lib/controls/explain.ts`, `tests/db/close-explain.test.ts`, `tests/unit/reasoning.test.ts` — the
+  draft read model: the control as it flags today, its rows rebuilt by `gather` and shown (cited marked) only while `snapshotOf` equals
+  the draft's snapshot (*Setujui*'s proof), the dropped count from the cached answer (`storedDropped`; null → "tidak tercatat"), and the
+  checks (chart and no bank account, debit = kredit, every amount a cited row's, a bank line through Review, `priorCorrection`, fresh or
+  the existing stale message). `explainInput` / `explainKey` are extracted from `explainControl` (same input, same key) so the panel can
+  recompute the answer's key over the candidate models: a match proves the chart size sent and the model, else the note names no count.
+  `reasoningFor` routes an item id to the bank line or the draft of the client; anything else is "Usulan tidak ditemukan."
+- T4: `components/app/reasoning-panel.tsx`, `components/app/review-queue.tsx`, `components/app/approval-queue.tsx`, `app/actions.ts`,
+  `app/(app)/clients/[id]/approvals/alasan/route.ts`, README (Classify and Kotak rows) — `ReasoningDisclosure`: a ghost *Lihat alasan* /
+  *Tutup alasan* toggle (chevron, `aria-expanded`) at the end of the reason line of Review's AI items and Kotak's AI bank and draft cards
+  only, and the panel as a full-width row under it (numbered steps, checks as `Check` / `CircleAlert` + label, a draft's rows as a compact
+  table with Tanggal and Akun hidden below `sm`, a one-line skeleton while loading, the action's error verbatim, *Unduh nilai (CSV)* as the
+  only action). `reasoningAction` reads behind `books.read` (viewers included), writes nothing. The CSV route answers 404 for a client
+  outside the member's reach and for an item that isn't that client's AI line or draft. The toggle is a button, so Review's Enter handler
+  leaves it alone (it toggles, never accepts). Which cards get it is one rule (`lib/approvals/has-reasoning.ts`, AI bank lines and AI
+  drafts) both components use.
+- T5 (build part): `e2e/lihat-alasan.spec.ts` — flows 1 and 2 on the demo, read-only (CV Sinar's grosir and rack lines answer from the
+  seed's `demo-seed` cache, so CI needs no AI key): the panel's steps, the downloaded CSV's body, Enter on the toggle, a Peninjau
+  opening and downloading, 404s, 390 px. Not run here: the walk with screenshots, Playwright and the full gate (`verify:books`) run in
+  verify-local.
+- Acceptance criteria → tests (unit `tests/unit/reasoning.test.ts` = U, `tests/unit/close-explain.test.ts` = UC; DB
+  `tests/db/reasoning-bank.test.ts` = DB, `tests/db/close-explain.test.ts` = DC, `tests/db/demo.test.ts` = DD; e2e
+  `e2e/lihat-alasan.spec.ts` = E):
+  - *Lihat alasan* on every AI bank line and AI draft, on no other card: U "which cards carry Lihat alasan" (the rule both components
+    use); E `toggleOnlyOnAi` on CV Sinar's Kotak and Review and Grup Ayam's Kotak (with its schedule and faktur cards). The draft card's
+    toggle on screen: verify-local flow 3 (an AI draft needs a model or a fixture; the demo has none).
+  - Bank panel, checked first: U "lists the five steps"; E flow 1. Exactly the fields sent (client, direction, counterparty, ≤ 80
+    characters, account count): DB "finds its cached answer…" (exact lines, no amount, date or account number), DB "names the description
+    that was sent", U, E. The not-sent sentence: U, E. What came back with model and date or *Jawaban demo*: DB (mock + date), U (a real
+    model and date), DD (every demo AI line matches `demo-seed`; Sinar's grosir answer), E. Buku's checks — in the chart, the replacement
+    with the original account, bulk and why not: DB "shows the original account…", U (capped, missing account, hints, low), DD (grosir
+    may go in bulk, rack below 80 %), E (both).
+  - No match → said, only the stored suggestion: DB "…once the chart version moved", DB "never matches another client's answer", U.
+  - Draft panel — the control, rows sent with cited marks, dropped count (*tidak tercatat* for older answers), the checks, fresh or stale
+    with no row values: DC "Lihat alasan — an AI draft" (three tests), U "a draft's steps"; the count itself: UC "counts the citations
+    it discards", DC "stores how many citations were outside the rows sent… keeps the count on a cache hit".
+  - CSV — the panel's values, amounts as sent and as integers, the line's amount only in a *tidak dikirim* row, no formula cell, Excel
+    id-ID (semicolon, BOM): U "the CSV writer" and "a bank line's CSV", U draft CSV, DC (rows as sent and as integers, no dropped string),
+    E (the downloaded file, admin and Peninjau).
+  - A viewer opens and downloads; another client's item 404; opening writes nothing and calls no model: E (Peninjau, 404 for the item
+    under another client and for an unknown item), DB / DC refusals (another client, another firm, a non-AI line), DB and DC footprints
+    (cache, usage, runs, journals, proposals and lines unchanged; `MockProvider.calls` unchanged).
+  - Enter on *Lihat alasan* in Review toggles and accepts nothing: E flow 2.
+  - 390 px without sideways scroll: E (Kotak with both panels open, Review), unconditional.
+  - No report number changes: DD (`verifyBooks` still has no failures) and verify-local's `verify:books`.
+  - Deck claims: reviewed in ship.
 
 ## Verification
 

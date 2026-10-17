@@ -6,7 +6,7 @@ import { runControls } from "@/lib/controls";
 import { bankLineState, gather, snapshotOf, CLOSE_REVIEW_TOKEN_LIMIT, type ReviewLink } from "@/lib/controls/ai-review";
 import { formatPeriod, periodBounds } from "@/lib/format";
 import { runBudgetedAi } from "@/lib/ai/budget";
-import { AiAnswerError, amountOf, CONTROL_EXPLAIN_MAX_TOKENS, CONTROL_EXPLAIN_PROMPT_VERSION, buildControlExplainPrompt, parseControlExplain, type AiProvider, type ControlExplainAnswer, type ControlExplainInput } from "@/lib/ai/provider";
+import { AiAnswerError, amountOf, CONTROL_EXPLAIN_MAX_TOKENS, CONTROL_EXPLAIN_PROMPT_VERSION, buildControlExplainPrompt, parseControlExplain, type AiProvider, type CloseReviewControl, type CloseReviewEntity, type ControlExplainAnswer, type ControlExplainInput } from "@/lib/ai/provider";
 import { priorCorrection, saveProposal, type ProposalLine } from "@/lib/adjust/proposals";
 
 /**
@@ -21,6 +21,32 @@ export class ExplainError extends Error {}
 
 const scopeOf = (clientId: string, year: number, month: number) => `close:${clientId}:${year}-${String(month).padStart(2, "0")}`;
 
+/** The dropped-citation count a cached *Jelaskan* answer stored, or null for an answer cached before it was counted. */
+export function storedDropped(payload: unknown): number | null {
+  const v = (payload as { dropped?: unknown } | null)?.dropped;
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null;
+}
+
+/**
+ * What *Jelaskan* sends for one flagged control (its rows already gathered), and the entity a draft may book for. Also rebuilt by
+ * *Lihat alasan* to prove which chart and model an answer came from (lib/approvals/reasoning.ts).
+ */
+export async function explainInput(db: Db, clientId: string, year: number, month: number, reviewed: CloseReviewControl, entities: CloseReviewEntity[] | undefined) {
+  const client = await db.client.findUniqueOrThrow({ where: { id: clientId }, include: { entities: true } });
+  // Entity-scoped controls (`kind:<entityId>`) may get a draft journal for that entity; group-level ones get words only.
+  const entity = client.entities.find((e) => e.id === reviewed.key.split(":")[1]) ?? null;
+  // Prive (3300) is an owner's withdrawal from a sole proprietorship or a CV partner; a PT or foreign company's draft never uses it.
+  const noPrive = entity !== null && (entity.kind === "PT" || entity.kind === "BADAN_USAHA_ASING");
+  // Transfers are paired by the matcher or decided by the reviewer, never drafted by the model (accounting-rules 13): no 1190/1199.
+  const accounts = aiAccounts(await db.account.findMany({ where: { clientId, isBank: false, ...(noPrive ? { fsLine: { not: "PRIVE" } } : {}) }, select: { code: true, name: true }, orderBy: { code: "asc" } }));
+  const input: ControlExplainInput = { client: client.name, period: formatPeriod(year, month), currency: entity?.functionalCurrency ?? client.entities[0]?.functionalCurrency ?? "IDR", accounts, control: reviewed, canDraft: entity !== null, entities };
+  return { input, entity };
+}
+
+/** The cache key of a *Jelaskan* answer; a draft's `key` is "AI:" + this. */
+export const explainKey = (firmId: string, clientId: string, input: ControlExplainInput, model: string) =>
+  createHash("sha256").update(JSON.stringify([firmId, clientId, input, model, CONTROL_EXPLAIN_PROMPT_VERSION])).digest("hex");
+
 export async function explainControl(db: Db, firmId: string, clientId: string, year: number, month: number, controlKey: string, provider: AiProvider): Promise<ControlExplanation> {
   if (!provider.explainControl) throw new ExplainError("Model AI ini belum mendukung penjelasan kontrol.");
   const control = (await runControls(db, clientId, year, month)).find((c) => c.key === controlKey);
@@ -28,31 +54,26 @@ export async function explainControl(db: Db, firmId: string, clientId: string, y
   if (control.status === "PASS") throw new ExplainError("Kontrol ini sudah lolos; tidak ada yang perlu dijelaskan.");
   const g = await gather(db, clientId, year, month, [control]);
   const reviewed = g.input.controls[0];
-  const client = await db.client.findUniqueOrThrow({ where: { id: clientId }, include: { entities: true } });
-  // Entity-scoped controls (`kind:<entityId>`) may get a draft journal for that entity; group-level ones get words only.
-  const entity = client.entities.find((e) => e.id === controlKey.split(":")[1]) ?? null;
-  // Prive (3300) is an owner's withdrawal from a sole proprietorship or a CV partner; a PT or foreign company's draft never uses it.
-  const noPrive = entity !== null && (entity.kind === "PT" || entity.kind === "BADAN_USAHA_ASING");
-  // Transfers are paired by the matcher or decided by the reviewer, never drafted by the model (accounting-rules 13): no 1190/1199.
-  const accounts = aiAccounts(await db.account.findMany({ where: { clientId, isBank: false, ...(noPrive ? { fsLine: { not: "PRIVE" } } : {}) }, select: { code: true, name: true }, orderBy: { code: "asc" } }));
-  const input: ControlExplainInput = { client: client.name, period: formatPeriod(year, month), currency: entity?.functionalCurrency ?? client.entities[0]?.functionalCurrency ?? "IDR", accounts, control: reviewed, canDraft: entity !== null, entities: g.input.entities };
-
-  const key = createHash("sha256").update(JSON.stringify([firmId, clientId, input, provider.model, CONTROL_EXPLAIN_PROMPT_VERSION])).digest("hex");
+  const { input, entity } = await explainInput(db, clientId, year, month, reviewed, g.input.entities);
+  const key = explainKey(firmId, clientId, input, provider.model);
   const scope = scopeOf(clientId, year, month);
   let answer: ControlExplainAnswer;
   const hit = await db.evidenceAiCache.findFirst({ where: { key, firmId, scope } });
-  if (hit) answer = parseControlExplain(JSON.stringify(hit.payload), input);
+  // A stored answer's refs are already filtered, so re-reading it can't recount its dropped citations: the stored count stands.
+  if (hit) answer = { ...parseControlExplain(JSON.stringify(hit.payload), input), dropped: storedDropped(hit.payload) ?? 0 };
   else {
     const result = await runBudgetedAi(
       db,
       { firmId, scope, prompt: buildControlExplainPrompt(input), maxCompletionTokens: CONTROL_EXPLAIN_MAX_TOKENS, scopeTokenLimit: CLOSE_REVIEW_TOKEN_LIMIT, model: provider.model, keysRequested: 1, note: "Jelaskan kontrol" },
       async () => {
         const r = await provider.explainControl!(input);
-        try { return { ...r, ...parseControlExplain(JSON.stringify(r), input) }; }
-        catch { throw new AiAnswerError("Penjelasan AI tidak valid; periksa kontrol secara manual.", r.promptTokens, r.completionTokens, r.model); }
+        try {
+          const checked = parseControlExplain(JSON.stringify(r), input);
+          return { ...r, ...checked, dropped: (r.dropped ?? 0) + checked.dropped };
+        } catch { throw new AiAnswerError("Penjelasan AI tidak valid; periksa kontrol secara manual.", r.promptTokens, r.completionTokens, r.model); }
       },
     );
-    answer = { explanation: result.explanation, suggestion: result.suggestion, refs: result.refs, note: result.note, entry: result.entry };
+    answer = { explanation: result.explanation, suggestion: result.suggestion, refs: result.refs, note: result.note, entry: result.entry, dropped: result.dropped };
     await db.evidenceAiCache.upsert({ where: { key }, create: { key, firmId, scope, payload: answer }, update: {} });
   }
 
