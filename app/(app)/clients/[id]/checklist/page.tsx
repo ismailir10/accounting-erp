@@ -98,7 +98,7 @@ export default async function ChecklistPage({ params, searchParams }: { params: 
         month={period.month}
         periodLabel={label}
         locked={view.locked}
-        hasTemplate={view.hasTemplate}
+        hasTemplate={view.hasTemplate && !beforeStart}
         rows={beforeStart ? [] : shown}
         counts={view.counts}
         proposal={proposal}

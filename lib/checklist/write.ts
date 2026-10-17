@@ -75,19 +75,20 @@ export async function acceptDefault(db: Db, actor: ChecklistActor, input: Month 
   return db.$transaction(async (tx) => {
     if (await tx.checklistTask.count({ where: { clientId: input.clientId } })) throw new ChecklistError("Checklist klien ini sudah ada. Ubah tugasnya lewat Atur checklist.");
     await mustBeOpen(tx, input);
-    const people = await checkAssignment(tx, input.clientId, input.assigneeId, input.reviewerId);
+    const reviewerId = input.reviewerId ?? null;
+    const people = await checkAssignment(tx, input.clientId, input.assigneeId, reviewerId);
     const { firmId } = await tx.client.findUniqueOrThrow({ where: { id: input.clientId }, select: { firmId: true } });
     const startPeriod = periodNumber(input.year, input.month);
     await tx.checklistTask.createMany({
       data: lines.map((l, position) => ({
         firmId, clientId: input.clientId, kind: l.kind, key: l.key, title: l.title, position, dueDay: l.dueDay, startPeriod,
-        assigneeId: input.assigneeId, reviewerId: l.kind === "AUTO" ? null : input.reviewerId,
+        assigneeId: input.assigneeId, reviewerId: l.kind === "AUTO" ? null : reviewerId,
       })),
     });
     const label = formatPeriod(input.year, input.month);
     await event(tx, input.clientId, actor.id, "checklist:template",
-      `Checklist dipakai mulai ${label}: ${lines.length} tugas · Pelaksana ${nameOf(people, input.assigneeId)} · Pereviu ${nameOf(people, input.reviewerId)}`,
-      undefined, { startPeriod, assignee: nameOf(people, input.assigneeId), reviewer: nameOf(people, input.reviewerId), tasks: lines.map((l) => l.title) });
+      `Checklist dipakai mulai ${label}: ${lines.length} tugas · Pelaksana ${nameOf(people, input.assigneeId)} · Pereviu ${nameOf(people, reviewerId)}`,
+      undefined, { startPeriod, assignee: nameOf(people, input.assigneeId), reviewer: nameOf(people, reviewerId), tasks: lines.map((l) => l.title) });
     return lines.length;
   });
 }
@@ -100,6 +101,7 @@ export type NewTask = { kind: "MANUAL" | "AUTO"; key?: string; title?: string; a
  */
 export async function addTask(db: Db, actor: ChecklistActor, input: Month & NewTask) {
   mustMonth(input);
+  if (input.kind !== "MANUAL" && input.kind !== "AUTO") throw new ChecklistError("Jenis tugas tidak dikenal.");
   if (input.kind === "AUTO") mustManage(actor);
   else if (!isAdminRole(actor.role) && input.assigneeId !== actor.id) throw new ChecklistError("Tugas yang Anda tambahkan dikerjakan oleh Anda sendiri sebagai Pelaksana. Admin kantor dapat menugaskan orang lain.");
   mustDueDay(input.dueDay);
@@ -117,7 +119,7 @@ export async function addTask(db: Db, actor: ChecklistActor, input: Month & NewT
       key = input.key;
       title = input.title?.trim() ? cleanTitle(input.title) : autoKind(input.key).title;
     } else title = cleanTitle(input.title);
-    const reviewerId = input.kind === "AUTO" ? null : input.reviewerId;
+    const reviewerId = input.kind === "AUTO" ? null : (input.reviewerId ?? null);
     const people = await checkAssignment(tx, input.clientId, input.assigneeId, reviewerId);
     const { firmId } = await tx.client.findUniqueOrThrow({ where: { id: input.clientId }, select: { firmId: true } });
     const task = await tx.checklistTask.create({
@@ -140,7 +142,7 @@ export async function updateTask(db: Db, actor: ChecklistActor, input: Month & {
   return db.$transaction(async (tx) => {
     await mustBeOpen(tx, input);
     const task = await taskFor(tx, input, input.taskId);
-    const reviewerId = task.kind === "AUTO" ? null : input.reviewerId;
+    const reviewerId = task.kind === "AUTO" ? null : (input.reviewerId ?? null);
     const people = await checkAssignment(tx, input.clientId, input.assigneeId, reviewerId);
     const before = { title: task.title, assignee: task.assignee.name, reviewer: task.reviewer?.name ?? "tidak ada", dueDay: task.dueDay };
     const after = { title, assignee: nameOf(people, input.assigneeId), reviewer: nameOf(people, reviewerId), dueDay: input.dueDay };

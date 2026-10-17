@@ -53,6 +53,9 @@ describe("checklist actions through the guard", () => {
     signIn(admin);
     expect(await updateChecklistTaskAction(g.client.id, 2026, 8, docs.id, { title: docs.title, assigneeId: rina.id, reviewerId: viewer.id, dueDay: 10 })).toEqual({ ok: false, error: "Vina berperan Peninjau (hanya melihat), jadi tidak dapat menjadi Pereviu." });
     expect(await updateChecklistTaskAction(g.client.id, 2026, 8, docs.id, { title: docs.title, assigneeId: rina.id, reviewerId: admin.id, dueDay: 11 })).toEqual({ ok: true });
+    // What a browser can send is not trusted: an unknown kind or month is refused in Bahasa, not as a database error.
+    expect(await addChecklistTaskAction(g.client.id, 2026, 8, { kind: "SIGNOFF", title: "x", assigneeId: rina.id, reviewerId: null, dueDay: 5 } as never)).toEqual({ ok: false, error: "Jenis tugas tidak dikenal." });
+    expect(await markChecklistAction(g.client.id, 2026, 13, docs.id, "done", true)).toEqual({ ok: false, error: "Periode tidak valid. Muat ulang halaman." });
   });
 
   it("ticks and reviews follow the task's rules, from the checklist and from Tutup Buku alike", async () => {

@@ -403,6 +403,9 @@ If the warning must become a block, or the reviewer must become a second approve
     its human tasks and the *Tutup buku* / *Laporan dikirim* proofs only (its other proofs would need that month's controls, which its
     own page reads). Beranda's late task is pushed for locked clients too.
   - `signoffAction` changed in the T2 commit (it shares the actions file); T3 holds the Tutup Buku UI.
+  - A month before the template's first month shows only the NextStep ("Checklist klien ini dimulai …" with a link to it): no card and
+    no *Tambah tugas*, so the template is never extended backwards from there.
+  - The write side refuses what a browser could send outside the UI (an unknown task kind, an invalid month) in Bahasa, before the CHECKs.
 
 ## Verification
 
