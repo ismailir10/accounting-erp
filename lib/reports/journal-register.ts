@@ -3,6 +3,7 @@ import type { EntryKind } from "@/lib/generated/prisma/enums";
 import type { Prisma } from "@/lib/generated/prisma/client";
 import { MoneyError, parseMoney } from "@/lib/money";
 import { ENTRY_SOURCE_SELECT, entrySource } from "@/lib/reports/entry-source";
+import { entryOrigins } from "@/lib/reports/entry-origin";
 import type { Scope } from "@/lib/reports/ledger";
 
 /** The kinds Jurnal Umum filters by (`?jenis=`). A bank line's later reclassification belongs with the bank lines. */
@@ -66,6 +67,8 @@ export type RegisterEntry = {
   kind: EntryKind;
   memo: string;
   source: string | null;
+  /** The proposal it was approved from (lib/reports/entry-origin.ts), if any. */
+  origin: string | null;
   postedBy: string;
   postedAt: Date;
   /** The date of the journal that reversed this one (*Balik jurnal*), if any. */
@@ -102,6 +105,7 @@ export async function journalRegister(db: Db, scope: Scope, f: RegisterFilter, p
       },
     }),
   ]);
+  const origins = await entryOrigins(db, rows.map((e) => e.id));
   const entries: RegisterEntry[] = rows.map((e) => ({
     id: e.id,
     date: e.date,
@@ -109,6 +113,7 @@ export async function journalRegister(db: Db, scope: Scope, f: RegisterFilter, p
     kind: e.kind,
     memo: e.memo,
     source: entrySource(e),
+    origin: origins.get(e.id) ?? null,
     postedBy: e.postedBy?.name ?? "Sistem",
     postedAt: e.createdAt,
     reversedOn: e.reversedBy?.date ?? null,

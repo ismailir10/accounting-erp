@@ -205,7 +205,7 @@ If traceability turns out to need a column after all, that is a migration: stop 
       `NextStep`. (deps: T1)
 - [x] T3 Firm board: a per-client `approvals` count in `getWorkspaceOverview`, the *Persetujuan* column linking to Kotak, and the
       investor-demo doc line. Accept: the board count = Kotak total (DB test). (deps: T1; can run parallel with T2)
-- [ ] T4 Entry origin.
+- [x] T4 Entry origin.
       - `reviewTransactionTx` records the suggestion and the RECLASS id on its `CLASSIFY` event.
       - `ENTRY_SOURCE_SELECT` / `entrySource` (or a sibling `entryOrigin`) name the draft, 1999 correction, Coretax faktur or review
         decision.
@@ -233,6 +233,31 @@ If traceability turns out to need a column after all, that is a migration: stop 
   `README.md` — each board client carries `approvals` (`approvalCounts` for the month, every company) and `approvalsHref`
   (`/approvals?…&entity=combined`); the *Review* column is *Persetujuan* ("N usulan" / "Selesai"). The client-level `openReview` /
   `reviewHref` had no other reader and went; Beranda's per-company *Periksa N transaksi* tasks are unchanged.
+- T4: `lib/review.ts`, `lib/reports/entry-origin.ts`, `lib/reports/{journal-register,general-ledger,account-ledger,ledger-workbook}.ts`,
+  `components/app/ledger-table.tsx`, `app/(app)/clients/[id]/journals/page.tsx`, `tests/unit/entry-origin.test.ts`,
+  `tests/unit/ledger-workbook.test.ts`, `tests/db/entry-origin.test.ts` — `reviewTransactionTx` adds `suggestion` (account, tax tag,
+  method, confidence; only for a line still in Review) and `entryId` (the RECLASS) to the `after` of the `CLASSIFY` event it already
+  writes; the change test before the event is untouched. `entryOrigins(db, entryIds)` reads, in one batch per page, the draft
+  (`ProposedEntry.entryId`), the booked faktur (invoice by `entryId` → Coretax faktur by company, direction, number) and the review
+  decision (the event whose `after.entryId` is the RECLASS); a draft wins over the review event its bank-line RECLASS also wrote.
+  Shown as "Asal: …" under *Sumber* on Jurnal Umum and in the Buku Besar drawer, and appended to the Excel source column of both
+  workbooks. No schema column was needed.
+- Decisions made while building:
+  - Bank cards keep Review's set; inside the kind, lines under 70 % (simple guesses included) come first, then Review's date order
+    (the UX note's "problems first"). The 50-card cap applies after that order.
+  - *Setujui N usulan yakin* takes every confident line in scope, not only the 50 cards on screen (the full count is the queue's).
+  - The kind tabs show only when more than one kind has proposals.
+  - A faktur origin needs both the number match and the description `bookFaktur` writes ("Faktur pajak <n> (Coretax …"), so an
+    invoice typed by hand with a faktur's number is never called a Coretax faktur.
+  - A *Jelaskan* draft's control title is read from that month's controls. A control the month no longer raises (a scan finding the
+    draft fixed) leaves the title out: "Usulan AI (Jelaskan)". Titles are not stored and the spec rules out a column.
+  - The origin line is text without a link: once approved, the proposal's own page no longer lists it (Review, Tutup Buku, Pajak
+    Masa). Instalments keep their existing "Jadwal “…”, cicilan n" source line and get no second line.
+  - Origin wording for other methods follows the method badge: "Tebakan 6190 disetujui", "Aturan …", a confidence only for AI; a
+    changed tax tag counts as a change ("… diubah ke 6120").
+  - `postAllDueAction` (sensitive path) gains an optional `entityId`; it goes through the same `writeClient` (`books.write`) check
+    and is only used inside the client-scoped schedule query.
+  - A viewer gets a NextStep of their own and no buttons at all (the *Ubah* links included).
 
 ## Verification
 
