@@ -3,6 +3,7 @@ import { formatPeriod } from "@/lib/format";
 import { excelAmount, newWorkbook, type WorkbookMeta } from "@/lib/reports/workbook";
 import { changePercent, managementSummary, percentOf } from "@/lib/reports/management";
 import { noteForReport } from "@/lib/reports/report-comment";
+import { fluxExplanations } from "@/lib/reports/flux-explanation";
 
 /** Laporan manajemen bulanan (I4b): Ringkasan with the commentary, and Perubahan Akun. One company, its own currency; read-only. */
 export async function managementWorkbook(db: Db, input: { clientId: string; entityId: string; year: number; month: number; meta: WorkbookMeta }): Promise<Buffer> {
@@ -33,10 +34,20 @@ export async function managementWorkbook(db: Db, input: { clientId: string; enti
   ws.addRow(["Margin kotor", margin(s.month.grossProfit, s.month.revenue), margin(s.last.grossProfit, s.last.revenue), "", margin(s.ytd.grossProfit, s.ytd.revenue)]);
   ws.addRow(["Margin bersih", margin(s.month.netProfit, s.month.revenue), margin(s.last.netProfit, s.last.revenue), "", margin(s.ytd.netProfit, s.ytd.revenue)]);
 
-  const pa = sheet("Perubahan Akun", "Akun laba rugi: bulan ini dibanding rata-rata bulan sebelumnya", `${month} · ${unit} · rata-rata dari bulan aktif sebelumnya (maks. 3)`, [12, 40, 18, 18, 18, 12]);
-  head(pa, ["Kode", "Akun", "Bulan ini", "Rata-rata", "Selisih", "%"]);
+  const pa = sheet("Perubahan Akun", "Akun laba rugi: bulan ini dibanding rata-rata bulan sebelumnya", `${month} · ${unit} · rata-rata dari bulan aktif sebelumnya (maks. 3)`, [12, 40, 18, 18, 18, 12, 60]);
+  head(pa, ["Kode", "Akun", "Bulan ini", "Rata-rata", "Selisih", "%", "Penjelasan"]);
   if (!s.changes.length) pa.addRow(["", "Belum ada mutasi akun laba rugi."]);
-  for (const c of s.changes) pa.addRow([c.code, c.name, n(c.current), c.average === null ? null : n(c.average), n(c.delta), changePercent(c) ?? "–"]);
+  // Each approved explanation still matching the account's movement (Wawasan, accounting-rules 20d); a stale one is left out and named.
+  const { current } = await fluxExplanations(db, input, s);
+  for (const c of s.changes) {
+    const x = current.get(c.code);
+    pa.addRow([c.code, c.name, n(c.current), c.average === null ? null : n(c.average), n(c.delta), changePercent(c) ?? "–", x && !x.stale ? x.text : null]).getCell(7).alignment = { wrapText: true, vertical: "top" };
+  }
+  const stale = [...current.values()].filter((x) => x.stale).map((x) => x.code);
+  if (stale.length) {
+    pa.addRow([]);
+    pa.addRow([`Penjelasan ${stale.join(", ")} tidak dipakai: angka di buku besar berubah setelah disetujui. Setujui lagi di Analisis keuangan → Wawasan.`]).font = { italic: true, color: { argb: "FFC4213A" } };
+  }
 
   return Buffer.from(await book.wb.xlsx.writeBuffer());
 }

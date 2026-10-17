@@ -4,6 +4,7 @@ import { factAllowed } from "@/lib/evidence/types";
 import type { Direction, TaxTag } from "@/lib/generated/prisma/enums";
 import { buildOcrPrompt, OCR_MAX_TOKENS, OCR_TOKENS_PER_PAGE, parseOcrTranscript, type OcrInput, type OcrTranscript } from "@/lib/ocr/transcribe";
 import { buildCommentaryPrompt, COMMENTARY_MAX_TOKENS, parseCommentary, type CommentaryInput } from "@/lib/reports/commentary-ai";
+import { buildFluxExplanationPrompt, FLUX_EXPLANATION_MAX_CHARS, FLUX_EXPLANATION_MAX_TOKENS, parseFluxExplanation, type FluxExplanationAnswer, type FluxExplanationInput } from "@/lib/reports/flux-explanation-ai";
 
 /**
  * LLM provider port. Default implementation targets any OpenAI-compatible
@@ -289,6 +290,8 @@ export interface AiProvider {
   explainControl?(input: ControlExplainInput): Promise<ControlExplainResult>;
   /** Catatan manajemen (I5b): reword computed sentences; the caller checks every number. */
   draftCommentary?(input: CommentaryInput): Promise<CommentaryResult>;
+  /** Penjelasan penggerak (accounting-rules 20d): one flagged account's rows in, a cited explanation out; the caller checks every number. */
+  draftFluxExplanation?(input: FluxExplanationInput): Promise<FluxExplanationResult>;
   /** Scanned statement (I2a): page images in, a transcription out; Buku parses and proves every number. */
   readStatement?(input: OcrInput): Promise<OcrResult>;
   classify(items: AiItem[], accounts: { code: string; name: string }[], context: string): Promise<AiResult>;
@@ -297,6 +300,7 @@ export interface AiProvider {
 
 export type OcrResult = { transcript: OcrTranscript; promptTokens: number; completionTokens: number; model: string };
 export type CommentaryResult = { text: string; promptTokens: number; completionTokens: number; model: string };
+export type FluxExplanationResult = FluxExplanationAnswer & { promptTokens: number; completionTokens: number; model: string };
 
 /** Counterparties (or source accounts) per call: small enough that a reasoning model's thinking plus the JSON fit `maxTokensFor`. */
 export const AI_BATCH_SIZE = 15;
@@ -483,6 +487,17 @@ export class OpenAiCompatibleProvider implements AiProvider {
     catch { throw new AiAnswerError("Catatan AI tidak valid; pakai kalimat otomatis.", r.promptTokens, r.completionTokens, r.model); }
   }
 
+  async draftFluxExplanation(input: FluxExplanationInput): Promise<FluxExplanationResult> {
+    const { system, user } = buildFluxExplanationPrompt(input);
+    const r = await this.complete(system, user, FLUX_EXPLANATION_MAX_TOKENS, false, AI_TIMEOUT_MS);
+    try {
+      const a = parseFluxExplanation(r.text, input);
+      return { ...r, text: tidyAiText(a.text, FLUX_EXPLANATION_MAX_CHARS), refs: a.refs };
+    } catch {
+      throw new AiAnswerError("Penjelasan AI tidak valid; tulis penjelasannya sendiri.", r.promptTokens, r.completionTokens, r.model);
+    }
+  }
+
   async reviewClose(input: CloseReviewInput): Promise<CloseReviewResult> {
     const { system, user } = buildCloseReviewPrompt(input);
     const r = await this.complete(system, user, CLOSE_REVIEW_MAX_TOKENS, false, AI_LONG_TIMEOUT_MS);
@@ -562,6 +577,16 @@ export class MockProvider implements AiProvider {
     this.calls++;
     // Deterministic for tests: the facts joined, with the company named once.
     return { text: `${input.entity}, ${input.period}: ${input.facts.join(" ")}`, promptTokens: 30, completionTokens: 25, model: this.model };
+  }
+  /** A recorded answer for tests (JSON as a model sends it); null = cite the largest line and state only numbers that were sent. */
+  fluxAnswer: string | null = null;
+  async draftFluxExplanation(input: FluxExplanationInput): Promise<FluxExplanationResult> {
+    this.calls++;
+    const series = input.rows.find((r) => r.id.startsWith("akun:"));
+    const line = input.rows.find((r) => r.id.startsWith("jl:"));
+    const text = `${input.account.code} ${input.account.name} bulan ini ${series?.amount ?? ""}; baris terbesar: ${line ? `${line.text} ${line.amount}` : "tidak ada"}.`;
+    const fallback = JSON.stringify({ text, refs: [line?.id ?? series?.id].filter(Boolean) });
+    return { ...parseFluxExplanation(this.fluxAnswer ?? fallback, input), promptTokens: 40, completionTokens: 30, model: this.model };
   }
   async explainControl(input: ControlExplainInput): Promise<ControlExplainResult> {
     this.calls++;

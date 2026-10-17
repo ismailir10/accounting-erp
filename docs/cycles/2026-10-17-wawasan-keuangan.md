@@ -161,7 +161,7 @@ the explanation of a movement is the accountant's, approved and kept, with AI on
       analysis tables, movers equal *Perubahan Akun*'s order and the flux control's accounts.
 - [x] T2 *Wawasan* tab on `analysis/page.tsx` (LinkTabs `?tab=wawasan`, Tren, Margin, Penggerak, drill links, group asks for a company,
       empty states, 390 px); e2e flow 1 — accept: flows 1 and the drill-downs walk (deps: T1).
-- [ ] T3 Explanations: migration + model; `lib/reports/flux-explanation.ts` (draft, save, clear, stale, previous month) with
+- [x] T3 Explanations: migration + model; `lib/reports/flux-explanation.ts` (draft, save, clear, stale, previous month) with
       `draftFluxExplanation` on `AiProvider`, the OpenAI-compatible provider and `MockProvider`; account rows extracted from `gather`'s
       anomaly branch (`lib/controls/ai-review.ts`) so the close review and the draft send identical rows; reuse `runBudgetedAi`,
       `EvidenceAiCache`, `allowedNumbers` / `foreignNumbers`, `recordEvent` (`REPORT_COMMENT`); three actions via `writeClient`; client
@@ -185,6 +185,19 @@ the explanation of a movement is the accountant's, approved and kept, with AI on
   *Laba Rugi per bulan* / *Rasio keuangan* (the year-to-date margin opens the Laba Rugi total), Penggerak as divided rows whose account
   opens its Buku Besar, a group listing its companies to pick from, the empty states and the threshold hint. Secondary columns hide
   below `sm`/`md` (390 px). Cards stack (a two-column grid squeezed the six-column trend table at desktop width). e2e flow 1 added.
+- T3: `prisma/schema.prisma` + `prisma/migrations/20261017110000_flux_explanation` (`FluxExplanation`, no foreign keys, as
+  `ReportComment`), `lib/reports/flux-explanation.ts`, `lib/reports/flux-explanation-ai.ts` (prompt + parse, as `commentary-ai.ts`),
+  `lib/ai/provider.ts` (`draftFluxExplanation` on the port, the OpenAI-compatible provider and `MockProvider` with a recorded
+  `fluxAnswer` for tests), `lib/controls/ai-review.ts` (`accountSeriesRow` / `accountLineRows` extracted from `gather`'s anomaly
+  branch; the close review's payload is unchanged), `app/actions.ts` (three actions via `writeClient`), `lib/clients/delete.ts` (rows and
+  the `flux:` draft cache, which quotes ledger memos), `lib/clients/entities.ts` (a company with an explanation is not removable, as with
+  a report note), `lib/reports/management-pack.ts` (the *Penjelasan* column and the stale line — listed under T4, built here because the
+  DB seam list holds its test), accounting-rules 20d, ADR 0009 note, `tests/db/flux-explanation.test.ts`.
+  Decisions: the account is stored by code (codes never change; an account with an explanation has lines, so it cannot be removed);
+  the series is compared field by field (JSONB reorders keys); the draft sends the series row plus up to ten lines (the close review
+  shares ten rows between the series and the lines when several accounts are flagged; for one account they are identical, tested);
+  the accountant's own words may also use the figures Penggerak shows (average, difference, %) without a warning; scope limit 60 000
+  tokens per client-month, 6 000 output tokens per draft.
 
 ## Verification
 

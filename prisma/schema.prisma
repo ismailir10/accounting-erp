@@ -2016,6 +2016,29 @@ model ReportComment {
   @@index([clientId])
 }
 
+/// Wawasan keuangan: the accountant-approved explanation of one P&L account's movement in a month (accounting-rules 20d).
+model FluxExplanation {
+  id           String   @id @default(cuid())
+  firmId       String
+  clientId     String
+  entityId     String
+  year         Int
+  month        Int
+  accountCode  String
+  text         String
+  /// AI (a cited draft that passed the number check, unedited) or ACCOUNTANT (typed or edited by the accountant).
+  source       String
+  /// The account's movement it was approved against: { baseline: ["YYYY-MM"…], values: [minor units as strings…] } — stale when it moves.
+  series       Json
+  /// The row ids an AI draft cited (`akun:…`, `jl:…`); empty for the accountant's own words.
+  refs         Json
+  approvedById String?
+  approvedAt   DateTime @default(now())
+
+  @@unique([entityId, year, month, accountCode])
+  @@index([clientId])
+}
+
 model ReportFormat {
   id          String      @id @default(cuid())
   firmId      String

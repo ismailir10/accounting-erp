@@ -9,6 +9,7 @@ import { mappingFromJson, MAX_COLUMNS, readMapped, suggestMapping, type ColumnMa
 import { forgetLayout } from "@/lib/import/layouts";
 import { OcrError } from "@/lib/ocr/pages";
 import { clearReportComment, CommentError, draftCommentary, saveReportComment } from "@/lib/reports/report-comment";
+import { clearFluxExplanation, draftFluxExplanation, ExplanationError, saveFluxExplanation, type ExplanationDraft } from "@/lib/reports/flux-explanation";
 import { headers } from "next/headers";
 import { appUrl } from "@/lib/supabase/env";
 import { formatDate } from "@/lib/format";
@@ -1522,6 +1523,51 @@ export async function clearReportCommentAction(k: { clientId: string; entityId: 
     return { ok: true };
   } catch (e) {
     if (e instanceof CommentError) return { ok: false, error: e.message };
+    return fail(e);
+  }
+}
+
+/**
+ * Penjelasan penggerak (Wawasan, accounting-rules 20d): one AI draft for a flagged account, cited rows only and every number checked;
+ * nothing is saved here.
+ */
+export async function draftFluxExplanationAction(k: { clientId: string; entityId: string; year: number; month: number; accountCode: string }): Promise<{ ok: true; draft: ExplanationDraft } | { ok: false; error: string }> {
+  try {
+    const client = await writeClient(k.clientId);
+    const provider = await resolveProvider(prisma);
+    if (!provider) return { ok: false, error: "AI belum diatur di Pengaturan. Tulis penjelasannya sendiri." };
+    const draft = await draftFluxExplanation(prisma, { ...k, clientId: client.id, firmId: client.firmId, provider });
+    return { ok: true, draft };
+  } catch (e) {
+    if (e instanceof AiBudgetError || e instanceof AiAnswerError || e instanceof ExplanationError) return { ok: false, error: e.message };
+    if (e instanceof Error && (e.name === "TimeoutError" || /^(AI \d|Model )/.test(e.message))) {
+      console.error(e);
+      return { ok: false, error: "AI tidak tersedia saat ini. Tulis penjelasannya sendiri, atau coba lagi nanti." };
+    }
+    return fail(e);
+  }
+}
+export async function saveFluxExplanationAction(k: { clientId: string; entityId: string; year: number; month: number; accountCode: string; text: string; source: "AI" | "ACCOUNTANT"; refs: string[] }): Promise<{ ok: true; foreign: string[] } | { ok: false; error: string }> {
+  try {
+    const client = await writeClient(k.clientId);
+    const member = await getCurrentMember();
+    const r = await saveFluxExplanation(prisma, { ...k, clientId: client.id, firmId: client.firmId, actorId: member.id });
+    revalidatePath(`/clients/${client.id}/analysis`);
+    return { ok: true, ...r };
+  } catch (e) {
+    if (e instanceof ExplanationError) return { ok: false, error: e.message };
+    return fail(e);
+  }
+}
+export async function clearFluxExplanationAction(k: { clientId: string; entityId: string; year: number; month: number; accountCode: string }): Promise<Result> {
+  try {
+    const client = await writeClient(k.clientId);
+    const member = await getCurrentMember();
+    await clearFluxExplanation(prisma, { ...k, clientId: client.id, firmId: client.firmId, actorId: member.id });
+    revalidatePath(`/clients/${client.id}/analysis`);
+    return { ok: true };
+  } catch (e) {
+    if (e instanceof ExplanationError) return { ok: false, error: e.message };
     return fail(e);
   }
 }
