@@ -336,7 +336,56 @@ migration: stop and ask.
   payment in its detail, `href` to Jurnal Penyesuaian with `salin=<the reversal>`), accounting-rules 5a, README (Close). Test:
   `tests/db/accrual-proposals.test.ts` (no control before the payment; raised after a late statement; the copied reversal with
   *Balik otomatis* nets August to the payment alone and 2150 to zero; a note acknowledges it, status stays REVIEW).
+- T5 (build part): `e2e/usulan-akrual.spec.ts` — flows 1, 2 and 5 on "QA Usulan Akrual" and flow 3 on "QA Akrual Terlambat" /
+  "QA Akrual Sebagian", each a QA client of its own (never the investor walk's state): books through the real import (generic CSV
+  with a declared *Periode*) and Review's *serupa*; 390 px without sideways scroll in both tests; the Peninjau check through
+  `asPeninjau` with the client assigned and restored; exact-name selectors; every read after a server action waits for its toast or
+  the card count. `tests/db/accrual-actions.test.ts`: the real actions behind the guard (a crafted *Setujui* / *Tolak* by a
+  Peninjau is refused verbatim, a Peninjau reads *Lihat alasan*, a refused field comes back by name, an unassigned Akuntan reaches
+  nothing). Left to the driver: walking flows 1–5 at 1440 and 390 px on the dev server, `demo:reset` + `verify:books` and the
+  Playwright run (they need the shared `buku` database).
+- **Acceptance criteria → tests** (the owner's ask: every criterion asserted at least once):
+  | Criterion | Asserted by |
+  |---|---|
+  | Bank payee card: Dr account / Cr 2150, the median, rationale, refs drilling to each history row | `accrual-proposals` "proposes a recurring payee…"; e2e flow 1 |
+  | No card: 2 of 4, a negative month, outside the band (exactly 25 % qualifies), below materiality | `accrual-rule` (few, refund, band boundary ±1 minor unit, material); `accrual-proposals` "no card for 2 of 4…" |
+  | No card: generic key, HPP, tax, 7190, 7200, 7300 | `accrual-proposals` "no card for a generic key…"; `accrual-regression` (account exclusions) |
+  | No card: M not ended, a history bank account not covered, M locked | `accrual-proposals` "no card before the month has ended…", "a statement ending 25 Aug…"; e2e flow 3 |
+  | The median for three and four months | `accrual-rule` "the median…"; `accrual-proposals` (Andalas 3 months, Bersih 4) |
+  | The card vanishes on the payee's August line (posted or in Review); a supplier's August invoice | `accrual-proposals` "the card vanishes…", "a supplier bucket…"; e2e flow 3 |
+  | Two payees on one account | `accrual-proposals` first test (Telkom proposed, PLN not); `approvals`; e2e flow 1 |
+  | Ledger-fed per-account proposal; a manual accrual hides it | `accrual-proposals` "a ledger-fed company…"; `accrual-regression` (no case of the old candidate lost beyond the decided exclusions) |
+  | Jurnal Penyesuaian: no accrual candidate, the rest unchanged; NextStep to Kotak | `schedule-candidates` (whole suite, "no candidate is an accrual…"); e2e flow 1 (NextStep and link) |
+  | *Setujui*: ADJUSTMENT on M's last day + mirror on the 1st (`reversesId`), POSTED with `entryId`, card leaves, TB | `accrual-proposals` "Setujui posts one ADJUSTMENT…"; `accrual-actions`; e2e flow 1 |
+  | *Setujui* refuses (payment arrived, decided, M+1 locked; the card says so first) | `accrual-proposals` "refuses, posting nothing…", "a locked next month blocks the card first…" |
+  | *Ubah*: amount and accounts as typed; 0, bank, clearing, 1999, non-liability refused by field; "diubah dari" | `accrual-proposals` "Ubah posts…"; `accrual-actions` (fields); `entry-origin` (unit); e2e flows 2 and 5 |
+  | *Tolak*: gone in M, back in M+1 | `accrual-proposals` "Tolak stores the decision…"; e2e flow 2 |
+  | Manual-accrual warning on a payee card; it still approves | `accrual-proposals` "a manual accrual on the account puts a warning…", "a payee card with a manual-accrual warning still approves…" |
+  | Kotak count, firm board, checklist Kotak proof; counts = queue | `approvals` "accruals from vendor history are their own kind…"; e2e flow 1 (board 3 → 2) |
+  | Origin on Jurnal Umum, the drawer and the Excel source column | `accrual-proposals` "Setujui posts…" (`journalRegister`, `accountLedger`, `generalLedger`); `entry-origin` (unit); e2e flows 1–2 |
+  | *Lihat alasan*: five steps, "Tanpa AI", CSV rows as text and minor units, a viewer opens it, another client's id 404 | `reasoning-accrual`; `accrual-actions` (viewer); e2e flows 1, 3 (CSV 404 under another client) and 5 |
+  | REVIEW control for a payment after approval | `accrual-proposals` "a payment after approval raises the REVIEW control…" |
+  | The demo seeds no accrual proposal | `demo` (every client, March–September); `verify:books` ALL PASS left to the driver |
+  | 390 px without sideways scroll | e2e (both tests) |
+  | Deck claims (`kantor.html` slides 10 and 07) | ship (driver) |
 
 ## Verification
+- Build worker, on its own test database (`buku_test_b`), before the driver's walk:
+  - `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code` after `migrate deploy`:
+    "No difference detected."
+  - Full `npm test`: `Tests  2858 passed (2858)`; `Test Files  1 failed | 315 passed (316)` — the one file is
+    `tests/db/db-drift.test.ts` ("Hook timed out in 10000ms"), which shares the fixed database `buku_drift_check` with two other
+    worktrees' suites running at the same time; re-run alone once they finished: `Test Files  1 passed (1)`, `Tests  3 passed (3)`.
+  - `npm run build`: exit 0 (Next.js 16.3.6, compiled and type-checked).
+- Left to the driver: the walk of flows 1–5 at 1440 and 390 px, `demo:reset` + `verify:books` (ALL PASS expected: the demo test
+  asserts no accrual proposal in any month) and `test:e2e` including `e2e/usulan-akrual.spec.ts`, then `Verified locally — <sha>`.
 
 ## Ship Notes
+- Migration `20261018140000_accrual_proposals`: `ALTER TYPE "ProposalSource" ADD VALUE 'ACCRUAL'` only — additive, no backfill.
+- No env var, no dependency, no AI call. Numbers move only when an accountant approves an accrual.
+- The `e2e` label applies (Kotak, Jurnal Penyesuaian, Tutup Buku flows).
+- Deck review at ship: `kantor.html` slide 10 *Penyesuaian* (accruals proposed from each vendor's history) and slide 07 *Review*
+  (Kotak names *Usulan akrual*).
+- Post-merge: production `/login` form, the migrations line in the build log, Beranda shows the real firm; a real client's Kotak
+  August shows *Usulan akrual* only where a vendor recurs and is missing.
+- Rollback: revert the merge; the enum value stays (unused) and stored ACCRUAL proposals stay as history of posted entries.
