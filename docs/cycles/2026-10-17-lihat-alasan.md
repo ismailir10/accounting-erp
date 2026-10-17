@@ -265,7 +265,7 @@ If the recomputed key can't match the demo's AI lines reliably, linking a line t
 and ask.
 
 ## Tasks
-- [ ] T1 Bank-line reasoning (`lib/approvals/reasoning.ts`) and the CSV writer, plus DB and unit tests.
+- [x] T1 Bank-line reasoning (`lib/approvals/reasoning.ts`) and the CSV writer, plus DB and unit tests.
       - Reasoning: the steps, the payload rebuilt as the prompt builds it, the cache match over candidate descriptions × models, the
         replacement, and the checks (whitelist, bulk rule, hints count).
       - Accept: the bank seams pass, and every demo AI review line matches.
@@ -292,6 +292,16 @@ and ask.
         (deps: T4)
 
 ## Implementation
+- Plan: T1–T4 inline by one build worker, in order (T1 and T3 share `lib/approvals/reasoning.ts`, T4 renders both; a fan-out would
+  have split one module). T5's e2e spec is written here; the walk, screenshots and the full gate run centrally in verify-local.
+- T1: `lib/approvals/reasoning.ts`, `lib/csv.ts`, `tests/db/reasoning-bank.test.ts`, `tests/unit/reasoning.test.ts`,
+  `tests/db/demo.test.ts` — the bank-line read model: the line's cache key is recomputed from its own inputs (client, chart version,
+  entity kind, today's chart as `aiScope` + `aiAccounts` build it, counterparty and direction) over candidate descriptions (its own, then
+  its import's, then the counterparty's newest, ≤ 50, cut to 80 characters) × candidate models (the firm's `AiUsage` models, the
+  configured one, `demo-seed`), one `findMany` by `cacheKey`. A row counts only when the line still reads as made from it (as given,
+  replaced or capped by `demoteUnbacked`), so an equal answer under another description doesn't stand in. Every demo AI line in Review
+  matches (`demo.test.ts`, the live upload's line included): no schema column needed. The CSV writer: semicolon, BOM, CRLF, quoting,
+  formula cells (`= + - @`, tab, CR) neutralised with an apostrophe, plain integers kept as numbers.
 
 ## Verification
 

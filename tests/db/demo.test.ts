@@ -7,6 +7,20 @@ import { runControls } from "@/lib/controls";
 import { MockProvider } from "@/lib/ai/provider";
 import { masaReport } from "@/lib/tax/masa-report";
 import { fakturRecon } from "@/lib/tax/faktur";
+import { bankReasoning, bankSteps, DEMO_ANSWER } from "@/lib/approvals/reasoning";
+
+/** Lihat alasan: every AI line waiting in Review reads its seeded answer back by its recomputed cache key (cycle 2026-10-17-lihat-alasan). */
+async function aiLinesMatch() {
+  const lines = await db.bankTransaction.findMany({ where: { status: "NEEDS_REVIEW", method: "AI" }, include: { bankAccount: { include: { entity: true } } } });
+  expect(lines.length).toBeGreaterThan(0);
+  const out = [];
+  for (const l of lines) {
+    const f = await bankReasoning(db, { firmId: l.firmId, clientId: l.bankAccount.entity.clientId }, l.id);
+    expect([l.description, f.answer?.model, f.sent?.description]).toEqual([l.description, "demo-seed", l.description.slice(0, 80)]);
+    out.push(f);
+  }
+  return out;
+}
 
 /** Layer 2: the seeded demo (built through the real pipeline) matches generator ground truth. */
 describe("demo seed vs ground truth", () => {
@@ -31,6 +45,13 @@ describe("demo seed vs ground truth", () => {
       expect(f.directions.flatMap((d) => d.unmatchedBook)).toEqual([]);
     }
 
+    // CV Sinar Retail's two August lines (Kotak's and Review's walk): the grosir sale may go in bulk, the rack may not (74 %).
+    const reasons = await aiLinesMatch();
+    const sinar = (text: string) => bankSteps(reasons.find((f) => f.line.description.includes(text))!);
+    expect(sinar("BELANJA GROSIR")[2].lines).toEqual([`4100 Penjualan · keyakinan 83% · pajak – · "Penjualan grosir"`, DEMO_ANSWER]);
+    expect(sinar("BELANJA GROSIR")[3].checks!.at(-1)).toEqual({ ok: true, text: "Boleh disetujui massal." });
+    expect(sinar("RAK DISPLAY")[3].checks!.at(-1)).toEqual({ ok: false, text: "Tidak ikut setujui massal: keyakinan di bawah 80%." });
+
     const client = await db.client.findFirstOrThrow({ where: { name: "Grup Ayam Nusantara" } });
     const c0 = Object.fromEntries((await runControls(db, client.id, 2026, 8)).map((c) => [c.key, c.status]));
     expect(c0.intercompany).toBe("REVIEW");
@@ -41,6 +62,7 @@ describe("demo seed vs ground truth", () => {
     const s = await importStatement(db, { bankAccountId: bri.id, fileName: f.fileName, data: f.data, provider });
     expect(provider.calls).toBe(0); // everything resolved by transfer/memory/cache
     expect(s.needsReview).toBe(1); // the new pharmacy merchant (cached AI suggestion)
+    await aiLinesMatch(); // the live upload's line too (its answer is pre-cached by the seed)
 
     const after = Object.fromEntries((await runControls(db, client.id, 2026, 8)).map((c) => [c.key, c.status]));
     expect(after.intercompany).toBe("PASS");
