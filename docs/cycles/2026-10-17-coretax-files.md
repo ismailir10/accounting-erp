@@ -220,7 +220,7 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
       math. Golden fixture + DJP sample tag-order test — accept: unit tests green. (Parallel with T1.)
 - [x] T3 `lib/tax/coretax-faktur.ts` `fakturKeluaranDraft` (candidates, exclusion via `fakturRecon` matches and I5e numbers, block
       reasons) — accept: DB tests for every inclusion and block rule. (Deps: T1; reuse `fakturRecon`, `npwpDigits`, `packApplies`.)
-- [ ] T4 Download route `tax/masa/coretax` (`?entity&period&part`), audit event, server actions — accept: route DB tests (member 200,
+- [x] T4 Download route `tax/masa/coretax` (`?entity&period&part`), audit event, server actions — accept: route DB tests (member 200,
       stranger and revoked 404, no `REPORT_EXPORT`). (Deps: T2, T3.)
 - [ ] T5 Card *Faktur keluaran untuk Coretax* on Pajak Masa, with the identity sheet and the bulk item form — accept: Playwright flows
       1 and 3. (Deps: T4.)
@@ -253,6 +253,12 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
     (any month, any company of the client), so a regular buyer is *Siap* without a click; the name stays the invoice's description.
   - Decision: Buku holds no kode transaksi, so a non-04 faktur shows as the PPN reason; its text says other codes (luxury goods,
     pemungut) are not supported and go straight into Coretax.
+- T4: `app/(app)/clients/[id]/tax/masa/coretax/route.ts`, `lib/reports/export-log.ts`, `app/actions.ts`,
+  `tests/db/coretax-route.test.ts`, `tests/db/session-revocation.test.ts` — the download (`?entity&period&part`, the workbook's
+  access through `exportContext`; 400 with the reason when nothing is *Siap* or the company blocks, 404 for a part that doesn't exist),
+  audited by `recordFakturDownload` (`FAKTUR`, subject `coretax:<entity>:YYYY-MM`; a support session goes to the support log, as
+  `recordExport` does, sharing one `logDownload`); `setContactTaxIdentityAction` and `setInvoiceFakturItemAction` through
+  `writeClient` (`books.write`, as recording an invoice); `renameEntityAction` passes the seller NITKU.
 
 ## Verification
 

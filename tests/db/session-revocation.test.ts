@@ -3,6 +3,8 @@ import { db, makeGroup, resetDb } from "../helpers";
 import { addMember } from "../members";
 import { createIntake, hash, json } from "@/lib/evidence/store";
 import type { EvidenceUnit } from "@/lib/evidence/types";
+import { createInvoice } from "@/lib/receivables/invoices";
+import { setInvoiceFakturItem } from "@/lib/receivables/faktur-identity";
 
 // Keep the verified identity unchanged across requests. Membership, grants, client
 // assignments, guards, pages and download handlers all use the real test database.
@@ -27,6 +29,7 @@ import { GET as management } from "@/app/(app)/clients/[id]/reports/export/manag
 import { GET as credit } from "@/app/(app)/clients/[id]/reports/export/credit/route";
 import { GET as tax } from "@/app/(app)/clients/[id]/tax/export/route";
 import { GET as masa } from "@/app/(app)/clients/[id]/tax/masa/export/route";
+import { GET as coretax } from "@/app/(app)/clients/[id]/tax/masa/coretax/route";
 import { GET as review } from "@/app/(app)/clients/[id]/review/export/route";
 import { GET as journals } from "@/app/(app)/clients/[id]/journals/export/route";
 import { GET as ledger } from "@/app/(app)/clients/[id]/ledger/export/route";
@@ -36,7 +39,7 @@ const downloads = [
   ["analysis/export", analysis],
   ["reports/export", statements], ["reports/export/pdf", pdf],
   ["reports/export/management", management], ["reports/export/credit", credit],
-  ["tax/export", tax], ["tax/masa/export", masa], ["review/export", review],
+  ["tax/export", tax], ["tax/masa/export", masa], ["tax/masa/coretax", coretax], ["review/export", review],
   ["journals/export", journals], ["ledger/export", ledger], ["trial-balance/export", trialBalance],
 ] as const;
 
@@ -44,6 +47,10 @@ async function openSession(role: "ADMIN" | "AKUNTAN" = "AKUNTAN") {
   const g = await makeGroup();
   const member = await addMember(g.firm.id, role, { clients: role === "AKUNTAN" ? [g.client.id] : [] });
   auth.userId = member.userId;
+  // One faktur keluaran ready for Coretax, so its XML download has something to hold.
+  await db.entity.update({ where: { id: g.pt.entity.id }, data: { npwp: "0012345678015000" } });
+  const invoice = await createInvoice(db, { clientId: g.client.id, entityId: g.pt.entity.id, direction: "SALES", contactName: "PT Pembeli", contactNpwp: "0098765432101200", number: "INV-1", issueDate: "2026-08-10", dpp: "1000000", ppn: "110000", counterCode: "4100" });
+  await setInvoiceFakturItem(db, { clientId: g.client.id, invoiceIds: [invoice.id], kind: "B", unit: "UM.0030" });
   const intake = await createIntake(db, g.firm.id, g.client.id);
   const text = "Sumber sintetis pencabutan akses";
   const unit: EvidenceUnit = {
