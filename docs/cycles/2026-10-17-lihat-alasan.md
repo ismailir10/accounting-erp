@@ -320,7 +320,38 @@ and ask.
   table with Tanggal and Akun hidden below `sm`, a one-line skeleton while loading, the action's error verbatim, *Unduh nilai (CSV)* as the
   only action). `reasoningAction` reads behind `books.read` (viewers included), writes nothing. The CSV route answers 404 for a client
   outside the member's reach and for an item that isn't that client's AI line or draft. The toggle is a button, so Review's Enter handler
-  leaves it alone (it toggles, never accepts).
+  leaves it alone (it toggles, never accepts). Which cards get it is one rule (`lib/approvals/has-reasoning.ts`, AI bank lines and AI
+  drafts) both components use.
+- T5 (build part): `e2e/lihat-alasan.spec.ts` — flows 1 and 2 on the demo, read-only (CV Sinar's grosir and rack lines answer from the
+  seed's `demo-seed` cache, so CI needs no AI key): the panel's steps, the downloaded CSV's body, Enter on the toggle, a Peninjau
+  opening and downloading, 404s, 390 px. Not run here: the walk with screenshots, Playwright and the full gate (`verify:books`) run in
+  verify-local.
+- Acceptance criteria → tests (unit `tests/unit/reasoning.test.ts` = U, `tests/unit/close-explain.test.ts` = UC; DB
+  `tests/db/reasoning-bank.test.ts` = DB, `tests/db/close-explain.test.ts` = DC, `tests/db/demo.test.ts` = DD; e2e
+  `e2e/lihat-alasan.spec.ts` = E):
+  - *Lihat alasan* on every AI bank line and AI draft, on no other card: U "which cards carry Lihat alasan" (the rule both components
+    use); E `toggleOnlyOnAi` on CV Sinar's Kotak and Review and Grup Ayam's Kotak (with its schedule and faktur cards). The draft card's
+    toggle on screen: verify-local flow 3 (an AI draft needs a model or a fixture; the demo has none).
+  - Bank panel, checked first: U "lists the five steps"; E flow 1. Exactly the fields sent (client, direction, counterparty, ≤ 80
+    characters, account count): DB "finds its cached answer…" (exact lines, no amount, date or account number), DB "names the description
+    that was sent", U, E. The not-sent sentence: U, E. What came back with model and date or *Jawaban demo*: DB (mock + date), U (a real
+    model and date), DD (every demo AI line matches `demo-seed`; Sinar's grosir answer), E. Buku's checks — in the chart, the replacement
+    with the original account, bulk and why not: DB "shows the original account…", U (capped, missing account, hints, low), DD (grosir
+    may go in bulk, rack below 80 %), E (both).
+  - No match → said, only the stored suggestion: DB "…once the chart version moved", DB "never matches another client's answer", U.
+  - Draft panel — the control, rows sent with cited marks, dropped count (*tidak tercatat* for older answers), the checks, fresh or stale
+    with no row values: DC "Lihat alasan — an AI draft" (three tests), U "a draft's steps"; the count itself: UC "counts the citations
+    it discards", DC "stores how many citations were outside the rows sent… keeps the count on a cache hit".
+  - CSV — the panel's values, amounts as sent and as integers, the line's amount only in a *tidak dikirim* row, no formula cell, Excel
+    id-ID (semicolon, BOM): U "the CSV writer" and "a bank line's CSV", U draft CSV, DC (rows as sent and as integers, no dropped string),
+    E (the downloaded file, admin and Peninjau).
+  - A viewer opens and downloads; another client's item 404; opening writes nothing and calls no model: E (Peninjau, 404 for the item
+    under another client and for an unknown item), DB / DC refusals (another client, another firm, a non-AI line), DB and DC footprints
+    (cache, usage, runs, journals, proposals and lines unchanged; `MockProvider.calls` unchanged).
+  - Enter on *Lihat alasan* in Review toggles and accepts nothing: E flow 2.
+  - 390 px without sideways scroll: E (Kotak with both panels open, Review), unconditional.
+  - No report number changes: DD (`verifyBooks` still has no failures) and verify-local's `verify:books`.
+  - Deck claims: reviewed in ship.
 
 ## Verification
 
