@@ -218,7 +218,7 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
       audited) + invoice item detail (`setInvoiceFakturItem`, bulk) — accept: DB tests for validation, scoping and audit.
 - [x] T2 `lib/tax/coretax-faktur-xml.ts`, a pure builder (company + rows → XML string, parts of 1,000) with the bigint 11/12 and 12 %
       math. Golden fixture + DJP sample tag-order test — accept: unit tests green. (Parallel with T1.)
-- [ ] T3 `lib/tax/coretax-faktur.ts` `fakturKeluaranDraft` (candidates, exclusion via `fakturRecon` matches and I5e numbers, block
+- [x] T3 `lib/tax/coretax-faktur.ts` `fakturKeluaranDraft` (candidates, exclusion via `fakturRecon` matches and I5e numbers, block
       reasons) — accept: DB tests for every inclusion and block rule. (Deps: T1; reuse `fakturRecon`, `npwpDigits`, `packApplies`.)
 - [ ] T4 Download route `tax/masa/coretax` (`?entity&period&part`), audit event, server actions — accept: route DB tests (member 200,
       stranger and revoked 404, no `REPORT_EXPORT`). (Deps: T2, T3.)
@@ -245,6 +245,14 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
     with placeholder values (checked tag-for-tag against DJP's file on 2026-10-17); the order test reads it.
   - Decision: amounts are written as DJP's sample writes them, whole numbers without decimals and others with two (`9166666.67`).
   - Decision: `BuyerDocumentNumber` is `-` for a TIN buyer (the template's Keterangan rule; DJP's XML sample leaves it empty).
+- T3: `lib/tax/coretax-faktur.ts`, `tests/db/coretax-faktur.test.ts` — `fakturKeluaranDraft` (candidates; *Sudah ada di Coretax*
+  from `fakturRecon`'s keluaran matches and from a stored Coretax faktur with the invoice's number, I5e; every block reason with where
+  it is fixed; the company's NPWP / NITKU as a file-level block; bank lines with a PPN split from the ekualisasi's unmatched book side)
+  and `fakturKeluaranFiles` (the *Siap* rows in parts of 1,000).
+  - Decision: an invoice without its own item takes Barang/Jasa, Kode and Satuan from the contact's last sales invoice that had them
+    (any month, any company of the client), so a regular buyer is *Siap* without a click; the name stays the invoice's description.
+  - Decision: Buku holds no kode transaksi, so a non-04 faktur shows as the PPN reason; its text says other codes (luxury goods,
+    pemungut) are not supported and go straight into Coretax.
 
 ## Verification
 
