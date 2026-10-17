@@ -370,7 +370,7 @@ If the hold needs to be stored on the bank line (a new column) rather than in it
 - [x] T1 Schema + migration (`Instruction`, enums, CHECKs, `Rule.instructionId`). `AuditKind` INSTRUCTION + label + Riwayat filter.
       Client deletion removes its instructions. Accept: migration applies on a fresh and a seeded DB; DB CHECK tests; client-delete
       test. (reuse: `recordEvent`)
-- [ ] T2 `lib/instructions/`: the parser, amount reader, closed-schema validator and keyword hint (pure); the preview (read-only); approve
+- [x] T2 `lib/instructions/`: the parser, amount reader, closed-schema validator and keyword hint (pure); the preview (read-only); approve
       and *Matikan* (firm row lock, `Rule` write or delete, events, origin). Accept: unit parse tests + DB `instructions.test.ts`. (deps:
       T1; reuse: `matchRule`, `sortRules`, `isGenericKey`, `isClassifiable`, `aiAccounts`, `parseMoney`, `formatRupiah`)
 - [ ] T3 Run time: the instruction rule's reason in `matchRule`; holds in the post-or-hold decision and the pipeline (`heldBy`
@@ -397,6 +397,19 @@ If the hold needs to be stored on the bank line (a new column) rather than in it
   CHECKs per kind, keyword (upper case, 3–60), amount > 0, sentence 1–300 and not blank, OFF ⇔ `offAt`. `Instruction.clientId` is
   Restrict (never Set Null: a deleted client's instruction must not turn firm-wide); client deletion removes its rules, then its
   instructions, and keeps *Semua klien* ones. `INSTRUCTION` ("Instruksi kantor") joins the Riwayat label map, so the filter chip follows.
+- T2: `lib/instructions/compile.ts` (pure), `lib/instructions/match.ts`, `lib/instructions/preview.ts`, `lib/instructions/store.ts`,
+  `lib/classify/rules.ts`, `tests/unit/instruction-parse.test.ts`, `tests/db/instructions.test.ts` — the reader (refusals first, on the
+  text outside a quoted keyword; then *Tandai* / *Tahan* / *Aturan akun* by their verbs), the bigint amount reader (units jt/juta,
+  rb/ribu, M/miliar; thousands dots; a decimal comma, or a dot only with a unit; a fraction of a Rupiah refused), and `validateDraft`, the
+  one closed schema for the reader, the AI and the accountant's edits (exact keys, per-kind fields, keyword 3–60 and not generic, a
+  classifiable non-transfer account in a chart in scope, an amount 1…10¹⁵−1). `winningRule` is `matchRule`'s decision returning the
+  rule itself, so the preview runs the import's own matcher with the proposed rule added; `matchRule` keeps its result and words a rule
+  from an instruction "Instruksi kantor: keterangan memuat …". The preview reads each client's latest three months with bank lines and
+  writes nothing; keyword hints come from the scope's rule patterns and merchant keys, ranked by typed words covered, then lines.
+  Approve and *Matikan* run under the firm's row lock (as `saveAutomation`), refuse a duplicate (an *Aturan akun* on the same keyword,
+  direction and scope with any account counts as one), write the Rule (priority 5, `INSTRUKSI`) or delete it, and one event per client
+  (before/after snapshots, amounts as strings). Origin is decided on the server: the reader's own result, else a cached AI draft for the
+  same sentence (`EvidenceAiCache`, scope `instruksi:<firm>`), else *Disunting*.
 
 ## Verification
 
