@@ -381,7 +381,7 @@ If approving a draft needs a new `ProposalStatus` value, or attribution needs a 
 migration: stop and ask.
 
 ## Tasks
-- [ ] T1 Migration + schema: the `Firm` columns, `JournalApproval`, `ReopenRequest`, `PeriodUnlockLog.requestedById`. Then
+- [x] T1 Migration + schema: the `Firm` columns, `JournalApproval`, `ReopenRequest`, `PeriodUnlockLog.requestedById`. Then
       `lib/settings/approvals.ts` (read with defaults, validate, save with one `APPROVAL` event per client), the `AuditKind` +
       label, and `deleteClient`. Accept: DB tests for save, no-op, validation, events, delete. (reuse: `lib/settings/automation.ts`
       shape, `recordEvent`, `parseMoney`)
@@ -407,6 +407,14 @@ migration: stop and ask.
       (deps: T5)
 
 ## Implementation
+- Plan: T1–T5 sequential, inline, by one build worker (each task builds on the previous one's schema and writers; T2 is small enough
+  that a parallel worker would cost more than it saves). T6's e2e spec is written here; its Playwright run and the app walk are the driver's.
+- T1: `prisma/migrations/20261018150000_second_approver`, `prisma/schema.prisma`, `lib/settings/approvals.ts`, `lib/audit.ts`,
+  `lib/clients/delete.ts`, `lib/imports/remove.ts`, `app/firm-settings-actions.ts` — the five `Firm` columns (CHECK > 0), `JournalApproval`
+  and `ReopenRequest` (CHECKs: amount, entry iff APPROVED, decided iff not PENDING, a note on REJECTED, source fields; partial unique
+  PENDING per draft, per reversed entry, per client-month), `PeriodUnlockLog.requestedById`; the card's read/parse/save with one
+  `APPROVAL` ("Persetujuan kedua") event per client; `saveApprovalsAction` behind `org.settings`; client deletion and import removal drop
+  the new rows. Otomasi's threshold parser is exported (`rupiahThreshold`) and reused.
 
 ## Verification
 

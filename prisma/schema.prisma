@@ -218,6 +218,14 @@ model Firm {
   /// CHECK > 0) and its minimum change against the account's average in whole percent (CHECK 1–1000).
   fluxFloor            BigInt?
   fluxPercent          Int              @default(50)
+  /// Persetujuan kedua (cycle 2026-10-18-persetujuan-kedua): which journals wait for a second member before they post, and whether
+  /// reopening a month needs a second admin. Thresholds are whole Rupiah (CHECK > 0); null = every journal of that source. Defaults =
+  /// the behaviour before these columns existed: nothing is routed.
+  approvalManual       Boolean          @default(false)
+  approvalManualAbove  BigInt?
+  approvalAiDraft      Boolean          @default(false)
+  approvalAiDraftAbove BigInt?
+  approvalReopen       Boolean          @default(false)
   createdAt            DateTime         @default(now())
   clients              Client[]
   rules                Rule[]
@@ -407,6 +415,8 @@ model Client {
   uploadItems        UploadItem[]
   pdfPasswords       ClientPdfPassword[]
   checklistTasks     ChecklistTask[]
+  journalApprovals   JournalApproval[]
+  reopenRequests     ReopenRequest[]
   coaVersion         Int                  @default(1)
   /// Modules turned on in the client menu (lib/clients/modules.ts): receivables · inventory · assets · leases · benefits. Presentation only.
   modules            String[]             @default([])
@@ -444,6 +454,7 @@ model Entity {
   benefitPostings    BenefitPosting[]
   findings           Finding[]
   subledgerImports   SubledgerImport[]
+  journalApprovals   JournalApproval[]
 
   @@index([clientId])
 }
@@ -606,7 +617,7 @@ model AuditEvent {
   clientId  String
   client    Client      @relation(fields: [clientId], references: [id])
   entityId  String?
-  /// CLASSIFY · UNPAIR · IMPORT_REMOVED · CONTROL_NOTE · MAPPING · FINDING_RESOLVED · REPORT_FORMAT · FISCAL_YEAR · SUBLEDGER · DOCUMENT_VOID · ADVANCE · REPORT_EXPORT · MODULES · CREDIT_LIMIT · AUTOMATION · CHECKLIST …
+  /// CLASSIFY · UNPAIR · IMPORT_REMOVED · CONTROL_NOTE · MAPPING · FINDING_RESOLVED · REPORT_FORMAT · FISCAL_YEAR · SUBLEDGER · DOCUMENT_VOID · ADVANCE · REPORT_EXPORT · MODULES · CREDIT_LIMIT · AUTOMATION · CHECKLIST · APPROVAL …
   kind      String
   subject   String
   summary   String
@@ -622,16 +633,19 @@ model AuditEvent {
 
 /// Audit trail of reopening a closed month: admin only, with the reason typed at the time. Never edited; kept when the period is locked again.
 model PeriodUnlockLog {
-  id           String     @id @default(cuid())
-  firmId       String
-  clientId     String
-  client       Client     @relation(fields: [clientId], references: [id])
-  year         Int
-  month        Int
-  unlockedById String
-  unlockedBy   FirmMember @relation("PeriodUnlockedBy", fields: [unlockedById], references: [id])
-  reason       String
-  createdAt    DateTime   @default(now())
+  id            String      @id @default(cuid())
+  firmId        String
+  clientId      String
+  client        Client      @relation(fields: [clientId], references: [id])
+  year          Int
+  month         Int
+  unlockedById  String
+  unlockedBy    FirmMember  @relation("PeriodUnlockedBy", fields: [unlockedById], references: [id])
+  /// Persetujuan kedua: the admin who asked to reopen, when another admin confirmed (`unlockedBy`). Null = reopened directly.
+  requestedById String?
+  requestedBy   FirmMember? @relation("PeriodUnlockRequestedBy", fields: [requestedById], references: [id])
+  reason        String
+  createdAt     DateTime    @default(now())
 
   @@index([clientId, createdAt])
 }
@@ -783,6 +797,9 @@ model JournalEntry {
   /// Temuan this entry raised (its Saldo Awal difference) or resolved (ADR 0012).
   findingsRaised    Finding[]            @relation("FindingSource")
   findingResolved   Finding?             @relation("FindingResolution")
+  /// The second-approval request this entry was posted from, and the requests to reverse it (Persetujuan kedua).
+  approval          JournalApproval?     @relation("ApprovalEntry")
+  reversalRequests  JournalApproval[]    @relation("ApprovalReverses")
   /// Member who posted it; null for seeds and system postings ("Sistem").
   postedById        String?
   postedBy          FirmMember?          @relation("EntryPostedBy", fields: [postedById], references: [id])
@@ -1450,6 +1467,11 @@ model FirmMember {
   checklistReviews ChecklistTask[]       @relation("ChecklistReviewer")
   checklistDone    ChecklistMark[]       @relation("ChecklistDoneBy")
   checklistChecked ChecklistMark[]       @relation("ChecklistReviewedBy")
+  approvalsMade    JournalApproval[]     @relation("ApprovalMaker")
+  approvalsDecided JournalApproval[]     @relation("ApprovalDecider")
+  reopensAsked     ReopenRequest[]       @relation("ReopenRequester")
+  reopensDecided   ReopenRequest[]       @relation("ReopenDecider")
+  unlocksRequested PeriodUnlockLog[]     @relation("PeriodUnlockRequestedBy")
 
   @@index([firmId])
 }
@@ -1524,34 +1546,35 @@ enum ProposalStatus {
 /// A draft journal (accounting-rules 20b): proposed by the close copilot or a deterministic check, posted only by the accountant's
 /// click through postJournal(). Lines are JSON [{accountCode, debit, credit}] in minor units (strings); only accounts may be edited.
 model ProposedEntry {
-  id                String           @id @default(cuid())
+  id                String            @id @default(cuid())
   firmId            String
   clientId          String
-  client            Client           @relation(fields: [clientId], references: [id])
+  client            Client            @relation(fields: [clientId], references: [id])
   entityId          String
-  entity            Entity           @relation(fields: [entityId], references: [id])
+  entity            Entity            @relation(fields: [entityId], references: [id])
   year              Int
   month             Int
   source            ProposalSource
   controlKey        String?
   /// Dedupe: one proposal per AI answer (input hash) or per suspense line.
-  key               String           @unique
+  key               String            @unique
   memo              String
   lines             Json
   reason            String
-  refs              String[]         @default([])
+  refs              String[]          @default([])
   /// AI drafts: hash of the control\'s rows when the draft was made; posting refuses if the books moved since.
   snapshot          String?
-  status            ProposalStatus   @default(PROPOSED)
+  status            ProposalStatus    @default(PROPOSED)
   /// Set when the draft re-classifies one bank line: posting goes through the review writer (rule 3), not a free journal.
   bankTransactionId String?
-  bankTransaction   BankTransaction? @relation(fields: [bankTransactionId], references: [id])
-  entryId           String?          @unique
-  entry             JournalEntry?    @relation(fields: [entryId], references: [id], onDelete: Restrict)
+  bankTransaction   BankTransaction?  @relation(fields: [bankTransactionId], references: [id])
+  entryId           String?           @unique
+  entry             JournalEntry?     @relation(fields: [entryId], references: [id], onDelete: Restrict)
   decidedById       String?
-  decidedBy         FirmMember?      @relation("ProposalDecidedBy", fields: [decidedById], references: [id])
+  decidedBy         FirmMember?       @relation("ProposalDecidedBy", fields: [decidedById], references: [id])
   decidedAt         DateTime?
-  createdAt         DateTime         @default(now())
+  createdAt         DateTime          @default(now())
+  approvals         JournalApproval[]
 
   @@index([clientId, year, month])
 }
@@ -2256,4 +2279,91 @@ model TaxInstalment {
 
   @@unique([entityId, from])
   @@index([clientId])
+}
+
+/// Persetujuan kedua: where a routed journal came from.
+enum JournalApprovalSource {
+  /// Jurnal Penyesuaian (with or without *Balik otomatis*)
+  MANUAL
+  /// *Balik jurnal* on a posted manual adjustment
+  REVERSAL
+  /// An AI draft (`ProposedEntry`, AI_CONTROL) after the accountant's *Catat jurnal*
+  AI_DRAFT
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  /// Withdrawn by its maker (a journal) or cancelled by its requester (a reopen), or closed by a direct unlock.
+  WITHDRAWN
+}
+
+/// Persetujuan kedua (cycle 2026-10-18-persetujuan-kedua): a journal above the firm's threshold waiting for a second member. A request,
+/// never a ledger entry: no JournalEntry exists until another eligible member approves it, and then the maker's own writer posts it through
+/// postJournal() in the same transaction as the status change (accounting-rules 2a). Lines are JSON [{accountCode, debit, credit, memo?}]
+/// in minor units (strings), exactly what will post. CHECKs in the migration: amount > 0, entryId iff APPROVED, a note on REJECTED, the
+/// source's own fields; one PENDING per proposal and per reversed entry.
+model JournalApproval {
+  id               String                @id @default(cuid())
+  firmId           String
+  clientId         String
+  client           Client                @relation(fields: [clientId], references: [id])
+  entityId         String
+  entity           Entity                @relation(fields: [entityId], references: [id])
+  source           JournalApprovalSource
+  status           ApprovalStatus        @default(PENDING)
+  date             DateTime              @db.Date
+  memo             String
+  lines            Json
+  /// MANUAL only: *Balik otomatis* — the reversal posts on the 1st of the next month with the journal.
+  reverseNextMonth Boolean               @default(false)
+  /// REVERSAL only: the manual adjustment to reverse.
+  reversesId       String?
+  reverses         JournalEntry?         @relation("ApprovalReverses", fields: [reversesId], references: [id], onDelete: Restrict)
+  /// AI_DRAFT only: the draft, and the accounts the accountant chose for its lines (in order).
+  proposalId       String?
+  proposal         ProposedEntry?        @relation(fields: [proposalId], references: [id], onDelete: Restrict)
+  accounts         String[]              @default([])
+  /// Σdebit in minor units of the entity's functional currency, and the threshold in force (whole Rupiah; null = every journal).
+  amount           BigInt
+  threshold        BigInt?
+  makerId          String
+  maker            FirmMember            @relation("ApprovalMaker", fields: [makerId], references: [id])
+  /// The maker's role at submission: who may approve is read against it, never against a later role.
+  makerRole        MemberRole
+  decidedById      String?
+  decidedBy        FirmMember?           @relation("ApprovalDecider", fields: [decidedById], references: [id])
+  decidedAt        DateTime?
+  /// The rejection's reason (shown to the maker).
+  note             String?
+  entryId          String?               @unique
+  entry            JournalEntry?         @relation("ApprovalEntry", fields: [entryId], references: [id], onDelete: Restrict)
+  createdAt        DateTime              @default(now())
+
+  @@index([clientId, status])
+  @@index([proposalId])
+  @@index([reversesId])
+}
+
+/// Persetujuan kedua: an admin's request to reopen a closed month, confirmed by another admin (who then runs the unlock) or rejected /
+/// cancelled. The month stays locked while it waits. One PENDING per client-month (partial unique index in the migration).
+model ReopenRequest {
+  id            String         @id @default(cuid())
+  firmId        String
+  clientId      String
+  client        Client         @relation(fields: [clientId], references: [id])
+  year          Int
+  month         Int
+  status        ApprovalStatus @default(PENDING)
+  reason        String
+  requestedById String
+  requestedBy   FirmMember     @relation("ReopenRequester", fields: [requestedById], references: [id])
+  decidedById   String?
+  decidedBy     FirmMember?    @relation("ReopenDecider", fields: [decidedById], references: [id])
+  decidedAt     DateTime?
+  note          String?
+  createdAt     DateTime       @default(now())
+
+  @@index([clientId, status])
 }

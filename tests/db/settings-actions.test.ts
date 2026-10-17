@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db, makeGroup, resetDb } from "../helpers";
 import { listEvents } from "@/lib/audit";
 import { DEFAULT_AUTOMATION, readAutomation } from "@/lib/settings/automation";
+import { DEFAULT_APPROVALS, readApprovals } from "@/lib/settings/approvals";
 import { addMember } from "../members";
 import { createFirm } from "@/lib/setup";
 
@@ -11,7 +12,7 @@ vi.mock("@/lib/auth", () => ({ authConfigured: () => true }));
 vi.mock("@/lib/supabase/server", () => ({ createSupabaseServerClient: async () => ({ auth: { getClaims: async () => ({ data: auth.userId ? { claims: { sub: auth.userId } } : null }) } }) }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 const { saveAiSettingsAction, clearAiKeyAction } = await import("@/app/settings-actions");
-const { saveAutomationAction } = await import("@/app/firm-settings-actions");
+const { saveAutomationAction, saveApprovalsAction } = await import("@/app/firm-settings-actions");
 
 const roles = { admin: "", akuntan: "", ops: "" };
 
@@ -103,5 +104,62 @@ describe("Otomasi kantor action (cycle 2026-10-17-otomasi): org.settings, unchan
     // "yes" is not true: a crafted call can't switch a source on by accident, and a number where text is expected reads as empty.
     expect(await saveAutomationAction({ transfer: "yes", rules: true, memory: true, cap: 5, fluxFloor: "", fluxPercent: "50" } as never)).toEqual({ ok: true, changed: true });
     expect(await readAutomation(db, g.firm.id)).toEqual({ ...DEFAULT_AUTOMATION, transfer: false });
+  });
+});
+
+describe("Persetujuan kedua action (cycle 2026-10-18-persetujuan-kedua): org.settings, unchanged permission matrix", () => {
+  const OFF = { manual: false, manualAbove: "", aiDraft: false, aiDraftAbove: "", reopen: false };
+  const ON = { manual: true, manualAbove: "100.000.000", aiDraft: true, aiDraftAbove: "50.000.000", reopen: true };
+  beforeEach(async () => {
+    await resetDb();
+    auth.userId = null;
+  });
+
+  it("Pemilik and Admin save, with one Riwayat event per client naming them", async () => {
+    const g = await makeGroup();
+    for (const [role, settings] of [["OWNER", ON], ["ADMIN", OFF]] as const) {
+      const m = await addMember(g.firm.id, role, { name: `Saya ${role}` });
+      auth.userId = m.userId;
+      expect(await saveApprovalsAction(settings)).toEqual({ ok: true, changed: true });
+      expect((await listEvents(db, g.client.id, { kind: "APPROVAL" }))[0]).toMatchObject({ actor: `Saya ${role}`, label: "Persetujuan kedua" });
+    }
+    expect(await readApprovals(db, g.firm.id)).toEqual(DEFAULT_APPROVALS);
+    expect(await saveApprovalsAction(OFF)).toEqual({ ok: true, changed: false });
+    expect(await listEvents(db, g.client.id, { kind: "APPROVAL" })).toHaveLength(2);
+  });
+
+  it("refuses Akuntan, Peninjau and anonymous callers with the admin message, and saves nothing", async () => {
+    const g = await makeGroup();
+    for (const role of ["AKUNTAN", "VIEWER"] as const) {
+      auth.userId = (await addMember(g.firm.id, role, { clients: [g.client.id] })).userId;
+      expect(await saveApprovalsAction(ON)).toEqual({ ok: false, error: "Hanya admin kantor yang dapat mengubah ini." });
+    }
+    auth.userId = null;
+    expect(await saveApprovalsAction(ON)).toEqual({ ok: false, error: "Masuk terlebih dahulu." });
+    expect(await readApprovals(db, g.firm.id)).toEqual(DEFAULT_APPROVALS);
+    expect(await listEvents(db, g.client.id, { kind: "APPROVAL" })).toHaveLength(0);
+  });
+
+  it("refuses while the organisation is read-only", async () => {
+    const g = await makeGroup();
+    auth.userId = (await addMember(g.firm.id, "OWNER")).userId;
+    await db.accessGrant.deleteMany({ where: { firmId: g.firm.id } });
+    await db.accessGrant.create({ data: { firmId: g.firm.id, kind: "TRIAL", startsAt: new Date("2026-09-01T00:00:00Z"), endsAt: new Date("2026-09-15T16:59:59.999Z") } });
+    expect(await saveApprovalsAction(ON)).toMatchObject({ ok: false, error: expect.stringMatching(/^Masa uji coba berakhir/) });
+    expect(await readApprovals(db, g.firm.id)).toEqual(DEFAULT_APPROVALS);
+  });
+
+  it('refuses "abc" or 0 with the field message and no event; a crafted call switches only on booleans', async () => {
+    const g = await makeGroup();
+    auth.userId = (await addMember(g.firm.id, "ADMIN")).userId;
+    expect(await saveApprovalsAction({ ...ON, manualAbove: "abc", aiDraftAbove: "0" })).toEqual({
+      ok: false,
+      error: "Periksa isian yang ditandai. Tidak ada yang disimpan.",
+      fields: { manualAbove: "Isi nominal Rupiah lebih dari 0, atau kosongkan.", aiDraftAbove: "Isi nominal Rupiah lebih dari 0, atau kosongkan." },
+    });
+    expect(await listEvents(db, g.client.id, { kind: "APPROVAL" })).toHaveLength(0);
+    expect(await saveApprovalsAction({ manual: "yes", manualAbove: 5, aiDraft: false, aiDraftAbove: "", reopen: 1 } as never)).toEqual({ ok: true, changed: false });
+    expect(await saveApprovalsAction({ manual: true, manualAbove: 5, aiDraft: false, aiDraftAbove: "", reopen: false } as never)).toEqual({ ok: true, changed: true });
+    expect(await readApprovals(db, g.firm.id)).toEqual({ ...DEFAULT_APPROVALS, manual: true });
   });
 });

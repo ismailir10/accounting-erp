@@ -57,15 +57,17 @@ async function entriesOf(tx: Tx, where: { bankTransactionId?: { in: string[] }; 
 
 /** Drafts and posted proposals that cite or came from what is removed: they describe books that no longer exist. */
 async function dropProposals(tx: Tx, ids: { entryIds: string[]; lineIds: string[]; bankTxIds?: string[] }) {
-  await tx.proposedEntry.deleteMany({
-    where: {
-      OR: [
-        { entryId: { in: ids.entryIds } },
-        { refs: { hasSome: [...ids.lineIds, ...(ids.bankTxIds ?? [])] } },
-        ...(ids.bankTxIds?.length ? [{ bankTransactionId: { in: ids.bankTxIds } }] : []),
-      ],
-    },
-  });
+  const where = {
+    OR: [
+      { entryId: { in: ids.entryIds } },
+      { refs: { hasSome: [...ids.lineIds, ...(ids.bankTxIds ?? [])] } },
+      ...(ids.bankTxIds?.length ? [{ bankTransactionId: { in: ids.bankTxIds } }] : []),
+    ],
+  };
+  // Their second-approval requests (Persetujuan kedua) go with them, and so does an approved one whose entry is removed here.
+  const dropped = (await tx.proposedEntry.findMany({ where, select: { id: true } })).map((p) => p.id);
+  await tx.journalApproval.deleteMany({ where: { OR: [{ proposalId: { in: dropped } }, { entryId: { in: ids.entryIds } }] } });
+  await tx.proposedEntry.deleteMany({ where });
 }
 
 /**
