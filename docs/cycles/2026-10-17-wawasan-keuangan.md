@@ -207,6 +207,8 @@ the explanation of a movement is the accountant's, approved and kept, with AI on
   Decisions: an approved explanation offers *Ubah penjelasan* (prefilled, saved as the accountant's) and *Hapus penjelasan*; *Pakai
   lagi* shows last month's text above the buttons and prefills the editor, and is hidden from viewers (it is a write affordance); a
   stale explanation counts as unexplained for the NextStep.
+- Self-review follow-up: `tests/unit/flux-explanation-ai.test.ts` — the Test seams' unit item for the draft parse (citations outside
+  the rows sent dropped, empty or non-JSON answers refused, a number not sent named), missed in T3.
 
 ## Verification
 
