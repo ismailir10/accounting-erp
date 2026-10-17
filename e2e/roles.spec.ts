@@ -29,7 +29,7 @@ async function setClients(page: Page, email: string, names: string[] | "all") {
   await row(page, email).getByTestId("assign-clients").click();
   const dialog = page.getByRole("dialog");
   for (const name of await dialog.locator("label").allTextContents()) {
-    const box = dialog.locator("div.flex").filter({ has: page.locator("label", { hasText: name }) }).getByRole("checkbox");
+    const box = dialog.getByRole("checkbox", { name, exact: true });
     const want = names === "all" || names.includes(name);
     if (((await box.getAttribute("aria-checked")) === "true") !== want) await box.click();
   }
