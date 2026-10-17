@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  The element structure of DJP's "Sample Faktur PK Template v.1.4.xml" (pajak.go.id, 2025-03-01, in ConverterEfakturCoretax v1.6),
+  transcribed by hand on 2026-10-17: every element name and its order as DJP wrote them (including "BuyerAdress"), with our own
+  placeholder values instead of DJP's. It is the reference for the tag-order test in tests/unit/coretax-faktur-xml.test.ts.
+-->
+<TaxInvoiceBulk xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="TaxInvoice.xsd">
+	<TIN>0000000000000001</TIN>
+	<ListOfTaxInvoice>
+		<TaxInvoice>
+			<TaxInvoiceDate>2025-01-01</TaxInvoiceDate>
+			<TaxInvoiceOpt>Normal</TaxInvoiceOpt>
+			<TrxCode>00</TrxCode>
+			<AddInfo>x</AddInfo>
+			<CustomDoc>x</CustomDoc>
+			<CustomDocMonthYear>x</CustomDocMonthYear>
+			<RefDesc/>
+			<FacilityStamp>x</FacilityStamp>
+			<SellerIDTKU>0000000000000001000000</SellerIDTKU>
+			<BuyerTin>0000000000000002</BuyerTin>
+			<BuyerDocument>TIN</BuyerDocument>
+			<BuyerCountry>IDN</BuyerCountry>
+			<BuyerDocumentNumber/>
+			<BuyerName/>
+			<BuyerAdress/>
+			<BuyerEmail>x</BuyerEmail>
+			<BuyerIDTKU>0000000000000002000000</BuyerIDTKU>
+			<ListOfGoodService>
+				<GoodService>
+					<Opt>A</Opt>
+					<Code>000000</Code>
+					<Name>x</Name>
+					<Unit>UM.0001</Unit>
+					<Price>1</Price>
+					<Qty>1</Qty>
+					<TotalDiscount>0</TotalDiscount>
+					<TaxBase>1</TaxBase>
+					<OtherTaxBase>1</OtherTaxBase>
+					<VATRate>1</VATRate>
+					<VAT>1</VAT>
+					<STLGRate>0</STLGRate>
+					<STLG>0</STLG>
+				</GoodService>
+			</ListOfGoodService>
+		</TaxInvoice>
+	</ListOfTaxInvoice>
+</TaxInvoiceBulk>

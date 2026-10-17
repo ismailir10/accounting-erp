@@ -216,7 +216,7 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
 ## Tasks
 - [x] T1 Migration + `lib/receivables` contact identity (`setContactTaxIdentity`: NPWP / NIK / NITKU / address / email, normalised,
       audited) + invoice item detail (`setInvoiceFakturItem`, bulk) — accept: DB tests for validation, scoping and audit.
-- [ ] T2 `lib/tax/coretax-faktur-xml.ts`, a pure builder (company + rows → XML string, parts of 1,000) with the bigint 11/12 and 12 %
+- [x] T2 `lib/tax/coretax-faktur-xml.ts`, a pure builder (company + rows → XML string, parts of 1,000) with the bigint 11/12 and 12 %
       math. Golden fixture + DJP sample tag-order test — accept: unit tests green. (Parallel with T1.)
 - [ ] T3 `lib/tax/coretax-faktur.ts` `fakturKeluaranDraft` (candidates, exclusion via `fakturRecon` matches and I5e numbers, block
       reasons) — accept: DB tests for every inclusion and block rule. (Deps: T1; reuse `fakturRecon`, `npwpDigits`, `packApplies`.)
@@ -238,6 +238,13 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
   - Decision: a NITKU must start with its holder's NPWP16 (catches a typo before Coretax does); one equal to the head office's
     NPWP16 + `000000` is stored as null, so the default keeps following the NPWP.
   - Decision: item detail may be set on an invoice in a locked month: it is faktur metadata and moves no figure.
+- T2: `lib/tax/coretax-faktur-xml.ts`, `tests/unit/coretax-faktur-xml.test.ts`, `tests/fixtures/coretax/` — the pure builder (DJP
+  v1.4 element order, tab-indented like DJP's sample, empty elements self-closed as there), kode 04 arithmetic in bigint sen
+  (DPP Nilai Lain = half-up 11/12, PPN = half-up 12 % of it), files of at most 1,000. The golden file was checked by hand.
+  - Decision: DJP's sample itself is not committed. `djp-sample-v1.4-shape.xml` is our transcription of its element names and order
+    with placeholder values (checked tag-for-tag against DJP's file on 2026-10-17); the order test reads it.
+  - Decision: amounts are written as DJP's sample writes them, whole numbers without decimals and others with two (`9166666.67`).
+  - Decision: `BuyerDocumentNumber` is `-` for a TIN buyer (the template's Keterangan rule; DJP's XML sample leaves it empty).
 
 ## Verification
 
