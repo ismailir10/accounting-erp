@@ -23,6 +23,8 @@ import { bupotNotes, bupotRecon } from "@/lib/tax/bupot";
 import { findingLabel } from "@/lib/findings";
 import { compareSubledger } from "@/lib/reconcile/subledger";
 import { can } from "@/lib/auth/permissions";
+import { activeInstructions } from "@/lib/instructions/store";
+import { instructionControls } from "@/lib/instructions/controls";
 import type { MemberRole } from "@/lib/generated/prisma/enums";
 
 /**
@@ -70,7 +72,9 @@ async function collectControls(db: Db, clientId: string, year: number, month: nu
   const controls: Control[] = [];
   const base = `/clients/${clientId}`;
   const clientScope = entities.length > 1 ? "Grup" : (entities[0]?.shortName ?? "Klien");
-  const { industry, fiscalYearEndMonth: yearEnd } = await db.client.findUniqueOrThrow({ where: { id: clientId }, select: { industry: true, fiscalYearEndMonth: true } });
+  const { industry, fiscalYearEndMonth: yearEnd, firmId } = await db.client.findUniqueOrThrow({ where: { id: clientId }, select: { industry: true, fiscalYearEndMonth: true, firmId: true } });
+  // The firm's own checks (*Tandai*, accounting-rules 22d): every month that is not locked; a locked month keeps the controls it closed with.
+  const flags = period?.status === "LOCKED" ? [] : await activeInstructions(db, firmId, clientId, "FLAG");
 
   for (const e of entities) {
     const scope = { clientId, entityIds: [e.id] };
@@ -245,6 +249,7 @@ async function collectControls(db: Db, clientId: string, year: number, month: nu
         ? sane
         : [{ key: `sanity:${e.id}`, title: "Kewajaran pembukuan", scope: e.shortName, status: "PASS" as const, detail: "Tidak ada saldo janggal, pembiayaan di Laba Rugi, bulan kosong, tebakan yang diterima begitu saja, fluktuasi atau jurnal ganda" }]),
     );
+    if (flags.length) controls.push(...(await instructionControls(db, { flags, entity: e, start, end, acks })));
 
     // Adjustment schedules (rule 5a): an installment of this month not yet posted needs the click or a note.
     const due = await dueProposals(db, clientId, year, month, e.id);

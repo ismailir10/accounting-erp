@@ -373,7 +373,7 @@ If the hold needs to be stored on the bank line (a new column) rather than in it
 - [x] T2 `lib/instructions/`: the parser, amount reader, closed-schema validator and keyword hint (pure); the preview (read-only); approve
       and *Matikan* (firm row lock, `Rule` write or delete, events, origin). Accept: unit parse tests + DB `instructions.test.ts`. (deps:
       T1; reuse: `matchRule`, `sortRules`, `isGenericKey`, `isClassifiable`, `aiAccounts`, `parseMoney`, `formatRupiah`)
-- [ ] T3 Run time: the instruction rule's reason in `matchRule`; holds in the post-or-hold decision and the pipeline (`heldBy`
+- [x] T3 Run time: the instruction rule's reason in `matchRule`; holds in the post-or-hold decision and the pipeline (`heldBy`
       "instruksi kantor"); *Tandai* controls in `runControls` (open months, notes) and their rows in the AI close review; accounting-rules
       13, 14, 22c. Accept: `dial.test`, `instructions-import.test.ts`, `instruction-controls.test.ts`; existing pipeline and control
       tests unchanged. (deps: T1, T2; parallel with T4)
@@ -410,6 +410,19 @@ If the hold needs to be stored on the bank line (a new column) rather than in it
   direction and scope with any account counts as one), write the Rule (priority 5, `INSTRUKSI`) or delete it, and one event per client
   (before/after snapshots, amounts as strings). Origin is decided on the server: the reader's own result, else a cached AI draft for the
   same sentence (`EvidenceAiCache`, scope `instruksi:<firm>`), else *Disunting*.
+- T3: `lib/classify/dial.ts`, `lib/instructions/match.ts`, `lib/import/pipeline.ts`, `lib/instructions/controls.ts`,
+  `lib/controls/index.ts`, `lib/controls/ai-review.ts`, `.agents/skills/accounting-rules/SKILL.md` (13, 14, 22d),
+  `tests/unit/dial.test.ts`, `tests/db/instructions-import.test.ts`, `tests/db/instruction-controls.test.ts` — the import reads the
+  client's active *Tahan* instructions' typed fields into the dial; `decidePosting` checks them after the switches and the cap (stricter
+  only; held kind `instruction`, "instruksi kantor" in the import result) against the lines a decision covers: the line, and for a
+  transfer pair its other half, so both halves get one decision and a held pair follows the dial's existing pair rules. `runControls`
+  adds one *Tandai* control per entity and active FLAG instruction unless the month is locked (`matchesLine` over the month's bank
+  lines, five shown then "+N lainnya", PASS "Tidak ada …"); notes and stale notes work as for every REVIEW control. The AI close review
+  (and so *Jelaskan* and *Lihat alasan*) sends a *Tandai* control's listed lines through the existing `bankRow`/caps.
+  - Decision: the control key is `instr:<entity>:<instruction>`, not the spec's `instr:<instruction>:<entity>`: every entity-scoped
+    control key in Buku is `kind:<entityId>…`, and the close review, *Jelaskan* (draft only for an entity's control) and *Lihat alasan*
+    find the entity from the second segment. Nothing else reads the order.
+  - Decision: the new close rule is numbered 22d: 22c already exists (source validation).
 
 ## Verification
 

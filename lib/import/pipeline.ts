@@ -17,6 +17,8 @@ import { matchTransfers } from "@/lib/classify/transfer";
 import type { Classification } from "@/lib/classify/types";
 import { decidePosting, type HoldKind } from "@/lib/classify/dial";
 import { readAutomation } from "@/lib/settings/automation";
+import { activeInstructions } from "@/lib/instructions/store";
+import type { MatchLine } from "@/lib/instructions/match";
 import { aiScope, suggestWithAi } from "@/lib/ai/classify";
 import { accountLookup, demoteUnbacked, tradeBacking } from "@/lib/ai/unbacked";
 import type { AiProvider } from "@/lib/ai/provider";
@@ -288,16 +290,21 @@ export async function importStatement(
     result.set(it.id, suggested ? demoteUnbacked(suggested, it.direction, entity.kind, accountOf, backingAt(it.date)) : simpleGuess(it.direction, entity.kind, isGenericKey(it.merchantKey)));
   }
 
-  // ---- the firm's Otomasi kantor dial: post or hold, per line (accounting-rules 14) ----
-  const dial = await readAutomation(db, client.firmId);
-  const decision = new Map(items.map((it) => [it.id, decidePosting(result.get(it.id)!, it.amount, dial)]));
+  // ---- the firm's Otomasi kantor dial and its *Tahan di Review* instructions: post or hold, per line (accounting-rules 14) ----
+  // Run time reads the instructions' typed fields only, never their sentence as a prompt (cycle 2026-10-18-instruksi-kantor).
+  const holds = (await activeInstructions(db, client.firmId, client.id, "HOLD")).map((h) => ({ pattern: h.pattern, direction: h.direction, minAmount: h.minAmount, inclusive: h.inclusive, sentence: h.sentence }));
+  const dial = { ...(await readAutomation(db, client.firmId)), holds };
+  // A pair is decided once for both halves: a hold naming either half holds the pair.
+  const lineOf = new Map<string, MatchLine>([...items, ...openCounterparts].map((row) => [row.id, row]));
+  const linesOf = (id: string, c: Classification) => [id, c.matchedTxId].flatMap((x) => (x && lineOf.has(x) ? [lineOf.get(x)!] : []));
+  const decision = new Map(items.map((it) => [it.id, decidePosting(result.get(it.id)!, it.amount, dial, linesOf(it.id, result.get(it.id)!))]));
   // A pair the dial holds never moves or re-posts a half imported earlier (both halves share one classification and amount, so one
   // decision). Such a half posted to another account stays unlinked and untouched (the clearing control shows the open half), and
   // its new partner's reason names it.
   const earlier = new Map(openCounterparts.map((row) => [row.id, row]));
   for (const [id, c] of [...transfers]) {
     const prev = earlier.get(id);
-    if (!prev || !c.matchedTxId || decidePosting(c, prev.amount, dial).post || prev.status === "NEEDS_REVIEW" || prev.accountCode === c.accountCode) continue;
+    if (!prev || !c.matchedTxId || decidePosting(c, prev.amount, dial, linesOf(id, c)).post || prev.status === "NEEDS_REVIEW" || prev.accountCode === c.accountCode) continue;
     transfers.delete(id);
     const partner = transfers.get(c.matchedTxId);
     if (!partner) continue;
@@ -307,7 +314,7 @@ export async function importStatement(
     const it = items.find((x) => x.id === c.matchedTxId);
     if (it) {
       result.set(it.id, next);
-      decision.set(it.id, decidePosting(next, it.amount, dial));
+      decision.set(it.id, decidePosting(next, it.amount, dial, linesOf(it.id, next)));
     }
   }
 
@@ -403,7 +410,7 @@ export async function importStatement(
           // Previously imported half: link it. Held by the dial (its new half waits in Review), it is never moved or re-posted: in Review
           // it only takes the transfer suggestion; on the transfer account it stays; posted elsewhere it was left unlinked above.
           const prev = await tx.bankTransaction.update({ where: { id: selfId }, data: { matchedTxId: otherId } });
-          const pair = decidePosting(c, prev.amount, dial);
+          const pair = decidePosting(c, prev.amount, dial, linesOf(id, c));
           if (!pair.post) {
             if (prev.status === "NEEDS_REVIEW") {
               await tx.bankTransaction.update({ where: { id: prev.id }, data: { suggestedCode: c.accountCode, method: "TRANSFER", confidence: c.confidence, reason: pair.reason, taxTag: null } });

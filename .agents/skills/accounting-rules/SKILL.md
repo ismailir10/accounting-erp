@@ -312,6 +312,11 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     INTEREST → 8200, BIAYA TXN / FEE PAYMENT / MATERAI / STAMP DUTY → 7100) are firm **rules** (they post); a new firm rule reaches
     existing firms only through a data migration. The last-resort simple guess depends on the entity (`lib/classify/fallback.ts`):
     company in → 4100 / out → 6190; PERORANGAN in → 4910 / out → 3300 Prive.
+    **Instruksi kantor** (`lib/instructions`, cycle 2026-10-18-instruksi-kantor): an approved *Aturan akun* is an ordinary `Rule` with
+    `source` INSTRUKSI, `instructionId` set and **priority 5** (before every seeded firm rule): a firm rule for *Semua klien*, a client rule
+    for one client. Client-before-firm and the specificity exception above are unchanged; a matched line's reason reads `Instruksi kantor:
+    keterangan memuat "<pattern>"` and it is RULE 0.97 like any rule (rule 14's dial applies). *Matikan* deletes the rule; nothing posted
+    moves, on approval or after.
 13a. **Tax remittances file to the liability they clear** (firm rules, `lib/classify/rules.ts`, by words or by the KAP-KJS code on the state receipt — 411121, 411124, 411128, 411125-100/-200, 411211): PPh 21 → 2140, PPh 23 → 2141, PPh 4(2) / final → 2145, PPh 29 → 2146, PPN → 2130, PPh 25 → 1180
     (prepaid, rule 5d), Bea Meterai → 7100. A payment that reads as a state tax payment without naming the tax (MPN, DJP, SSP, KPP, kode billing; regional taxes excluded) gets a HEURISTIC suggestion 2145 for review (`taxPaymentSuggestion`), never an expense and no AI call. A remittance without the withholding booked leaves that liability **debit**, which the sanity control *Saldo berlawanan dengan sifat akun* raises
     — book the withholding (payroll, or rule 5h) rather than moving the remittance. A rule whose account the client's chart lacks is skipped (`matchRule(…, codes)`), never a failed import.
@@ -324,6 +329,11 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     earlier (in Review it is linked and takes the transfer suggestion; on the transfer account it is linked; posted elsewhere it stays
     unlinked and untouched, named in the new line's reason). Changing the dial affects new imports only. Defaults (all on, no cap) = the
     behaviour before the dial.
+    An active *Tahan di Review* instruction (`lib/instructions`) is read with the dial and is **stricter only**: a line the dial would post
+    whose description holds its keyword (its direction and minimum amount when given; `matchesLine`) waits on 1999 the same way, reason
+    `Ditahan instruksi kantor "<sentence>". <classifier's reason>`, counted as *instruksi kantor* in "N ditahan Otomasi kantor (…)". A
+    transfer pair is decided once for both halves (a hold naming either half holds the pair), so a held pair follows the rules above.
+    The import reads the instruction's typed fields only; the sentence is never a prompt.
     An AI suggestion of a trade receivable for money in (or a trade payable for money out) while the entity's books hold none to settle
     **by the row's date** is replaced by the simple guess's account (4100 / 6190; 4910 / 3300 for a person, `lib/classify/fallback.ts`) at 0.55, still
     method AI, with a reason naming the original account and why (`lib/ai/unbacked.ts`, import and *Minta saran AI*); it never posts, is never
@@ -476,6 +486,13 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     7190/7200 exempt from flux/flip. The AI close review may send the flagged accounts' month series and the month's journal lines behind
     them (memo ≤ 80 chars) under rule 20a's caps.
 22c. Source validation persists declared/inferred periods and printed/derived balances. Monthly bank completeness requires the union of declared intervals through month end; legacy/unknown, repaired or inferred evidence is REVIEW. Contradictory source balances are FAIL. An earlier printed row balance is never treated as the month-end balance.
+22d. **Tandai — the firm's own checks** (`lib/instructions/controls.ts`, cycle 2026-10-18-instruksi-kantor): an active *Tandai* instruction
+    is one REVIEW control per entity (key `instr:<entity>:<instruction>`) in every month whose period is not locked, listing the month's
+    bank lines with its direction, its keyword when given and an absolute amount above (or at least) its minimum — up to five in the
+    detail, then "+N lainnya". With none it is PASS ("Tidak ada …") and folds with the passed controls. Computed at read time from the
+    typed fields, never stored, never added to a locked month (reopening shows it). A note clears it like any REVIEW control while the
+    list is unchanged; *Matikan* removes it from open months and its old notes stay, unused. The AI close review and *Jelaskan* may send
+    its listed lines like any flagged control's rows (rule 20a caps). Deterministic: no model decides it.
 23. Tutup Buku requires: no FAIL, every REVIEW acknowledged with a note, all sign-offs ticked.
     *Tutup bulan-bulan sebelumnya* (`lib/controls/history.ts`, admin only) closes the open months before the selected one in order, one
     month per call: the same rule per month, with one note written on each REVIEW still without a note and the sign-offs given by the

@@ -11,6 +11,7 @@ import { formatMoney } from "@/lib/money";
 import { runBudgetedAi } from "@/lib/ai/budget";
 import { AiAnswerError, CLOSE_REVIEW_MAX_ROWS, CLOSE_REVIEW_MAX_TOKENS, CLOSE_REVIEW_PROMPT_VERSION, buildCloseReviewPrompt, parseCloseReview, type AiProvider, type CloseReviewControl, type CloseReviewEntity, type CloseReviewInput, type CloseReviewItem, type CloseReviewRow } from "@/lib/ai/provider";
 import { sourceAccountLabel } from "@/lib/ledger-import/code";
+import { flaggedLines } from "@/lib/instructions/controls";
 
 /**
  * AI close review (ADR 0009). Deterministic controls decide; AI only explains flagged ones and proposes an action,
@@ -166,6 +167,10 @@ export async function gather(db: Db, clientId: string, year: number, month: numb
           return { id, date: "", text: `Akun sumber ${sourceAccountLabel(src)}`.slice(0, DESCRIPTION), amount: fmt(x.amount), account: src.account?.code ?? "", how: "saldo akhir, kredit positif" };
         }),
       );
+    } else if (e && kind === "instr") {
+      // A *Tandai* control (accounting-rules 22d): the bank lines it lists, largest first, under the same caps as any flagged control.
+      const f = await db.instruction.findFirst({ where: { id: c.key.split(":")[2], firmId: client.firmId } });
+      if (f) rows = take(bySize(await flaggedLines(db, f, e.id, start, end))).map((t) => bankRow(t, e.functionalCurrency, e.id));
     } else if (kind === "suspense") {
       const txs = await db.bankTransaction.findMany({ where: { bankAccount: { entity: { clientId } }, status: "NEEDS_REVIEW", date: { lte: end } }, include: { bankAccount: { include: { entity: true } } } });
       rows = take(bySize(txs)).map((t) => bankRow(t, t.bankAccount.entity.functionalCurrency, t.entityId));
