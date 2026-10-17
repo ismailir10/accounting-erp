@@ -459,7 +459,11 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
 22b. **Ledger anomaly scans** (`lib/controls/anomaly.ts`, ADR 0009 amendment) read journal lines, not bank rows, so ledger-fed
     clients get the same scrutiny. Movement excludes OPENING entries; baseline = the months with activity among the 3 before the
     period; materiality = 1 % of the baseline's average monthly P&L volume (all movement when the baseline has no P&L, e.g. a holding). **Flux** (P&L account differs from its baseline average by
-    ≥ materiality and ≥ 50 %; the account itself moved in ≥ 2 baseline months), **flip** (P&L month movement against its `normalBalance`), **dormant** (movement on an
+    ≥ max(materiality, the firm's *Selisih minimal*) and ≥ the firm's *Perubahan minimal* % of it, default 50 % and no Rp floor —
+    `Firm.fluxFloor` / `fluxPercent`, Pengaturan kantor → Otomasi; the Rupiah floor applies only to a company kept in Rupiah, never
+    compared with another currency's minor units; the account itself moved in ≥ 2 baseline months). `scanLedger` reads the firm's
+    thresholds itself, so the control, Wawasan, the management pack, *Susun dengan AI* eligibility and the AI close review always flag
+    the same accounts; materiality, flip, dormant and dup never use them. **Flip** (P&L month movement against its `normalBalance`), **dormant** (movement on an
     account with none in 3 active prior months: *akun baru* or *bergerak lagi*), **dup** (identical entries ≤ 3 days apart; two
     bank-derived entries never pair, two rows of one ledger file only with the same memo, OPENING/RECLASS never). All REVIEW, never FAIL;
     7190/7200 exempt from flux/flip. The AI close review may send the flagged accounts' month series and the month's journal lines behind

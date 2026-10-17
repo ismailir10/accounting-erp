@@ -7,6 +7,7 @@ import { runControls } from "@/lib/controls";
 import { monthlyBalance, monthlyIncome, ratios } from "@/lib/reports/analysis";
 import { figuresOf, margins, topMovers, trend } from "@/lib/reports/insights";
 import { managementWorkbook } from "@/lib/reports/management-pack";
+import { saveAutomation } from "@/lib/settings/automation";
 
 // Wawasan (cycle 2026-10-17-wawasan-keuangan): every finding equals a cell of the analysis tables, the movers follow the pack's
 // Perubahan Akun, *Melewati ambang* marks the flux control's accounts, and each mover's lines carry their source.
@@ -97,5 +98,28 @@ describe("Wawasan: Penggerak bulan ini", () => {
 
   it("a month with no P&L movement in it or its baseline has no movers", async () => {
     expect((await topMovers(db, { ...k(), month: 2 })).movers).toEqual([]);
+  });
+
+  it("the firm's Ambang fluktuasi decides Melewati ambang and the Tutup Buku flux control alike (cycle 2026-10-17-otomasi)", async () => {
+    // 6170: +160 %, Δ Rp 16.000.000.
+    const marked = async () => {
+      const flux = (await runControls(db, g.client.id, 2026, 8)).find((c) => c.key === `flux:${g.pt.entity.id}`);
+      const control = flux ? flux.detail.split("; ").map((p) => p.split(" ")[0]) : [];
+      const wawasan = (await topMovers(db, k())).movers.filter((x) => x.flagged).map((x) => x.code);
+      expect(wawasan).toEqual(control);
+      return wawasan;
+    };
+    const set = (fluxFloor: string, fluxPercent: string) => saveAutomation(db, { firmId: g.firm.id, settings: { transfer: true, rules: true, memory: true, cap: "", fluxFloor, fluxPercent } });
+    expect(await marked()).toEqual(["6170"]);
+    await set("", "170");
+    expect(await marked()).toEqual([]);
+    await set("", "160"); // ≥: exactly 160 % is still a swing
+    expect(await marked()).toEqual(["6170"]);
+    await set("16.000.001", "50");
+    expect(await marked()).toEqual([]);
+    await set("16.000.000", "50");
+    expect(await marked()).toEqual(["6170"]);
+    await set("", "50"); // back to the defaults
+    expect(await marked()).toEqual(["6170"]);
   });
 });
