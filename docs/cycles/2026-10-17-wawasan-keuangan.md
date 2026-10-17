@@ -159,7 +159,7 @@ the explanation of a movement is the accountant's, approved and kept, with AI on
       `lib/reports/analysis.ts`, `percentOf` from `lib/reports/management.ts`); `topMovers` from `managementSummary().changes` +
       `scanLedger().flux` + `scan.series`, lines via `ENTRY_SOURCE_SELECT` / `entrySource`; unit + DB tests — accept: figures equal the
       analysis tables, movers equal *Perubahan Akun*'s order and the flux control's accounts.
-- [ ] T2 *Wawasan* tab on `analysis/page.tsx` (LinkTabs `?tab=wawasan`, Tren, Margin, Penggerak, drill links, group asks for a company,
+- [x] T2 *Wawasan* tab on `analysis/page.tsx` (LinkTabs `?tab=wawasan`, Tren, Margin, Penggerak, drill links, group asks for a company,
       empty states, 390 px); e2e flow 1 — accept: flows 1 and the drill-downs walk (deps: T1).
 - [ ] T3 Explanations: migration + model; `lib/reports/flux-explanation.ts` (draft, save, clear, stale, previous month) with
       `draftFluxExplanation` on `AiProvider`, the OpenAI-compatible provider and `MockProvider`; account rows extracted from `gather`'s
@@ -180,6 +180,11 @@ the explanation of a movement is the accountant's, approved and kept, with AI on
   movers from *Perubahan Akun* with *Melewati ambang* from the flux scan and their three largest lines with source.
   Decision: a flagged account outside the five largest differences is listed too (after them, in the pack's order), so every
   account the flux control names can be explained.
+- T2: `app/(app)/clients/[id]/analysis/page.tsx`, `components/app/insights.tsx`, `e2e/analisis-keuangan.spec.ts` — the fourth tab
+  (last; *Laba Rugi per bulan* stays the default): Tren and Margin cards with their sentence and a short table whose figures open
+  *Laba Rugi per bulan* / *Rasio keuangan* (the year-to-date margin opens the Laba Rugi total), Penggerak as divided rows whose account
+  opens its Buku Besar, a group listing its companies to pick from, the empty states and the threshold hint. Secondary columns hide
+  below `sm`/`md` (390 px). Cards stack (a two-column grid squeezed the six-column trend table at desktop width). e2e flow 1 added.
 
 ## Verification
 
