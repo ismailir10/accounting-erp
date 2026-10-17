@@ -144,7 +144,7 @@ and *Kirim lewat WhatsApp*, and Buku never sends anything itself. This cycle use
       `lib/reports/pdf.ts`, and `BUCKETS` / `BUCKET_LABEL` / `bucketOf` from `aging.ts`. Add the route
       `app/(app)/clients/[id]/receivables/statement/route.ts` (GET `?entity&contact&period`, `findClientForMember`, 404 otherwise, no
       `recordExport`). Accept: unit + DB + route tests. (deps: T1 for `contactId` on rows; can run in parallel with T3's limit UI)
-- [ ] T3 UI. On the *Piutang* aging rows in `components/app/receivables.tsx`: the pencil, the limit dialog, the limit text and the over
+- [x] T3 UI. On the *Piutang* aging rows in `components/app/receivables.tsx`: the pencil, the limit dialog, the limit text and the over
       marker, and *Pengingat* with its dialog. Pull the copy + WhatsApp buttons out of `components/app/data-request-card.tsx` into one
       shared piece that both use. The page passes the reminder texts, built server-side with the view, and the closed-month flag. Add the
       over-limit count to the "cocok" `NextStep` sentence. Extend `e2e/receivables.spec.ts`. Accept: e2e flows 1–2, screenshots at 1440 and
@@ -174,6 +174,20 @@ and *Kirim lewat WhatsApp*, and Buku never sends anything itself. This cycle use
     (total, paid, remaining), so its total equals the row's open amount.
   - Decision: the statement prints the advance as its own line and then *Sisa setelah uang muka* (open − advance, the row's *Jumlah*); the
     footer names the company and the page, never the firm.
+- T3: `components/app/share-message.tsx` (new), `components/app/data-request-card.tsx`, `components/app/receivable-reminder.tsx` (new),
+  `components/app/receivables.tsx`, `app/(app)/clients/[id]/receivables/page.tsx`, `e2e/receivables.spec.ts` — *Salin pesan* and *Kirim
+  lewat WhatsApp* are one `ShareMessageActions` used by *Minta data* and the reminder; Piutang aging rows get the pencil (writers only,
+  via `useAccess`, Rupiah companies only), "Batas Rp …" on wide screens and *lewat batas kredit* in the review colour, and a ghost
+  *Pengingat* column only on a card with a reminder; the page builds every reminder text server-side with `customerReminders`, passes the
+  reminder date, the period and whether the month is still open, and counts distinct customers over their limit in the "cocok" sentence.
+  The e2e extends the receivables walk with INV-300 (due 1 Aug, unpaid): refusals, over / not over, the reminder text edited into the
+  WhatsApp link, the PDF's content, no buttons on Utang, both Riwayat events, and 1440 / 390 screenshots with a no-sideways-scroll check.
+  - Decision: the limit dialog shows the server's refusal under the field (`FieldError`) and stays open, rather than a toast, so the
+    accountant fixes the value in place; a success is a toast as on *Channel*.
+  - Decision: both dialogs are keyed by their row, so each opens with that customer's current limit or a fresh message (an edit never
+    leaks to another customer's reminder).
+  - Not run here (the driver runs them centrally): `next build` (Turbopack refuses this worktree's symlinked `node_modules`), Playwright,
+    verify-local and the screenshots.
 
 ## Verification
 
