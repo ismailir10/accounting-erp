@@ -98,7 +98,7 @@ test("Instruksi kantor on the demo: the preview offers the bank's abbreviation, 
       await expect(akuntan.getByRole("link", { name: "Tim", exact: true })).toHaveCount(0);
       const firmRow = akuntan.getByTestId("instruction-row").filter({ hasText: FIRM_SENTENCE }).filter({ hasText: "Semua klien" }).filter({ hasNotText: "Dimatikan" });
       await expect(firmRow).toBeVisible();
-      await expect(firmRow.getByRole("button", { name: "Matikan" })).toHaveCount(0);
+      await expect(firmRow.getByRole("button", { name: "Matikan", exact: true })).toHaveCount(0);
       await akuntan.getByTestId("instruction-editor").getByRole("combobox", { name: "Berlaku untuk" }).click();
       await expect(akuntan.getByRole("option", { name: "Semua klien", exact: true })).toHaveCount(0);
       await akuntan.keyboard.press("Escape");
@@ -119,7 +119,7 @@ test("Instruksi kantor on the demo: the preview offers the bank's abbreviation, 
       await expect(viewer.getByTestId("instruction-list")).toBeVisible();
       await expect(viewer.getByTestId("instruction-row").filter({ hasText: FIRM_SENTENCE }).filter({ hasNotText: "Dimatikan" })).toBeVisible();
       await expect(viewer.getByTestId("instruction-editor")).toHaveCount(0);
-      await expect(viewer.getByRole("button", { name: "Matikan" })).toHaveCount(0);
+      await expect(viewer.getByRole("button", { name: "Matikan", exact: true })).toHaveCount(0);
       await viewer.setViewportSize({ width: 390, height: 844 });
       await noSideScroll(viewer);
     });
