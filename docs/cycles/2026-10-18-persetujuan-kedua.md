@@ -385,7 +385,7 @@ migration: stop and ask.
       `lib/settings/approvals.ts` (read with defaults, validate, save with one `APPROVAL` event per client), the `AuditKind` +
       label, and `deleteClient`. Accept: DB tests for save, no-op, validation, events, delete. (reuse: `lib/settings/automation.ts`
       shape, `recordEvent`, `parseMoney`)
-- [ ] T2 The pure rules in `lib/approvals/second.ts`: routing, approver tier, fallback, reopen confirm, texts. Accept: unit tests.
+- [x] T2 The pure rules in `lib/approvals/second.ts`: routing, approver tier, fallback, reopen confirm, texts. Accept: unit tests.
       (parallel with T1)
 - [ ] T3 Journals:
       - submit / approve / reject / withdraw for manual journals, *Balik otomatis* and *Balik jurnal*;
@@ -415,6 +415,9 @@ migration: stop and ask.
   PENDING per draft, per reversed entry, per client-month), `PeriodUnlockLog.requestedById`; the card's read/parse/save with one
   `APPROVAL` ("Persetujuan kedua") event per client; `saveApprovalsAction` behind `org.settings`; client deletion and import removal drop
   the new rows. Otomasi's threshold parser is exported (`rupiahThreshold`) and reused.
+- T2: `lib/approvals/second.ts`, `tests/unit/second-approval.test.ts` — routing (off, empty threshold, equal posts / above waits,
+  non-Rupiah routes all), the approver rule (never the maker; Admin and Pemilik one tier; Peninjau never), the fallback tests
+  (`hasApprover`, `hasSecondAdmin`), the reopen decider rule, the wait reasons and event heads.
 
 ## Verification
 
