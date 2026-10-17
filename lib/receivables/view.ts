@@ -33,8 +33,11 @@ export type AgingView = {
   entityId: string;
   entity: string;
   currency: string;
-  /** `advance`: the contact's unmatched cash (uang muka / kelebihan bayar); `net` = total − advance; `credit`: they paid more than they owe. */
-  rows: { contact: string; buckets: Record<Bucket, string>; total: string; count: number; advance: string; net: string; credit: boolean }[];
+  /**
+   * `advance`: the contact's unmatched cash (uang muka / kelebihan bayar); `net` = total − advance; `credit`: they paid more than they owe.
+   * `limit`: the customer's credit limit, on Piutang of a Rupiah company only; `over`: net above it (cycle 2026-10-17-pengingat-piutang).
+   */
+  rows: { contactId: string; contact: string; buckets: Record<Bucket, string>; total: string; count: number; advance: string; net: string; credit: boolean; limit: string | null; over: boolean }[];
   totals: Record<Bucket, string> & { total: string; advance: string; net: string };
   /** Cash on the accounts not allocated to anyone yet, and how many bank lines. */
   unallocated: string;
@@ -49,7 +52,12 @@ export type CandidateView = { bankTransactionId: string; date: string; descripti
 export async function receivablesView(db: Db, clientId: string, direction: InvoiceDirection, asOf: Date, entities: { id: string; shortName: string; functionalCurrency: string; kind: string }[]) {
   const ids = entities.map((e) => e.id);
   const ent = new Map(entities.map((e) => [e.id, e]));
-  const [items, comparisons] = await Promise.all([invoicesAt(db, clientId, direction, asOf, ids), subledgerVsLedger(db, clientId, direction, asOf, ids)]);
+  const [items, comparisons, contactRows] = await Promise.all([
+    invoicesAt(db, clientId, direction, asOf, ids),
+    subledgerVsLedger(db, clientId, direction, asOf, ids),
+    db.contact.findMany({ where: { clientId }, select: { id: true, name: true, creditLimit: true }, orderBy: { name: "asc" } }),
+  ]);
+  const limits = new Map(contactRows.flatMap((c) => (c.creditLimit !== null ? [[c.id, c.creditLimit] as const] : [])));
   const settlements = await db.invoiceSettlement.findMany({
     where: { invoiceId: { in: items.map((i) => i.id) }, bankTransaction: { date: { lte: asOf } } },
     include: { bankTransaction: { select: { date: true, description: true } } },
@@ -94,19 +102,27 @@ export async function receivablesView(db: Db, clientId: string, direction: Invoi
       ];
       const sum = (f: (r: (typeof rows)[number]) => bigint) => rows.reduce((t, r) => t + f(r), 0n);
       const totals = Object.fromEntries(BUCKETS.map((b) => [b, sum((r) => r.buckets[b]).toString()])) as Record<Bucket, string>;
+      // A credit limit is a Rupiah figure for customers: it applies to Piutang of companies whose books are in Rupiah only.
+      const limited = direction === "SALES" && e.functionalCurrency === "IDR";
       return {
         entityId: e.id,
         entity: e.shortName,
         currency: e.functionalCurrency,
-        rows: rows.map((r) => ({
-          contact: r.contact.name,
-          buckets: Object.fromEntries(BUCKETS.map((b) => [b, r.buckets[b].toString()])) as Record<Bucket, string>,
-          total: r.total.toString(),
-          count: r.count,
-          advance: r.advance.toString(),
-          net: (r.total - r.advance).toString(),
-          credit: r.advance > r.total,
-        })),
+        rows: rows.map((r) => {
+          const limit = limited ? (limits.get(r.contact.id) ?? null) : null;
+          return {
+            contactId: r.contact.id,
+            contact: r.contact.name,
+            buckets: Object.fromEntries(BUCKETS.map((b) => [b, r.buckets[b].toString()])) as Record<Bucket, string>,
+            total: r.total.toString(),
+            count: r.count,
+            advance: r.advance.toString(),
+            net: (r.total - r.advance).toString(),
+            credit: r.advance > r.total,
+            limit: limit?.toString() ?? null,
+            over: limit !== null && r.total - r.advance > limit,
+          };
+        }),
         totals: { ...totals, total: sum((r) => r.total).toString(), advance: sum((r) => r.advance).toString(), net: sum((r) => r.total - r.advance).toString() },
         unallocated: (cmp?.unallocated ?? 0n).toString(),
         unallocatedLines: cmp?.unsettledLines ?? 0,
@@ -161,7 +177,6 @@ export async function receivablesView(db: Db, clientId: string, direction: Invoi
     voidedAt: formatDate(i.voidedAt!),
     by: i.voidedBy?.name ?? null,
   }));
-  const contactRows = await db.contact.findMany({ where: { clientId }, select: { id: true, name: true, channel: true }, orderBy: { name: "asc" } });
   const contacts = contactRows.map((c) => c.name);
   return { invoices, voided, aging, comparison, unsettled, contacts, contactOptions: contactRows.map((c) => ({ id: c.id, name: c.name })) };
 }

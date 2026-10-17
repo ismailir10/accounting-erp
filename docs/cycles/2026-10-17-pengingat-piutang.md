@@ -133,7 +133,7 @@ and *Kirim lewat WhatsApp*, and Buku never sends anything itself. This cycle use
   No PII leaves Buku through the server: the `wa.me` link is opened by the user, as *Minta data* does.
 
 ## Tasks
-- [ ] T1 Credit limit. Add the migration (`Contact.creditLimit` + CHECK) and `lib/receivables/credit-limit.ts` `setCreditLimit`, shaped
+- [x] T1 Credit limit. Add the migration (`Contact.creditLimit` + CHECK) and `lib/receivables/credit-limit.ts` `setCreditLimit`, shaped
       like `setContactChannel` in `lib/receivables/channels.ts`: `LedgerError` Bahasa refusals, `parseMoney`, `recordEvent` with the new
       kind `CREDIT_LIMIT` "Batas kredit" in `lib/audit.ts`. Add `setCreditLimitAction` in `app/actions.ts` through `writeClient`. In
       `receivablesView`, aging rows gain `contactId`, `limit` and `over` (IDR companies only, `net > limit`). Accept: `prisma migrate diff`
@@ -153,6 +153,13 @@ and *Kirim lewat WhatsApp*, and Buku never sends anything itself. This cycle use
       derived, nothing posted). Run the full gate and walk flows 1–4. (deps: T3)
 
 ## Implementation
+- Plan: T1–T3 sequential in one worker (T2 reads T1's `contactId` on the aging rows, T3 renders both); T4's docs part inline with T3;
+  verify-local, the e2e run and screenshots by the driver.
+- T1: `prisma/migrations/20261017110000_contact_credit_limit`, `prisma/schema.prisma`, `lib/receivables/credit-limit.ts`, `lib/audit.ts`,
+  `app/actions.ts`, `lib/receivables/view.ts`, `tests/db/credit-limit.test.ts` — `Contact.creditLimit` (CHECK NULL or > 0);
+  `setCreditLimit` parses whole Rupiah, refuses zero and negatives in Bahasa (text gets `parseMoney`'s own message), and records a
+  *Batas kredit* event with the amounts before and after (none when the value is unchanged); `setCreditLimitAction` through
+  `writeClient`; aging rows carry `contactId`, `limit` and `over` (Piutang of IDR companies only, net > limit).
 
 ## Verification
 
