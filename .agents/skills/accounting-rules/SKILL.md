@@ -424,6 +424,15 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     rows) and may reword them. Every number token of a draft must appear in those sentences (`foreignNumbers`); an AI draft with any other
     number is never saved. Only the accountant's click saves a note (their own wording may hold other numbers, with a warning). A note
     keeps the sentences it was approved with; when the books change them it is stale and the report uses the computed sentences again.
+20d. **Penjelasan penggerak** (Wawasan on Analisis keuangan, `lib/reports/flux-explanation.ts`): *Susun dengan AI* exists only for a P&L
+    account the flux scan flags (rule 22b) and sends exactly the close review's rows for it (`accountSeriesRow` + `accountLineRows` in
+    `lib/controls/ai-review.ts`: its movement per baseline month and this month, and up to ten of the month's largest lines, memo ≤ 80
+    chars) — nothing else. Citations outside those ids are dropped and a draft citing none is not shown; an AI draft with a number the
+    rows do not hold (`foreignNumbers`) is never saved as AI text. Only the accountant's *Setujui* stores it (`FluxExplanation`, one per
+    company, month and account; their own words may hold other numbers, with a warning). It keeps the account's series it was approved
+    against: when the books move that series it is stale and the management pack's *Perubahan Akun* leaves it out, saying so. Last
+    month's text is only offered (*Pakai lagi*), never approved for the accountant. One budgeted, cached call (scope `flux:<client>:<month>`,
+    its own per-month limit); explanations are commentary, so a closed month still takes one.
 21. Provider is OpenAI-compatible `fetch` (OpenCode Zen default) behind `AiProvider`; swap by config, not code.
     Key + model: **Pengaturan (DB, encrypted) overrides env** — resolve via `resolveAiConfig()` (`lib/settings/ai.ts`).
     `AI_BASE_URL` stays **env-only** so a visitor can't redirect the stored key. *Cek koneksi* hits `GET /models` (no tokens).

@@ -155,22 +155,60 @@ the explanation of a movement is the accountant's, approved and kept, with AI on
 - No dependency, no auth change, no number on any report changes, no accounting invariant changes.
 
 ## Tasks
-- [ ] T1 `lib/reports/insights.ts`: trend and margin findings from `monthlyIncome` statements (reuse `activeMonths`, `percent` from
+- [x] T1 `lib/reports/insights.ts`: trend and margin findings from `monthlyIncome` statements (reuse `activeMonths`, `percent` from
       `lib/reports/analysis.ts`, `percentOf` from `lib/reports/management.ts`); `topMovers` from `managementSummary().changes` +
       `scanLedger().flux` + `scan.series`, lines via `ENTRY_SOURCE_SELECT` / `entrySource`; unit + DB tests — accept: figures equal the
       analysis tables, movers equal *Perubahan Akun*'s order and the flux control's accounts.
-- [ ] T2 *Wawasan* tab on `analysis/page.tsx` (LinkTabs `?tab=wawasan`, Tren, Margin, Penggerak, drill links, group asks for a company,
+- [x] T2 *Wawasan* tab on `analysis/page.tsx` (LinkTabs `?tab=wawasan`, Tren, Margin, Penggerak, drill links, group asks for a company,
       empty states, 390 px); e2e flow 1 — accept: flows 1 and the drill-downs walk (deps: T1).
-- [ ] T3 Explanations: migration + model; `lib/reports/flux-explanation.ts` (draft, save, clear, stale, previous month) with
+- [x] T3 Explanations: migration + model; `lib/reports/flux-explanation.ts` (draft, save, clear, stale, previous month) with
       `draftFluxExplanation` on `AiProvider`, the OpenAI-compatible provider and `MockProvider`; account rows extracted from `gather`'s
       anomaly branch (`lib/controls/ai-review.ts`) so the close review and the draft send identical rows; reuse `runBudgetedAi`,
       `EvidenceAiCache`, `allowedNumbers` / `foreignNumbers`, `recordEvent` (`REPORT_COMMENT`); three actions via `writeClient`; client
       deletion; accounting-rules 20d + ADR 0009 note; DB tests — accept: Test seams' DB list passes (deps: T1; parallel with T2).
-- [ ] T4 Editor on each mover (keyed like `ManagementNoteCard`), NextStep, *Pakai lagi*, the *Penjelasan* column in
+- [x] T4 Editor on each mover (keyed like `ManagementNoteCard`), NextStep, *Pakai lagi*, the *Penjelasan* column in
       `managementWorkbook`; e2e flow 2; workbook test — accept: flows 2–4 walk (deps: T2, T3).
 - [ ] T5 verify-local: walk flows 1–4, screenshots at 1440 and 390 px, full gate.
 
 ## Implementation
+- Plan: T1–T4 sequential, inline in one build worker (each task builds on the last: T2 renders T1, T4 joins T2 and T3); T5
+  (verify-local) by the driver.
+- T1: `lib/reports/insights.ts`, `lib/reports/analysis.ts` (`ytd` on `MonthlyIncome`, `tenthsOf`), `lib/reports/management.ts`
+  (`changes` carry `accountId` and the scan's `series`, `baseline`, `changePercent` shared with the pack), `lib/reports/entry-source.ts`
+  (`lineSource`, now also used by the Buku Besar), `tests/unit/insights.test.ts`, `tests/db/insights.test.ts` — trend (last month,
+  average of the year's earlier months, run from 2, highest/lowest), margins with the change in points and the side that moved it,
+  movers from *Perubahan Akun* with *Melewati ambang* from the flux scan and their three largest lines with source.
+  Decision: a flagged account outside the five largest differences is listed too (after them, in the pack's order), so every
+  account the flux control names can be explained.
+- T2: `app/(app)/clients/[id]/analysis/page.tsx`, `components/app/insights.tsx`, `e2e/analisis-keuangan.spec.ts` — the fourth tab
+  (last; *Laba Rugi per bulan* stays the default): Tren and Margin cards with their sentence and a short table whose figures open
+  *Laba Rugi per bulan* / *Rasio keuangan* (the year-to-date margin opens the Laba Rugi total), Penggerak as divided rows whose account
+  opens its Buku Besar, a group listing its companies to pick from, the empty states and the threshold hint. Secondary columns hide
+  below `sm`/`md` (390 px). Cards stack (a two-column grid squeezed the six-column trend table at desktop width). e2e flow 1 added.
+- T3: `prisma/schema.prisma` + `prisma/migrations/20261017115000_flux_explanation` (`FluxExplanation`, no foreign keys, as
+  `ReportComment`), `lib/reports/flux-explanation.ts`, `lib/reports/flux-explanation-ai.ts` (prompt + parse, as `commentary-ai.ts`),
+  `lib/ai/provider.ts` (`draftFluxExplanation` on the port, the OpenAI-compatible provider and `MockProvider` with a recorded
+  `fluxAnswer` for tests), `lib/controls/ai-review.ts` (`accountSeriesRow` / `accountLineRows` extracted from `gather`'s anomaly
+  branch; the close review's payload is unchanged), `app/actions.ts` (three actions via `writeClient`), `lib/clients/delete.ts` (rows and
+  the `flux:` draft cache, which quotes ledger memos), `lib/clients/entities.ts` (a company with an explanation is not removable, as with
+  a report note), `lib/reports/management-pack.ts` (the *Penjelasan* column and the stale line — listed under T4, built here because the
+  DB seam list holds its test), accounting-rules 20d, ADR 0009 note, `tests/db/flux-explanation.test.ts`.
+  Decisions: the account is stored by code (codes never change; an account with an explanation has lines, so it cannot be removed);
+  the series is compared field by field (JSONB reorders keys); the draft sends the series row plus up to ten lines (the close review
+  shares ten rows between the series and the lines when several accounts are flagged; for one account they are identical, tested);
+  the accountant's own words may also use the figures Penggerak shows (average, difference, %) without a warning; scope limit 60 000
+  tokens per client-month, 6 000 output tokens per draft.
+- T4: `components/app/flux-explanation.tsx` (keyed per company, month and account like `ManagementNoteCard`; write controls from
+  `useAccess`, so a viewer sees the approved text only), `app/(app)/clients/[id]/analysis/page.tsx` (one management summary feeds the
+  movers and the explanations; the NextStep for writers while a flagged mover has no current explanation, the done state for everyone
+  once all are explained), `e2e/analisis-keuangan.spec.ts` (flow 2, typed; it removes its explanation at the end so the demo stays as
+  seeded), README (the Wawasan part of the Analisis keuangan row; committed with T3). The workbook's *Penjelasan* column and its test
+  landed in T3.
+  Decisions: an approved explanation offers *Ubah penjelasan* (prefilled, saved as the accountant's) and *Hapus penjelasan*; *Pakai
+  lagi* shows last month's text above the buttons and prefills the editor, and is hidden from viewers (it is a write affordance); a
+  stale explanation counts as unexplained for the NextStep.
+- Self-review follow-up: `tests/unit/flux-explanation-ai.test.ts` — the Test seams' unit item for the draft parse (citations outside
+  the rows sent dropped, empty or non-JSON answers refused, a number not sent named), missed in T3.
 
 ## Verification
 

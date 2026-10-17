@@ -68,9 +68,11 @@ export async function deleteClient(db: Db, input: { firmId: string; clientId: st
       await tx.evidenceUpload.deleteMany({ where: { intakeId: { in: intakeIds } } });
       await tx.evidenceIntake.deleteMany({ where: { id: { in: intakeIds } } }); // documents, versions, passages, facts, conflicts, messages cascade
       await tx.evidenceAiCache.deleteMany({ where: { firmId: input.firmId, scope: { startsWith: `close:${clientId}:` } } });
+      await tx.evidenceAiCache.deleteMany({ where: { firmId: input.firmId, scope: { startsWith: `flux:${clientId}:` } } }); // drafts quote ledger memos
       await tx.auditEvent.deleteMany({ where: { clientId } });
       await tx.reportFormat.deleteMany({ where: { clientId } });
       await tx.reportComment.deleteMany({ where: { clientId } });
+      await tx.fluxExplanation.deleteMany({ where: { clientId } });
       await tx.ocrDraft.deleteMany({ where: { clientId } });
       await tx.coretaxFaktur.deleteMany({ where: { clientId } });
       await tx.coretaxBupot.deleteMany({ where: { clientId } });

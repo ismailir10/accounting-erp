@@ -40,6 +40,7 @@ const BY_ENTITY: [label: string, table: string][] = [
   ["rekonsiliasi subledger", "SubledgerImport"],
   ["temuan", "Finding"],
   ["catatan laporan", "ReportComment"],
+  ["penjelasan akun laba rugi", "FluxExplanation"],
   ["faktur Coretax", "CoretaxFaktur"],
   ["bukti potong Coretax", "CoretaxBupot"],
   ["angsuran PPh 25", "TaxInstalment"],
