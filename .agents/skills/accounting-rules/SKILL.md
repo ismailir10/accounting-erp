@@ -241,6 +241,10 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     the Kode Objek Pajak (24 = PPh 23, 28 = 4(2), 22, 27 = 26); a pair matched on the amount but of another kind is *beda jenis*. A
     *pembetulan* counts; cancelled, replaced, rejected and draft slips don't. Equal to the Rupiah, no allowance. Control `bupot:<entity>`
     exists only once slips for the masa were imported. The shared matcher is `lib/tax/coretax-match.ts`.
+    **The BPPU import file** (`lib/tax/coretax-bppu.ts`, cycle 2026-10-17-bppu-files) is the other way round: one slip per outgoing line of
+    the masa with PPh 23 / 4(2) / 22, its detail (KOP, rate in hundredths of a percent, DPP, document, a recipient when the line has none)
+    in `WithholdingSlip` — metadata, never posted, never the line's `whtKind` / `whtAmount`. The file has no PPh, so a slip goes in only
+    when DPP × rate is within Rp 1 of the withheld amount (bigint); a line matched to a counted *dibuat* slip is *Sudah ada di Coretax*.
 6. `bigint` **minor units of the entity's functional currency** everywhere in the domain (ADR 0006). IDR has exponent 0,
    so for IDR entities that is whole Rupiah, as before. Parse with `parseRupiah()` / `parseMinor()` (handles `1.234.567,00`,
    `1,234,567.00`, `(2.500)`), format with `formatRupiah()` / `formatMoney(value, currency)`. Convert to `Number` only for chart

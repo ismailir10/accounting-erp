@@ -259,7 +259,7 @@ construction) every month before the SPT Masa PPh Unifikasi. Also the partner, w
       tests for validation, scoping, locked month allowed, cascade with the bank line. (Reuse: `kindOf`, `upsert` of invoices' contacts.)
 - [x] T2 `lib/tax/coretax-bppu-xml.ts`, a pure builder (company + rows → `BpuBulk` XML) with the rate formatting and the bigint tax check;
       golden fixture + DJP shape tag-order test — accept: unit tests green. (Parallel with T1; reuse the faktur builder's escaping.)
-- [ ] T3 `lib/tax/coretax-bppu.ts` `bppuDraft` (candidates, *Sudah ada* via `bupotRecon` DIBUAT matches, prefill from settled invoice /
+- [x] T3 `lib/tax/coretax-bppu.ts` `bppuDraft` (candidates, *Sudah ada* via `bupotRecon` DIBUAT matches, prefill from settled invoice /
       exact division / last slip, every block reason; the company identity check shared with `coretax-faktur.ts`) — accept: DB tests for
       every inclusion, prefill and block rule. (Deps: T1, T2.)
 - [ ] T4 Download route `tax/masa/coretax-bppu` (`?entity&period`), `recordBupotDownload`, server action, identity sheet's holder label
@@ -290,6 +290,18 @@ construction) every month before the SPT Masa PPh Unifikasi. Also the partner, w
   a null value as `xsi:nil="true"`); the faktur golden file is unchanged. The golden file was checked by hand.
   - Decision: `djp-bppu-shape.xml` is our transcription of DJP's sample (element names and order, placeholder values), checked
     tag-for-tag against DJP's `bppu.xml` on 2026-10-17; DJP's file itself is not committed (as in the faktur cycle).
+- T3: `lib/tax/coretax-bppu.ts`, `lib/tax/coretax-faktur.ts`, `tests/db/coretax-bppu.test.ts`, `.agents/skills/accounting-rules/SKILL.md`
+  — `bppuDraft` (candidates: the masa's outgoing lines by bank date with PPh 23 / 4(2) / 22 above 0 of a Rupiah PT/CV; *Sudah ada di
+  Coretax* from `bupotRecon`'s *dibuat* matches; the prefill; every block reason with where it is fixed: Review, the slip sheet, the
+  recipient's identity sheet or the company) and `bppuFile` (the *Siap* rows; none while the company blocks). The company identity check
+  is shared with the faktur file (`companyIdentity`, which names the file: "faktur" / "bukti potong"). Rule 5k names the export.
+  - Decision: no withheld ÷ rate prefill on a line whose PPN was split (`taxTag` PPN): at 2 % every whole-Rupiah withholding divides
+    exactly, so the division would always "succeed" and hide that the DPP is the accountant's to state (flow 3 expects it empty).
+  - Decision: the settled invoice's DPP is prefilled while no KOP is chosen (flow 1 shows it before the KOP); once a rate is known it is
+    kept only when DPP × rate ties.
+  - Decision: the last slip's KOP is carried to a recipient's next line only when it is of the line's kind, with its document type
+    (never its number, date or DPP).
+  - Decision: an in-review line is listed with *every* reason (Review first), so the slip can be prepared while Review is pending.
 
 ## Verification
 
