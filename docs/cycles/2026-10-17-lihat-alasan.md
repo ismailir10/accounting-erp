@@ -281,7 +281,7 @@ and ask.
       - The control, `controlSnapshot` against the stored snapshot, rows with cited marks, the dropped count from the cache row, the
         checks and the blocked or stale state.
       - Accept: the draft seams pass. (deps: T2)
-- [ ] T4 UI and download.
+- [x] T4 UI and download.
       - The `ReasoningPanel` disclosure on Review's AI items and Kotak's AI bank and draft cards, the read-only `reasoningAction`
         (`books.read`), and the GET `/clients/[id]/approvals/alasan?item=` CSV route (item checked against the client).
       - README's Kotak and Review rows.
@@ -313,6 +313,14 @@ and ask.
   the existing stale message). `explainInput` / `explainKey` are extracted from `explainControl` (same input, same key) so the panel can
   recompute the answer's key over the candidate models: a match proves the chart size sent and the model, else the note names no count.
   `reasoningFor` routes an item id to the bank line or the draft of the client; anything else is "Usulan tidak ditemukan."
+- T4: `components/app/reasoning-panel.tsx`, `components/app/review-queue.tsx`, `components/app/approval-queue.tsx`, `app/actions.ts`,
+  `app/(app)/clients/[id]/approvals/alasan/route.ts`, README (Classify and Kotak rows) — `ReasoningDisclosure`: a ghost *Lihat alasan* /
+  *Tutup alasan* toggle (chevron, `aria-expanded`) at the end of the reason line of Review's AI items and Kotak's AI bank and draft cards
+  only, and the panel as a full-width row under it (numbered steps, checks as `Check` / `CircleAlert` + label, a draft's rows as a compact
+  table with Tanggal and Akun hidden below `sm`, a one-line skeleton while loading, the action's error verbatim, *Unduh nilai (CSV)* as the
+  only action). `reasoningAction` reads behind `books.read` (viewers included), writes nothing. The CSV route answers 404 for a client
+  outside the member's reach and for an item that isn't that client's AI line or draft. The toggle is a button, so Review's Enter handler
+  leaves it alone (it toggles, never accepts).
 
 ## Verification
 

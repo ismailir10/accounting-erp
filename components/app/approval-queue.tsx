@@ -10,6 +10,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Money } from "@/components/app/money";
 import { MethodBadge } from "@/components/app/status";
 import { SimpleSelect } from "@/components/app/simple-select";
+import { ReasoningDisclosure } from "@/components/app/reasoning-panel";
+import { hasReasoning } from "@/lib/approvals/has-reasoning";
 import { bookFakturAction, dismissProposalAction, postAllDueAction, postInstallmentAction, postProposalAction, reviewAction } from "@/app/actions";
 import type { ApprovalKind, BankCard, DraftCard, FakturCard, ScheduledCard } from "@/lib/approvals/queue";
 import type { TaxTag } from "@/lib/generated/prisma/enums";
@@ -158,6 +160,9 @@ export function ApprovalQueue({
   const hiddenBank = bankTotal - bank.length;
   const disabled = busy !== null;
   const show = (k: ApprovalKind) => kinds.includes(k);
+  // *Lihat alasan* only on AI cards: deterministic ones (rule, memory, guess, 1999 correction, schedule, faktur) say why already.
+  const withReasoning = (card: Parameters<typeof hasReasoning>[0], id: string, line: (toggle?: React.ReactNode) => React.ReactNode) =>
+    hasReasoning(card) ? <ReasoningDisclosure clientId={clientId} itemId={id}>{line}</ReasoningDisclosure> : line();
 
   return (
     <div className="space-y-6">
@@ -183,14 +188,14 @@ export function ApprovalQueue({
                 mono
                 amount={amount < 0n ? -amount : amount}
                 currency={c.currency}
-                reason={
+                reason={withReasoning(c, c.id, (toggle) => (
                   <>
                     <MethodBadge method={c.method} />
                     {c.method === "AI" && <span className={cn("num text-xs", c.confidence < 0.7 && "font-medium text-review")}>{c.confidence < 0.7 ? "keyakinan rendah" : "keyakinan"} {Math.round(c.confidence * 100)}%</span>}
                     <span>{amount > 0n ? "Uang masuk" : "Uang keluar"} → {c.suggestedCode ? <span className="text-foreground">{c.suggestedCode} {c.suggestedName}{c.taxTag ? ` · ${TAX_LABEL[c.taxTag] ?? c.taxTag}` : ""}</span> : "belum ada usulan akun"}</span>
-                    <span className="basis-full">{c.reason.replace(/^AI: /, "")}</span>
+                    <span className="basis-full">{c.reason.replace(/^AI: /, "")} {toggle}</span>
                   </>
-                }
+                ))}
               >
                 {c.hints.length > 0 && (
                   <ul className="space-y-1">
@@ -238,12 +243,12 @@ export function ApprovalQueue({
                 title={d.memo}
                 amount={total}
                 currency={d.currency}
-                reason={
+                reason={withReasoning(d, d.id, (toggle) => (
                   <>
                     <MethodBadge method={d.source === "AI_CONTROL" ? "AI" : "SUSPENSE"} />
-                    <span>{d.reason}</span>
+                    <span>{d.reason} {toggle}</span>
                   </>
-                }
+                ))}
               >
                 <div className="space-y-2">
                   {d.lines.map((l, i) => (

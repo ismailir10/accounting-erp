@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { csvCell, toCsv } from "@/lib/csv";
+import { hasReasoning } from "@/lib/approvals/has-reasoning";
 import { bankCsvRows, bankSteps, draftSteps, reasoningCsv, CHECKED_FIRST, CSV_HEADER, DEMO_ANSWER, NO_MATCH, NOT_SENT, STALE, type BankFacts, type DraftFacts } from "@/lib/approvals/reasoning";
 
 const bank = (over: Partial<BankFacts> = {}): BankFacts => ({
@@ -34,6 +35,13 @@ function parse(text: string): string[][] {
   }
   return rows;
 }
+
+describe("which cards carry Lihat alasan", () => {
+  it("every AI bank line and AI draft; no deterministic card", () => {
+    expect(["AI", "TRANSFER", "RULE", "MEMORY", "HEURISTIC", "MANUAL"].filter((method) => hasReasoning({ method }))).toEqual(["AI"]);
+    expect(["AI_CONTROL", "SUSPENSE", "SCHEDULE"].filter((source) => hasReasoning({ source }))).toEqual(["AI_CONTROL"]);
+  });
+});
 
 describe("the CSV writer", () => {
   it("writes Excel id-ID: BOM, semicolons, CRLF, quotes what needs quoting", () => {
