@@ -66,18 +66,30 @@ export async function loadReversible(db: Db | Tx, entryId: string) {
   return db.journalEntry.findUnique({ where: { id: entryId }, include: { ...REVERSAL_OWNERS, entity: { select: { clientId: true } }, lines: { include: { account: { select: { code: true } } } } } });
 }
 
-export async function reverseEntry(db: Db, input: { clientId: string; entryId: string; date: Date; actorId?: string | null }) {
+type ReverseInput = { clientId: string; entryId: string; date: Date; actorId?: string | null };
+
+/** The entry to reverse, checked: the client's, reversible here (`reversalBlocker`), and the date on or after it. Nothing is written. */
+export async function checkReversal(db: Db | Tx, input: Omit<ReverseInput, "actorId">) {
   const entry = await loadReversible(db, input.entryId);
   if (!entry || entry.entity.clientId !== input.clientId) throw new LedgerError("Jurnal tidak ditemukan.");
   const blocker = reversalBlocker(entry);
   if (blocker) throw new LedgerError(blocker);
   if (Number.isNaN(+input.date)) throw new LedgerError("Pilih tanggal jurnal pembalik.");
   if (+input.date < +entry.date) throw new LedgerError(`Tanggal pembalik tidak boleh sebelum jurnal aslinya (${formatDate(entry.date)}).`);
-  return db.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`reverse:${entry.id}`}, 0))::text`;
-    if (await tx.journalEntry.findUnique({ where: { reversesId: entry.id }, select: { id: true } })) throw new LedgerError("Jurnal ini baru saja dibalik. Muat ulang halaman.");
-    return postJournal(tx, { entityId: entry.entityId, date: input.date, kind: "ADJUSTMENT", memo: reversalMemo(entry), reversesId: entry.id, actorId: input.actorId, lines: mirrorLines(entry.lines) });
-  });
+  return entry;
+}
+
+/** Posts the reversal on `tx`, every check made again on it; the approval of a waiting *Balik jurnal* (Persetujuan kedua) runs this too. */
+export async function reverseEntryTx(tx: Tx, input: ReverseInput) {
+  const entry = await checkReversal(tx, input);
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`reverse:${entry.id}`}, 0))::text`;
+  if (await tx.journalEntry.findUnique({ where: { reversesId: entry.id }, select: { id: true } })) throw new LedgerError("Jurnal ini baru saja dibalik. Muat ulang halaman.");
+  return postJournal(tx, { entityId: entry.entityId, date: input.date, kind: "ADJUSTMENT", memo: reversalMemo(entry), reversesId: entry.id, actorId: input.actorId, lines: mirrorLines(entry.lines) });
+}
+
+export async function reverseEntry(db: Db, input: ReverseInput) {
+  await checkReversal(db, input); // refused before a transaction opens, as before
+  return db.$transaction((tx) => reverseEntryTx(tx, input));
 }
 
 /** A reversal's memo: the original's, with its date. */

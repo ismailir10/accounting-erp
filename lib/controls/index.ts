@@ -9,6 +9,7 @@ import { balanceSheet, combinedWorksheet, trialBalance } from "@/lib/reports/led
 import { sanityControls } from "@/lib/controls/sanity";
 import { anomalyControls } from "@/lib/controls/anomaly";
 import { closeLock, dueProposals, schedulesDueBy } from "@/lib/adjust/schedules";
+import { pendingJournalCount, pendingLockMessage } from "@/lib/approvals/pending";
 import { registerVsLedger } from "@/lib/assets/register";
 import { subledgerVsLedger } from "@/lib/receivables/aging";
 import { ckpn, settingAt } from "@/lib/receivables/ckpn";
@@ -642,6 +643,9 @@ const mustCloseFirst = (p: { year: number; month: number }) => new CloseError(`T
 export async function lockPeriod(db: Db, clientId: string, year: number, month: number, note: string, actorId?: string | null) {
   const before = await earlierOpenMonth(db, clientId, year, month);
   if (before) throw mustCloseFirst(before);
+  // A journal waiting for a second approver that would post into this month (Persetujuan kedua): the lock waits for its decision.
+  const waiting = await pendingJournalCount(db, clientId, year, month);
+  if (waiting) throw new CloseError(pendingLockMessage(waiting));
   // Schedules due by this month known before the controls run: one created meanwhile was never checked, so the lock refuses (rule 5a).
   const known = new Set(await schedulesDueBy(db, clientId, year, month));
   const controls = await runControls(db, clientId, year, month);
@@ -664,6 +668,8 @@ export async function lockPeriod(db: Db, clientId: string, year: number, month: 
     await closeLock(tx, clientId);
     const raced = await earlierOpenMonth(tx, clientId, year, month);
     if (raced) throw mustCloseFirst(raced);
+    const asked = await pendingJournalCount(tx, clientId, year, month); // a request stored meanwhile (submits take the same lock)
+    if (asked) throw new CloseError(pendingLockMessage(asked));
     if ((await schedulesDueBy(tx, clientId, year, month)).some((id) => !known.has(id))) {
       throw new CloseError("Jadwal penyesuaian baru yang jatuh tempo sampai bulan ini ditambahkan saat tutup buku berjalan. Muat ulang halaman, periksa kontrolnya, lalu tutup lagi.");
     }

@@ -19,8 +19,8 @@ import { resolveProvider } from "@/lib/settings/ai";
 import { acceptSimilar, reviewTransaction, splitTransaction, unpairTransfer, type SplitPartInput } from "@/lib/review";
 import { CloseError, lockPeriod, runControls, unlockPeriod } from "@/lib/controls";
 import { LedgerError } from "@/lib/ledger/post";
-import { postAdjustment } from "@/lib/ledger/adjustment";
-import { reverseEntry } from "@/lib/ledger/reverse";
+import { approveJournal, rejectJournal, submitAdjustment, submitProposal, submitReversal, withdrawJournal, type Outcome } from "@/lib/approvals/journals";
+import { ApprovalError } from "@/lib/approvals/second";
 import { createSchedule, postAllDue, postInstallment, stopSchedule, type ScheduleInput } from "@/lib/adjust/schedules";
 import { createAsset, type AssetInput } from "@/lib/assets/register";
 import { disposeAsset, type DisposalInput } from "@/lib/assets/dispose";
@@ -66,7 +66,7 @@ import { postRevaluation, RevaluationError } from "@/lib/fx/revalue";
 import { reviewClose, type CloseReviewView } from "@/lib/controls/ai-review";
 import { explainControl, ExplainError, type ControlExplanation } from "@/lib/controls/explain";
 import { ReasoningError, reasoningFor, reasoningSteps, type ReasoningStep } from "@/lib/approvals/reasoning";
-import { dismissProposal, postProposal } from "@/lib/adjust/proposals";
+import { dismissProposal } from "@/lib/adjust/proposals";
 import { postSuspenseCorrection, SUSPENSE_NOT_DISMISSABLE, SUSPENSE_PREFIX } from "@/lib/adjust/suspense";
 import { AiBudgetError } from "@/lib/ai/budget";
 import { AI_LONG_TIMEOUT_MS, AiAnswerError } from "@/lib/ai/provider";
@@ -96,7 +96,7 @@ type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; needs
 function fail(e: unknown): { ok: false; error: string; needsPassword?: boolean; needsYear?: boolean; yearGuess?: number | null } {
   if (e instanceof PdfPasswordError) return { ok: false, error: e.message, needsPassword: true };
   if (e instanceof YearNeededError) return { ok: false, error: e.message, needsYear: true, yearGuess: e.guess };
-  if (e instanceof DeleteClientError || e instanceof EntityEditError || e instanceof AccountEditError || e instanceof AccessError || e instanceof OrgError || e instanceof ReasoningError) return { ok: false, error: e.message };
+  if (e instanceof DeleteClientError || e instanceof EntityEditError || e instanceof AccountEditError || e instanceof AccessError || e instanceof OrgError || e instanceof ReasoningError || e instanceof ApprovalError) return { ok: false, error: e.message };
   if (e instanceof ParseError || e instanceof LedgerError || e instanceof CloseError || e instanceof OpeningError || e instanceof FindingError || e instanceof RemoveImportError || e instanceof MoneyError || e instanceof RateError || e instanceof RevaluationError || e instanceof LedgerImportError || e instanceof MappingError || e instanceof EntitySettingsError || e instanceof FormatError || e instanceof SubledgerError || e instanceof FakturError || e instanceof BupotError || e instanceof ChecklistError) return { ok: false, error: e.message };
   const infra = infraErrorMessage(e);
   console.error(e);
@@ -579,20 +579,34 @@ export async function closeHistoryMonthAction(clientId: string, until: YearMonth
   }
 }
 
-/** *Balik jurnal* on a manual adjustment (lib/ledger/reverse.ts): tenant checked through the entry's client. */
-export async function reverseEntryAction(input: { entryId: string; date: string }): Promise<Result> {
+/** What a journal save did (Persetujuan kedua): posted (`entryId`), or waiting for a second approver (`pending`). */
+type Saved = { entryId: string | null; pending: boolean; fallback: boolean };
+const saved = (o: Outcome): Saved => (o.posted ? { entryId: o.entryId, pending: false, fallback: o.fallback } : { entryId: null, pending: true, fallback: false });
+
+/**
+ * The writer member of a client action: `books.write` on the client (lib/auth/session), as the maker or approver of a journal. The
+ * member's role is read here, at the click, and the request keeps the maker's.
+ */
+async function writer(clientId: string) {
+  const { member } = await requireCapability("books.write", { clientId });
+  return { client: await getClientForMember(clientId), member: { id: member.id, role: member.role } };
+}
+
+/** *Balik jurnal* on a manual adjustment (lib/ledger/reverse.ts): tenant checked through the entry's client. May wait (Persetujuan kedua). */
+export async function reverseEntryAction(input: { entryId: string; date: string }): Promise<Result<Saved>> {
   try {
     const entry = await prisma.journalEntry.findUniqueOrThrow({ where: { id: input.entryId }, select: { entity: { select: { clientId: true } } } });
-    const client = await writeClient(entry.entity.clientId);
+    const { client, member } = await writer(entry.entity.clientId);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) return { ok: false, error: "Pilih tanggal jurnal pembalik." };
-    await reverseEntry(prisma, { clientId: client.id, entryId: input.entryId, date: new Date(`${input.date}T00:00:00Z`), actorId: (await getCurrentMember()).id });
+    const o = await submitReversal(prisma, { clientId: client.id, entryId: input.entryId, date: new Date(`${input.date}T00:00:00Z`), maker: member });
     revalidatePath(`/clients/${client.id}`, "layout");
-    return { ok: true };
+    return { ok: true, ...saved(o) };
   } catch (e) {
     return fail(e);
   }
 }
 
+/** Jurnal Penyesuaian's *Simpan jurnal* (or *Ajukan persetujuan* above the firm's *Jurnal manual* threshold). */
 export async function adjustmentAction(input: {
   clientId: string;
   entityId: string;
@@ -601,12 +615,49 @@ export async function adjustmentAction(input: {
   lines: { accountCode: string; debit: string; credit: string; memo?: string }[];
   /** An accrual: also post its reversal on the first of the next month (same transaction). */
   reverseNextMonth?: boolean;
-}): Promise<Result<{ entryId: string }>> {
+}): Promise<Result<Saved>> {
   try {
-    const client = await writeClient(input.clientId);
-    const entry = await postAdjustment(prisma, { clientId: client.id, entityId: input.entityId, date: new Date(`${input.date}T00:00:00Z`), memo: input.memo, lines: input.lines, reverseNextMonth: input.reverseNextMonth === true, actorId: (await getCurrentMember()).id });
+    const { client, member } = await writer(input.clientId);
+    const o = await submitAdjustment(prisma, { clientId: client.id, entityId: input.entityId, date: new Date(`${input.date}T00:00:00Z`), memo: input.memo, lines: input.lines, reverseNextMonth: input.reverseNextMonth === true, maker: member });
     revalidatePath(`/clients/${client.id}`, "layout");
-    return { ok: true, entryId: entry.id };
+    return { ok: true, ...saved(o) };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Persetujuan kedua (lib/approvals/journals.ts): *Setujui & catat* and *Tolak* by another member with `books.write` on the client whose
+ * tier is at least the maker's; *Tarik kembali* by the maker. Each refusal is Bahasa, verbatim, and writes nothing.
+ */
+export async function approveJournalAction(clientId: string, approvalId: string): Promise<Result> {
+  try {
+    const { client, member } = await writer(clientId);
+    await approveJournal(prisma, { clientId: client.id, approvalId, approver: member });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function rejectJournalAction(clientId: string, approvalId: string, note: string): Promise<Result> {
+  try {
+    const { client, member } = await writer(clientId);
+    await rejectJournal(prisma, { clientId: client.id, approvalId, approver: member, note: typeof note === "string" ? note : "" });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function withdrawJournalAction(clientId: string, approvalId: string): Promise<Result> {
+  try {
+    const { client, member } = await writer(clientId);
+    await withdrawJournal(prisma, { clientId: client.id, approvalId, maker: member });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
   } catch (e) {
     return fail(e);
   }
@@ -1415,14 +1466,15 @@ export async function reasoningAction(clientId: string, itemId: string): Promise
   }
 }
 
-export async function postProposalAction(clientId: string, proposalId: string, accounts: string[]): Promise<Result> {
+/** *Catat jurnal* on a draft: a 1999 correction posts as before; a *Jelaskan* draft may wait for a second approver (Persetujuan kedua). */
+export async function postProposalAction(clientId: string, proposalId: string, accounts: string[]): Promise<Result<{ pending: boolean }>> {
   try {
-    const client = await writeClient(clientId);
-    const actorId = (await getCurrentMember()).id;
-    if (proposalId.startsWith(SUSPENSE_PREFIX)) await postSuspenseCorrection(prisma, { firmId: client.firmId, clientId: client.id, lineId: proposalId.slice(SUSPENSE_PREFIX.length), accounts, actorId });
-    else await postProposal(prisma, { clientId: client.id, proposalId, accounts, actorId });
+    const { client, member } = await writer(clientId);
+    let pending = false;
+    if (proposalId.startsWith(SUSPENSE_PREFIX)) await postSuspenseCorrection(prisma, { firmId: client.firmId, clientId: client.id, lineId: proposalId.slice(SUSPENSE_PREFIX.length), accounts, actorId: member.id });
+    else pending = !(await submitProposal(prisma, { clientId: client.id, proposalId, accounts, maker: member })).posted;
     revalidatePath(`/clients/${client.id}`, "layout");
-    return { ok: true };
+    return { ok: true, pending };
   } catch (e) {
     return fail(e);
   }

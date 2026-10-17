@@ -387,7 +387,7 @@ migration: stop and ask.
       shape, `recordEvent`, `parseMoney`)
 - [x] T2 The pure rules in `lib/approvals/second.ts`: routing, approver tier, fallback, reopen confirm, texts. Accept: unit tests.
       (parallel with T1)
-- [ ] T3 Journals:
+- [x] T3 Journals:
       - submit / approve / reject / withdraw for manual journals, *Balik otomatis* and *Balik jurnal*;
       - the adjustment writer split into parse + post, so approval posts stored minor units in one transaction with the status change;
       - the AI draft path around `postProposal`;
@@ -418,6 +418,15 @@ migration: stop and ask.
 - T2: `lib/approvals/second.ts`, `tests/unit/second-approval.test.ts` — routing (off, empty threshold, equal posts / above waits,
   non-Rupiah routes all), the approver rule (never the maker; Admin and Pemilik one tier; Peninjau never), the fallback tests
   (`hasApprover`, `hasSecondAdmin`), the reopen decider rule, the wait reasons and event heads.
+- T3: `lib/approvals/journals.ts`, `lib/approvals/pending.ts`, `lib/ledger/post.ts` (`checkJournal`: postJournal's checks without the
+  write; postJournal itself unchanged in behaviour and still the only writer), `lib/ledger/adjustment.ts` (`prepareAdjustment` +
+  `postPreparedAdjustment`), `lib/ledger/reverse.ts` (`checkReversal` + `reverseEntryTx`), `lib/adjust/proposals.ts` (`chosenAccounts`,
+  `onPosted` hook, dismiss refused while waiting, Draf jurnal hides waiting drafts and shows "Ditolak …"), `lib/controls/index.ts` (lock
+  refusal, checked again under the client lock), `app/actions.ts` (`adjustmentAction`, `reverseEntryAction`, `postProposalAction` route
+  through the submit functions and return `pending`; new `approveJournalAction`, `rejectJournalAction`, `withdrawJournalAction`, each
+  behind `requireCapability("books.write", { clientId })`), accounting-rules 2a (new), 3a, 20b, 23, 25. Submits take the client's close
+  lock so a lock either sees the request or refuses it; approvals lock the row (`FOR UPDATE`) so a double click or an approve racing a
+  reject decides once.
 
 ## Verification
 

@@ -6,6 +6,9 @@ import { postJournal } from "@/lib/ledger/post";
 import { CLOSE_SIGNOFFS, CloseError, lockPeriod, runControls, unlockPeriod } from "@/lib/controls";
 import { deleteClient } from "@/lib/clients/delete";
 import { dateOnly } from "@/lib/format";
+import { saveApprovals } from "@/lib/settings/approvals";
+import { approveJournal, rejectJournal, submitAdjustment, withdrawJournal } from "@/lib/approvals/journals";
+import { closeHistoryMonth, historyPreview } from "@/lib/controls/history";
 
 const auth = vi.hoisted(() => ({ userId: null as string | null }));
 vi.mock("@/lib/auth", () => ({ authConfigured: () => true }));
@@ -153,6 +156,60 @@ describe("unlock: admin only, reasoned, logged", () => {
     await deleteClient(db, { firmId: g.firm.id, clientId: g.client.id, confirmName: "Grup Uji" });
     expect(await db.periodUnlockLog.count()).toBe(0);
     expect(await db.firmMember.count()).toBe(1);
+  });
+});
+
+describe("Persetujuan kedua: a month can't be locked while a journal in it waits", () => {
+  beforeEach(resetDb);
+  const accrual = (g: G, memo: string, reverseNextMonth = false) => ({
+    clientId: g.client.id, entityId: g.pt.entity.id, date: dateOnly(2026, 7, 31), memo, reverseNextMonth,
+    lines: [{ accountCode: "6190", debit: "150.000.000", credit: "" }, { accountCode: "2150", debit: "", credit: "150.000.000" }],
+  });
+  async function waiting(g: G, n: number, reverseNextMonth = false) {
+    const a = await member(g, "ADMIN", "admin-a");
+    const b = await member(g, "ADMIN", "admin-b");
+    await saveApprovals(db, { firmId: g.firm.id, settings: { manual: true, manualAbove: "100.000.000", aiDraft: false, aiDraftAbove: "", reopen: false } });
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const o = await submitAdjustment(db, { ...accrual(g, `Akrual ${i}`, reverseNextMonth), maker: { id: a.id, role: "ADMIN" } });
+      if (!o.posted) ids.push(o.approvalId);
+    }
+    return { a, b, ids };
+  }
+
+  it("refuses with the count while a journal dated in the month waits; after approval or rejection it locks", async () => {
+    const g = await makeGroup();
+    await entry(g, 7);
+    const { b, ids } = await waiting(g, 2);
+    await ready(g, 7);
+    await expect(lockPeriod(db, g.client.id, 2026, 7, "uji")).rejects.toThrow(new CloseError("Belum bisa tutup buku: 2 jurnal menunggu persetujuan kedua."));
+    expect(await status(g, 7)).toBe("OPEN");
+    await approveJournal(db, { clientId: g.client.id, approvalId: ids[0], approver: { id: b.id, role: "ADMIN" } });
+    await expect(lockPeriod(db, g.client.id, 2026, 7, "uji")).rejects.toThrow(new CloseError("Belum bisa tutup buku: 1 jurnal menunggu persetujuan kedua."));
+    await rejectJournal(db, { clientId: g.client.id, approvalId: ids[1], approver: { id: b.id, role: "ADMIN" }, note: "Sudah dicatat lewat jadwal" });
+    await ready(g, 7); // the approved accrual changed the month's controls
+    expect((await lockPeriod(db, g.client.id, 2026, 7, "uji")).status).toBe("LOCKED");
+  });
+
+  it("refuses the next month too while a Balik otomatis journal of the month before waits (its reversal lands there)", async () => {
+    const g = await makeGroup();
+    const { a, ids } = await waiting(g, 1, true);
+    await entry(g, 8);
+    await ready(g, 8);
+    await expect(lockPeriod(db, g.client.id, 2026, 8, "uji")).rejects.toThrow(new CloseError("Belum bisa tutup buku: 1 jurnal menunggu persetujuan kedua."));
+    await withdrawJournal(db, { clientId: g.client.id, approvalId: ids[0], maker: { id: a.id, role: "ADMIN" } });
+    expect((await lockPeriod(db, g.client.id, 2026, 8, "uji")).status).toBe("LOCKED");
+  });
+
+  it("Tutup bulan-bulan sebelumnya goes through the same lock, so it stops at the month with a waiting journal", async () => {
+    const g = await makeGroup();
+    await entry(g, 7);
+    await waiting(g, 1);
+    await ready(g, 7);
+    const admin = await member(g, "ADMIN", "batch");
+    const preview = await historyPreview(db, g.client.id, { year: 2026, month: 8 });
+    await expect(closeHistoryMonth(db, { clientId: g.client.id, until: { year: 2026, month: 8 }, month: { year: 2026, month: 7 }, note: "Wajar untuk uji", fingerprint: preview.months.find((x) => x.month === 7)!.fingerprint, actor: admin })).rejects.toThrow("Belum bisa tutup buku: 1 jurnal menunggu persetujuan kedua.");
+    expect(await status(g, 7)).toBe("OPEN");
   });
 });
 
