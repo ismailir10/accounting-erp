@@ -188,6 +188,9 @@ and *Kirim lewat WhatsApp*, and Buku never sends anything itself. This cycle use
     leaks to another customer's reminder).
   - Not run here (the driver runs them centrally): `next build` (Turbopack refuses this worktree's symlinked `node_modules`), Playwright,
     verify-local and the screenshots.
+- T4 (docs part): `README.md`, `.agents/skills/accounting-rules/SKILL.md` — the *Piutang & Utang* row names *Batas kredit*, *Pengingat* and
+  the statement route; rule 5c says the limit is metadata (never posted, no control, no block, audited) and that reminders and the
+  statement are derived at read time, with nothing posted, stored or sent. The full gate and flows 1–4 stay with verify-local.
 
 ## Verification
 

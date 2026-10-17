@@ -125,6 +125,11 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
       INVOICE entry dated on the original (`reversesId`, open month only); a Saldo Awal item is only marked. A voided document leaves open
       items, aging, CKPN, proofs and sales figures, and stays listed with its reason and audit event;
     - sales by channel and customer are derived (DPP of non-voided, non-opening sales invoices); the channel is free text on the contact.
+    - a customer's **credit limit** (`Contact.creditLimit`, whole Rupiah, NULL or > 0) is metadata: compared per Rupiah company with the
+      net receivable (open − advance) at the aging date, never posted, no close control, no block on invoice entry; each change is a
+      `CREDIT_LIMIT` audit event. **Payment reminders** and the **statement of account** (`lib/receivables/reminder.ts`,
+      `statement-pdf.ts`) are derived at read time on the earlier of the month end and today: overdue sales invoices (less the tax the
+      customer still withholds) and every open one; nothing is posted, stored or sent, and the statement is not a report export.
     **A client's own aging** (`lib/reconcile`, UC-A1) is evidence, never posted:
     - `SubledgerImport` + rows keep `sheet!row`;
     - its total is compared at its date with the GL balance of the chosen accounts (default: trade receivable / payable), read fresh;
