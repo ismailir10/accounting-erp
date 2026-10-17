@@ -6,6 +6,7 @@ import { ScopeBar } from "@/components/app/scope-bar";
 import { ScheduleProposals } from "@/components/app/schedule-proposals";
 import { SchedulePanel } from "@/components/app/schedule-panel";
 import { candidateViews, proposalViews, scheduleViews } from "@/lib/adjust/view";
+import { accrualProposals } from "@/lib/adjust/accruals";
 import { Money } from "@/components/app/money";
 import { NextStep, PageHeader } from "@/components/app/page-header";
 import Link from "next/link";
@@ -19,12 +20,14 @@ export const metadata = { title: "Jurnal Penyesuaian" };
 
 export default async function NewJournalPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: SearchParams }) {
   const { client, period, periodOptions, sp } = await loadClientPage(params, searchParams);
-  const [due, candidates, schedules, p, lockedPeriods] = await Promise.all([
+  const [due, candidates, schedules, p, lockedPeriods, accruals] = await Promise.all([
     proposalViews(prisma, client.id, period.year, period.month),
     candidateViews(prisma, client.id, period.year, period.month),
     scheduleViews(prisma, client.id),
     prisma.period.findUnique({ where: { clientId_year_month: { clientId: client.id, year: period.year, month: period.month } }, select: { status: true } }),
     prisma.period.findMany({ where: { clientId: client.id, status: "LOCKED" }, select: { year: true, month: true } }),
+    // Accruals are proposed per vendor in Kotak persetujuan (cycle 2026-10-18-usulan-akrual), no longer as candidates here.
+    accrualProposals(prisma, client.id, period.year, period.month),
   ]);
   const lockedMonths = lockedPeriods.map((l) => `${l.year}-${String(l.month).padStart(2, "0")}`);
   const closeHref = `/clients/${client.id}/close?period=${period.key}`;
@@ -60,6 +63,10 @@ export default async function NewJournalPage({ params, searchParams }: { params:
         <NextStep href={closeHref} cta="Buka Tutup Buku">Buku {label} sudah ditutup, jadi jurnal bertanggal di bulan ini ditolak. Pilih bulan yang masih terbuka di kanan atas, atau minta admin membuka kembali {label} (dengan alasan).</NextStep>
       ) : due.length ? (
         <NextStep>Catat {due.length} jurnal terjadwal {label} di bawah, lalu tambahkan penyesuaian lain bila perlu.</NextStep>
+      ) : accruals.length ? (
+        <NextStep href={withParams(`/clients/${client.id}/approvals`, { period: period.key, jenis: "akrual" })} cta="Buka Kotak persetujuan">
+          {accruals.length} usulan akrual dari riwayat vendor menunggu di Kotak persetujuan.
+        </NextStep>
       ) : candidates.length ? (
         <NextStep>Buat jadwal untuk kandidat di bawah bila perlu, atau catat jurnal bebas.</NextStep>
       ) : (

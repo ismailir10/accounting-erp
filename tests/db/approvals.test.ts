@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import ExcelJS from "exceljs";
 import { db, makeGroup, resetDb } from "../helpers";
-import { approvalCounts, approvalQueue, BANK_CARD_LIMIT } from "@/lib/approvals/queue";
+import { APPROVAL_KINDS, approvalCounts, approvalQueue, BANK_CARD_LIMIT } from "@/lib/approvals/queue";
+import { dismissAccrual } from "@/lib/adjust/accruals";
+import { loadFacts } from "@/lib/checklist/view";
+import { getWorkspaceOverview } from "@/lib/workspace";
+import { ANDALAS, BERSIH, NOW, qaBooks, TELKOM } from "../accrual-books";
 import { importStatement } from "@/lib/import/pipeline";
 import { reviewTransaction } from "@/lib/review";
 import { dismissProposal, saveProposal } from "@/lib/adjust/proposals";
@@ -77,19 +81,19 @@ describe("approval queue", () => {
     // No faktur were imported for the masa: the kind isn't there.
     expect(q.faktur).toEqual([]);
     expect(q.fakturAccounts).toBeNull();
-    expect(q.counts).toEqual({ bank: 4, draft: 1, scheduled: 2, faktur: 0, total: 7 });
+    expect(q.counts).toEqual({ bank: 4, draft: 1, scheduled: 2, accrual: 0, faktur: 0, total: 7 });
     expect(q.locked).toBe(false);
     expect(await approvalCounts(db, august(g))).toEqual(q.counts);
 
     // One company: the owner's line and nothing else of the owner.
     const pt = await approvalQueue(db, august(g, [g.pt.entity.id]));
-    expect(pt.counts).toEqual({ bank: 3, draft: 1, scheduled: 2, faktur: 0, total: 6 });
+    expect(pt.counts).toEqual({ bank: 3, draft: 1, scheduled: 2, accrual: 0, faktur: 0, total: 6 });
     expect(await approvalCounts(db, august(g, [g.pt.entity.id]))).toEqual(pt.counts);
     const own = await approvalQueue(db, august(g, [g.owner.entity.id]));
-    expect(own.counts).toEqual({ bank: 1, draft: 0, scheduled: 0, faktur: 0, total: 1 });
+    expect(own.counts).toEqual({ bank: 1, draft: 0, scheduled: 0, accrual: 0, faktur: 0, total: 1 });
 
     // September holds every line through its end, its own draft and instalment 3 (1 and 2 still owed).
-    expect((await approvalCounts(db, { clientId: g.client.id, year: 2026, month: 9 }))).toEqual({ bank: 5, draft: 1, scheduled: 3, faktur: 0, total: 9 });
+    expect((await approvalCounts(db, { clientId: g.client.id, year: 2026, month: 9 }))).toEqual({ bank: 5, draft: 1, scheduled: 3, accrual: 0, faktur: 0, total: 9 });
   });
 
   it("shows the faktur kind only once faktur were imported, for a Rupiah company", async () => {
@@ -109,14 +113,14 @@ describe("approval queue", () => {
     const { g, sure, ai, schedule } = await fixture();
     await importFaktur(db, { clientId: g.client.id, entityId: g.pt.entity.id, fileName: "faktur.csv", data: Buffer.from(FAKTUR) });
     const before = (await approvalQueue(db, august(g))).counts;
-    expect(before).toEqual({ bank: 4, draft: 1, scheduled: 2, faktur: 1, total: 8 });
+    expect(before).toEqual({ bank: 4, draft: 1, scheduled: 2, accrual: 0, faktur: 1, total: 8 });
 
     await reviewTransaction(db, { bankTxId: sure.id, accountCode: "4100", taxTag: "PPN_KELUARAN" });
     await dismissProposal(db, { clientId: g.client.id, proposalId: ai.id });
     await postInstallment(db, { clientId: g.client.id, scheduleId: schedule.id, k: 1 });
     const [faktur] = (await approvalQueue(db, august(g))).faktur;
     await bookFaktur(db, { clientId: g.client.id, fakturId: faktur.id, counterCode: "4100" });
-    expect((await approvalQueue(db, august(g))).counts).toEqual({ bank: 3, draft: 0, scheduled: 1, faktur: 0, total: 4 });
+    expect((await approvalQueue(db, august(g))).counts).toEqual({ bank: 3, draft: 0, scheduled: 1, accrual: 0, faktur: 0, total: 4 });
 
     expect(await postAllDue(db, { clientId: g.client.id, year: 2026, month: 8 })).toBe(1);
     expect((await approvalCounts(db, august(g))).scheduled).toBe(0);
@@ -184,5 +188,32 @@ describe("approval queue", () => {
     expect((await approvalCounts(db, january)).draft).toBe(1);
     await postSuspenseCorrection(db, { firmId: g.firm.id, clientId: g.client.id, lineId: d.id.replace(/^suspense:/, ""), accounts: d.lines.map((l) => l.accountCode) });
     expect((await approvalQueue(db, january)).drafts).toEqual([]);
+  });
+
+  it("accruals from vendor history are their own kind, after Jurnal terjadwal; the counts, the firm board and the checklist proof include them", async () => {
+    const { g } = await qaBooks();
+    expect(APPROVAL_KINDS.map((k) => k.param)).toEqual(["bank", "draf", "terjadwal", "akrual", "faktur"]);
+    const input = { ...august(g), now: NOW };
+    const q = await approvalQueue(db, input);
+    expect(q.accruals.map((a) => [a.counterparty, a.account.code, a.amount, a.credit?.code, a.date, a.reversalDate, a.source])).toEqual([
+      [TELKOM, "6130", "500000", "2150", "2026-08-31", "2026-09-01", "ACCRUAL"],
+      [ANDALAS, "6170", "7500000", "2150", "2026-08-31", "2026-09-01", "ACCRUAL"],
+      [BERSIH, "6190", "4200000", "2150", "2026-08-31", "2026-09-01", "ACCRUAL"],
+    ]);
+    expect(q.accruals[2].rationale).toContain("nilai tengah riwayat (Jul 2026)");
+    expect(q.counts).toMatchObject({ accrual: 3 });
+    expect(q.counts).toEqual(await approvalCounts(db, input));
+    expect(q.counts.total).toBe(q.counts.bank + q.counts.draft + q.counts.scheduled + 3 + q.counts.faktur);
+    // Scoped to the owner: none. The firm board and the checklist's Kotak proof call the same count (real today: August has ended).
+    expect((await approvalCounts(db, { ...input, entityIds: [g.owner.entity.id] })).accrual).toBe(0);
+    const board = (await getWorkspaceOverview(db, { firmId: g.firm.id, clientIds: "ALL" }, { period: "2026-08" })).clients[0];
+    expect(board.approvals).toBe(q.counts.total);
+    expect((await loadFacts(db, g.client.id, 2026, 8, ["approvals"])).approvals).toBe(q.counts.total);
+    // A decided card leaves the queue and every count with it.
+    await dismissAccrual(db, { firmId: g.firm.id, clientId: g.client.id, key: q.accruals[1].id, now: NOW });
+    expect((await approvalCounts(db, input)).accrual).toBe(2);
+    // A locked month shows nothing to approve.
+    await db.period.update({ where: { clientId_year_month: { clientId: g.client.id, year: 2026, month: 8 } }, data: { status: "LOCKED" } });
+    expect((await approvalQueue(db, input)).accruals).toEqual([]);
   });
 });

@@ -7,6 +7,7 @@ import { correctionViews } from "@/lib/adjust/suspense";
 import { proposalViews as scheduleViews } from "@/lib/adjust/view";
 import { packApplies } from "@/lib/tax/pack";
 import { FAKTUR_PREFERRED, fakturCounterAccounts, fakturRecon } from "@/lib/tax/faktur";
+import { accrualProposals, NO_CREDIT } from "@/lib/adjust/accruals";
 
 /**
  * Kotak persetujuan (Phase 2 item 1): every proposal of a client-month waiting for the accountant's click, in one queue. A read model,
@@ -14,16 +15,18 @@ import { FAKTUR_PREFERRED, fakturCounterAccounts, fakturRecon } from "@/lib/tax/
  * - bank lines in Review through the month end (Review's query and order), accepted by the reviewer's writer;
  * - open *Jelaskan* drafts and the month's 1999 corrections (Tutup Buku's *Usulan jurnal koreksi*), posted by the proposal writer;
  * - adjustment-schedule instalments due by the month, overdue ones included (Jurnal Penyesuaian), posted by the schedule writer;
+ * - accruals proposed from each vendor's history (`lib/adjust/accruals.ts`), posted with their reversal by the accrual writer;
  * - counted Coretax faktur of the masa that match nothing in the books (Pajak Masa), booked by the invoice writer.
  * The firm board's count is this same function (`approvalCounts`), so the board always equals the page.
  */
 
-export type ApprovalKind = "bank" | "draft" | "scheduled" | "faktur";
+export type ApprovalKind = "bank" | "draft" | "scheduled" | "accrual" | "faktur";
 /** In page order; `param` is the kind's `?jenis=` value. */
 export const APPROVAL_KINDS: { key: ApprovalKind; param: string; label: string }[] = [
   { key: "bank", param: "bank", label: "Klasifikasi bank" },
   { key: "draft", param: "draf", label: "Draf jurnal" },
   { key: "scheduled", param: "terjadwal", label: "Jurnal terjadwal" },
+  { key: "accrual", param: "akrual", label: "Usulan akrual" },
   { key: "faktur", param: "faktur", label: "Faktur Coretax" },
 ];
 /** Bank lines dominate a month; past this many the rest are counted and left to Review. */
@@ -59,6 +62,26 @@ export type BankCard = {
 };
 export type DraftCard = Awaited<ReturnType<typeof correctionViews>>[number] & { date: string };
 export type ScheduledCard = Awaited<ReturnType<typeof scheduleViews>>[number] & { overdue: boolean };
+/** An accrual proposal (plain JSON): `id` is its key; `source` marks it for *Lihat alasan* (`hasReasoning`). */
+export type AccrualCard = {
+  id: string;
+  source: "ACCRUAL";
+  entityId: string;
+  entity: string;
+  /** ISO: the month's last day, and the reversal's (the 1st of the next month). */
+  date: string;
+  reversalDate: string;
+  counterparty: string;
+  account: { code: string; name: string };
+  credit: { code: string; name: string } | null;
+  /** Without 2150 the accountant picks the liability (*Setujui* waits for it): what the card says. */
+  noCredit: string | null;
+  amount: string;
+  currency: string;
+  rationale: string;
+  warning: string | null;
+  blocked: string | null;
+};
 export type FakturCard = {
   id: string;
   direction: "KELUARAN" | "MASUKAN";
@@ -86,12 +109,13 @@ export type ApprovalQueue = {
   confident: { id: string; accountCode: string; taxTag: string | null }[];
   drafts: DraftCard[];
   scheduled: ScheduledCard[];
+  accruals: AccrualCard[];
   faktur: FakturCard[];
   /** The accounts a faktur may be booked against, per direction (only when there are faktur cards). */
   fakturAccounts: ReturnType<typeof fakturCounterAccounts> | null;
 };
 
-export type QueueInput = { clientId: string; year: number; month: number; /** Companies in scope; all of the client's when omitted. */ entityIds?: string[] };
+export type QueueInput = { clientId: string; year: number; month: number; /** Companies in scope; all of the client's when omitted. */ entityIds?: string[]; /** Today, for "the month has ended" (accruals); tests fix it. */ now?: Date };
 
 async function scopeOf(db: Db, input: QueueInput) {
   const entities = await db.entity.findMany({
@@ -118,6 +142,28 @@ async function scheduled(db: Db, input: QueueInput, ids: string[], start: Date):
   return views.map((v) => ({ ...v, overdue: v.date < first })).sort((a, b) => Number(b.overdue) - Number(a.overdue) || a.date.localeCompare(b.date));
 }
 
+async function accruals(db: Db, input: QueueInput, ids: string[]): Promise<AccrualCard[]> {
+  if (!ids.length) return [];
+  // Problems first already (blocked, then warned).
+  return (await accrualProposals(db, input.clientId, input.year, input.month, { entityIds: ids, now: input.now })).map((p) => ({
+    id: p.key,
+    source: "ACCRUAL",
+    entityId: p.entity.id,
+    entity: p.entity.shortName,
+    date: toIsoDate(p.date),
+    reversalDate: toIsoDate(p.reversalDate),
+    counterparty: p.counterparty,
+    account: { code: p.account.code, name: p.account.name },
+    credit: p.credit ? { code: p.credit.code, name: p.credit.name } : null,
+    noCredit: p.credit ? null : NO_CREDIT,
+    amount: p.amount.toString(),
+    currency: p.entity.functionalCurrency,
+    rationale: p.rationale,
+    warning: p.warning,
+    blocked: p.blocked,
+  }));
+}
+
 /** Counted faktur of the masa matching nothing in the books, for each Rupiah company that imported faktur for it. */
 async function unbookedFaktur(db: Db, input: QueueInput, entities: { id: string; shortName: string; kind: string; functionalCurrency: string }[]): Promise<FakturCard[]> {
   const companies = entities.filter(packApplies);
@@ -135,12 +181,12 @@ async function unbookedFaktur(db: Db, input: QueueInput, entities: { id: string;
   return out;
 }
 
-const countsOf = (bank: number, d: unknown[], s: unknown[], f: unknown[]): ApprovalCounts => ({ bank, draft: d.length, scheduled: s.length, faktur: f.length, total: bank + d.length + s.length + f.length });
+const countsOf = (bank: number, d: unknown[], s: unknown[], a: unknown[], f: unknown[]): ApprovalCounts => ({ bank, draft: d.length, scheduled: s.length, accrual: a.length, faktur: f.length, total: bank + d.length + s.length + a.length + f.length });
 
 /** The queue for a client-month and scope, with a card per proposal (bank lines capped) and the count per kind. */
 export async function approvalQueue(db: Db, input: QueueInput): Promise<ApprovalQueue> {
   const { entities, ids, start, end } = await scopeOf(db, input);
-  const [lines, accounts, period, draftCards, scheduledCards, fakturCards] = await Promise.all([
+  const [lines, accounts, period, draftCards, scheduledCards, accrualCards, fakturCards] = await Promise.all([
     db.bankTransaction.findMany({
       where: reviewWhere(ids, end),
       include: { bankAccount: { select: { label: true, currency: true } } },
@@ -150,6 +196,7 @@ export async function approvalQueue(db: Db, input: QueueInput): Promise<Approval
     db.period.findUnique({ where: { clientId_year_month: { clientId: input.clientId, year: input.year, month: input.month } }, select: { status: true } }),
     drafts(db, input, ids, end),
     scheduled(db, input, ids, start),
+    accruals(db, input, ids),
     unbookedFaktur(db, input, entities),
   ]);
   // The hints read the suggested account as Review's picker lists it.
@@ -184,12 +231,13 @@ export async function approvalQueue(db: Db, input: QueueInput): Promise<Approval
   const low = (c: BankCard) => c.confidence < LOW_CONFIDENCE;
   const shown = [...cards].sort((a, b) => Number(low(b)) - Number(low(a))).slice(0, BANK_CARD_LIMIT);
   return {
-    counts: countsOf(lines.length, draftCards, scheduledCards, fakturCards),
+    counts: countsOf(lines.length, draftCards, scheduledCards, accrualCards, fakturCards),
     locked: period?.status === "LOCKED",
     bank: shown,
     confident,
     drafts: draftCards,
     scheduled: scheduledCards,
+    accruals: accrualCards,
     faktur: fakturCards,
     fakturAccounts: fakturCards.length ? fakturCounterAccounts(accounts) : null,
   };
@@ -198,11 +246,12 @@ export async function approvalQueue(db: Db, input: QueueInput): Promise<Approval
 /** The count per kind only (the firm board's *Persetujuan* cell): the same sets as `approvalQueue`, without building cards. */
 export async function approvalCounts(db: Db, input: QueueInput): Promise<ApprovalCounts> {
   const { entities, ids, start, end } = await scopeOf(db, input);
-  const [bank, draftCards, scheduledCards, fakturCards] = await Promise.all([
+  const [bank, draftCards, scheduledCards, accrualCards, fakturCards] = await Promise.all([
     db.bankTransaction.count({ where: reviewWhere(ids, end) }),
     drafts(db, input, ids, end),
     scheduled(db, input, ids, start),
+    accruals(db, input, ids),
     unbookedFaktur(db, input, entities),
   ]);
-  return countsOf(bank, draftCards, scheduledCards, fakturCards);
+  return countsOf(bank, draftCards, scheduledCards, accrualCards, fakturCards);
 }

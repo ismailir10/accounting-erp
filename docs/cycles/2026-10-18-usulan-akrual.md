@@ -293,7 +293,7 @@ migration: stop and ask.
 - [x] T2 Writer: share *Balik otomatis* between `postAdjustment` and the accrual post; `postAccrual` (recheck, post, store POSTED) and
       `dismissAccrual`; the actions; the entry origin; accounting-rules 5a and 20b. Accept: DB tests for *Setujui*, *Ubah*, *Tolak* and
       refusals; `reverse-entry` unchanged. (deps: T1)
-- [ ] T3 Kotak *Usulan akrual*: queue kind and counts, the card with *Setujui* / *Ubah* / *Tolak*, blocked and warning lines; Jurnal
+- [x] T3 Kotak *Usulan akrual*: queue kind and counts, the card with *Setujui* / *Ubah* / *Tolak*, blocked and warning lines; Jurnal
       Penyesuaian NextStep; *Lihat alasan* accrual panel + CSV. Accept: approvals and reasoning DB tests; flows 1, 2 and 5 on the dev
       server. (deps: T2; parallel with T4)
 - [ ] T4 The REVIEW control *Akrual dan pembayaran di bulan yang sama* (if question 3 is accepted). Accept: DB test; flow 4. (deps: T2;
@@ -320,6 +320,17 @@ migration: stop and ask.
   accounting-rules 5a and 20b. Dedicated actions rather than an id prefix on `postProposalAction`: an accrual takes an amount and two
   accounts, a draft only account codes. Tests: `tests/db/accrual-proposals.test.ts` (*deciding*), `tests/unit/entry-origin.test.ts`;
   `reverse-entry`, `adjustment`, `entry-origin` (DB) unchanged and green.
+- T3: `lib/approvals/queue.ts` (kind `accrual`, `?jenis=akrual`, after *Jurnal terjadwal*; `AccrualCard`; counts; `now` on
+  `QueueInput` for tests), `components/app/approval-queue.tsx` (`AccrualItem`: eyebrow with *Perlu ditinjau*, counterparty and
+  account, Debit/Kredit lines, *Dibalik otomatis*, rationale with *Lihat alasan*, warning, blocked and no-2150 lines, *Ubah* with
+  amount and two selects whose refusals show under the field; toasts as specified), `app/(app)/clients/[id]/approvals/page.tsx`
+  (the accounts *Ubah* offers), `app/(app)/clients/[id]/journals/new/page.tsx` (NextStep "<N> usulan akrual dari riwayat vendor
+  menunggu di Kotak persetujuan." → *Buka Kotak persetujuan*, after due instalments, which this page posts itself),
+  `lib/approvals/has-reasoning.ts`, `lib/approvals/reasoning.ts` (`accrualReasoning`, five steps, "Tanpa AI", CSV rows with every
+  history row as text and minor units), the CSV route's file name, README. *Setujui* on an accrual card is an outline button like
+  every other Kotak card (ui-rules 2: one primary per view), not the primary the UX note named. Tests: `tests/db/approvals.test.ts`
+  (the kind, counts = queue, the firm board and the checklist's Kotak proof), `tests/db/reasoning-accrual.test.ts`; the fixture is
+  shared in `tests/accrual-books.ts`.
 
 ## Verification
 

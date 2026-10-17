@@ -13,7 +13,7 @@ export const metadata = { title: "Kotak persetujuan" };
 
 /**
  * Kotak persetujuan (Phase 2 item 1): every proposal of the month waiting for a click — bank classifications, journal drafts, scheduled
- * journals and Coretax faktur not in the books — in one queue for the scope. Read from the owning pages' own data; every button is
+ * journals, accruals proposed from vendor history and Coretax faktur not in the books — in one queue for the scope. Read from the owning pages' own data; every button is
  * that page's own action.
  */
 export default async function ApprovalsPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: SearchParams }) {
@@ -30,6 +30,13 @@ export default async function ApprovalsPage({ params, searchParams }: { params: 
   const chosen = present.find((k) => k.param === sp.jenis);
   const kinds: ApprovalKind[] = chosen ? [chosen.key] : present.map((k) => k.key);
   const draftAccounts = q.drafts.length ? await prisma.account.findMany({ where: { clientId: client.id, isBank: false }, select: { code: true, name: true }, orderBy: { code: "asc" } }) : [];
+  // An accrual's *Ubah*: never a bank, clearing (1190/1199) or 1999 account; the credit a liability (the writer checks again).
+  const accrualChart = q.accruals.length
+    ? await prisma.account.findMany({ where: { clientId: client.id, isBank: false, isClearing: false, isIntercompany: false, isSuspense: false }, select: { code: true, name: true, type: true }, orderBy: { code: "asc" } })
+    : [];
+  const accrualAccounts = q.accruals.length
+    ? { debit: accrualChart.map(({ code, name }) => ({ code, name })), credit: accrualChart.filter((a) => a.type === "LIABILITAS").map(({ code, name }) => ({ code, name })) }
+    : null;
   const closeHref = withParams(`${base}/close`, { period: period.key });
   const n = q.counts.total;
 
@@ -69,6 +76,8 @@ export default async function ApprovalsPage({ params, searchParams }: { params: 
           confident={q.confident}
           drafts={q.drafts}
           scheduled={q.scheduled}
+          accruals={q.accruals}
+          accrualAccounts={accrualAccounts}
           faktur={q.faktur}
           fakturAccounts={q.fakturAccounts}
           draftAccounts={draftAccounts}
