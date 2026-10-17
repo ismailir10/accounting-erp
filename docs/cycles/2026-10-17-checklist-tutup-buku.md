@@ -290,22 +290,128 @@ Facts the design relies on:
 If the warning must become a block, or the reviewer must become a second approver of the lock, that changes rule 23: stop and ask.
 
 ## Tasks
-- [ ] T1 Schema, migration and the `lib/checklist` domain: template, month view, default proposal, Otomatis proofs, statuses, due /
+- [x] T1 Schema, migration and the `lib/checklist` domain: template, month view, default proposal, Otomatis proofs, statuses, due /
       overdue, permission rules, `CHECKLIST` change-log kind, `deleteClient`, `checklist.manage`. Accept: the DB and unit seams above.
       Reuse: `completenessMatrix`, `approvalCounts`, `runControls` / `closeReadiness`, `setupProgress`, `clientModules`, the board's
       *Terkirim* read, `recordEvent`, `can` / `isAdminRole`, `ROLE_LABEL`.
-- [ ] T2 Server actions and the *Checklist tutup buku* page: accept default, add / edit / remove a task, tick, review, undo; the nav
+- [x] T2 Server actions and the *Checklist tutup buku* page: accept default, add / edit / remove a task, tick, review, undo; the nav
       entry. Accept: flows 1, 2 and 5 on the dev server. Reuse: `loadClientPage`, `ScopeBar`, `NextStep`, `StatusPill`, `ProgressFill`,
       `Checkbox`, the access context for viewers. (deps: T1)
-- [ ] T3 Tutup Buku: `signoffAction` through the checklist writer (rules + `CHECKLIST` event); the *Daftar periksa* card names the
+- [x] T3 Tutup Buku: `signoffAction` through the checklist writer (rules + `CHECKLIST` event); the *Daftar periksa* card names the
       Pelaksana and links to the checklist; the unfinished-tasks line and the lock dialog. Accept: flow 4. (deps: T1; parallel with T2)
-- [ ] T4 Firm board *Checklist* column and the Beranda overdue task from the same read model; `docs/demo/investor-demo.md` and README
+- [x] T4 Firm board *Checklist* column and the Beranda overdue task from the same read model; `docs/demo/investor-demo.md` and README
       routes. Accept: flow 3; board = page (DB test). (deps: T1; parallel with T2/T3)
 - [ ] T5 verify-local: walk flows 1–5 with screenshots at 1440 and 390 px; `e2e/checklist.spec.ts`; the full gate (`verify:books` ALL
       PASS). (deps: T2–T4)
 
 ## Implementation
+- Plan: T1 → T2 → T3 → T4 sequential, inline in one worker (they share the `lib/checklist` read model, `app/actions.ts` and the close
+  page; a fan-out would cost more than it saves). T5: the e2e spec and docs here; verify-local runs centrally.
+- T1: `prisma/schema.prisma`, `prisma/migrations/20261018120000_close_checklist/migration.sql`, `lib/checklist/{rules,proofs,view,write}.ts`,
+  `lib/auth/permissions.ts`, `lib/audit.ts`, `lib/clients/delete.ts`, `.agents/skills/accounting-rules/SKILL.md` (rule 25 names the
+  checklist), `tests/unit/checklist-rules.test.ts`, `tests/unit/permissions.test.ts`, `tests/db/checklist.test.ts` — enum `ChecklistKind`
+  (AUTO · SIGNOFF · MANUAL) and two tables: `ChecklistTask` (the template: title, Pelaksana, optional Pereviu, due day, `startPeriod` /
+  `endPeriod` as YYYYMM) and `ChecklistMark` (sparse per-month Selesai / Direviu of a human task). The mark carries the task's kind
+  through a composite FK `(taskId, kind)`, so the CHECKs can say "a Manual review only with a tick" and "a Pemeriksaan akhir mark holds
+  only the review" (its Selesai stays the `CloseSignoff` row). Other CHECKs: due day 1–28, valid months with end ≥ start, key iff not
+  Manual, no Pereviu on Otomatis, Pereviu ≠ Pelaksana, who/when paired, no empty mark. `rules.ts` (pure): due date in the month after
+  the period, today in WIB, the holder / pair / tick / review rules and the review-after-tick status. `proofs.ts` (pure): the eight
+  Otomatis kinds and their proof lines. `view.ts`: month view (`checklistMonth`), default proposal (`defaultLines` /
+  `proposeChecklist`), and the board roll-up (`checklistRollup`), all from one `buildRows`. `write.ts`: accept, add, edit, remove,
+  tick / review (`markTask`) and the one `CloseSignoff` writer (`setSignoff`), each with one `CHECKLIST` event. Capability
+  `checklist.manage` (OWNER, ADMIN): "Hanya admin kantor yang dapat mengatur checklist."
+- T2: `app/actions.ts`, `app/(app)/clients/[id]/checklist/page.tsx`, `components/app/checklist-panel.tsx`, `lib/nav.ts`,
+  `components/app/app-sidebar.tsx`, `README.md`, `AGENTS.md`, `tests/db/checklist-actions.test.ts`, `tests/unit/action-guards.test.ts`,
+  `tests/unit/nav.test.ts` — five actions (`acceptChecklistAction`, `addChecklistTaskAction`, `updateChecklistTaskAction`,
+  `removeChecklistTaskAction`, `markChecklistAction`), each through `requireCapability` (`checklist.manage` for the template and an
+  Otomatis task, `books.write` for a Manual task and every tick / review). The page: ScopeBar (month only), the viewer's NextStep
+  (no template · before the first month · locked · "Kerjakan N tugas Anda" · "Reviu N tugas" · waiting on others · done), the proposal
+  card with *Pakai daftar ini* (the one primary button, admins) and its Pelaksana / Pereviu dialog, the summary line with
+  `ProgressFill`, one card with divided rows grouped Lewat tenggat → Belum → Menunggu reviu and the finished ones folded. Checkboxes
+  (`id` + `htmlFor`) for Manual and Pemeriksaan akhir, check / empty icons for Otomatis and for viewers (no buttons at all);
+  *Tandai direviu* (outline) and *Batalkan reviu* (ghost) only when the viewer may review; *Tambah tugas* for writers; *Atur checklist*
+  (admins) adds *Ubah* per row and *Tambah tugas otomatis*. Pereviu choices list only eligible members ranked ≥ the Pelaksana. The menu
+  lists *Checklist tutup buku* directly before *Tutup Buku*.
+- T3: `app/(app)/clients/[id]/close/page.tsx`, `components/app/close-panel.tsx`, `lib/checklist/view.ts`, `README.md`,
+  `tests/db/checklist.test.ts` — `signoffAction` (changed with the T2 actions) writes through `setSignoff`, the one `CloseSignoff`
+  writer: with the sign-off's task in the month's checklist the task's rules apply and a `CHECKLIST` event is written; without one any
+  writer ticks as before, now with a trace too. *Daftar periksa* names the Pelaksana, links *Buka checklist*, and disables a checkbox
+  this member may not tick with the reason (not the Pelaksana, already Direviu, the Pelaksana gone, a viewer). Under the blockers a
+  muted line "Checklist: N tugas belum selesai" (`unfinishedBeforeLock`: *Tutup buku* and *Laporan dikirim* left out) links to the
+  checklist, and the lock dialog repeats it ("…; buku tetap bisa ditutup"). The lock button's rule and `lockPeriod` are untouched.
+- T4: `lib/workspace/index.ts`, `components/app/workspace-overview.tsx`, `docs/demo/investor-demo.md`, `README.md`,
+  `tests/db/workspace.test.ts` — each board client carries `checklist` from `checklistRollup`, fed with the controls, completeness,
+  Kotak count, Saldo Awal progress, lock and *Terkirim* the board already read (so the board month costs the template and marks
+  queries only). The *Checklist* column sits between *Persetujuan* and *Tutup buku*: "N lewat tenggat" (REVIEW) when the month or an
+  earlier month since the template began has a late task, else "7 / 10 selesai" (REVIEW) or "Lengkap" (PASS), "Belum diatur" (muted)
+  without a template, "–" before its first month; it links to the checklist on the earliest late month. Beranda gets one high-priority
+  task per client, "Selesaikan N tugas checklist lewat tenggat" with the month and who it waits on, ranked with missing statements and
+  late taxes, and pushed before locked clients are skipped (late tasks outlive the lock). `WorkspaceInput.now` lets tests fix "today".
+- T5 (worker part): `e2e/checklist.spec.ts` — one walk on a QA client of its own (no bank account, one August accrual), so the demo
+  stays as it is: flow 1 (Buku's list with kinds, reasons and due days; no Piutang & Utang or Pajak Masa line without the module or a
+  `masa:` control; a Peninjau via `asPeninjau` and the e2e AKUNTAN see it without *Pakai daftar ini*; the admin accepts with the
+  AKUNTAN as Pelaksana and the admin as Pereviu; July shows no checklist, September the same tasks fresh), flow 2 (the AKUNTAN adds
+  and ticks a Manual task and *Bukti pendukung*, is not offered the review and no *Atur checklist*; Tutup Buku's checkbox is ticked
+  and names the Pelaksana; the admin reviews both; Riwayat under *Checklist tutup buku* lists the ticks and the review), flow 3 (the
+  board's *Checklist* cell "N lewat tenggat" links to August's checklist, Beranda lists the task), flow 4 (the warning line and the
+  lock dialog, the lock goes through; after it a Manual task ticks, a sign-off checkbox is disabled, no template buttons; reopening
+  returns the sign-offs to *Belum*). 390 px without sideways scroll on the proposal, the AKUNTAN's list and the locked month. The
+  AKUNTAN is assigned to the QA client for the walk and unassigned in `finally`. Not run here: Playwright and verify-local (central).
+  `npm run build` passes (`ƒ /clients/[id]/checklist`).
+- Acceptance criteria → tests:
+  - Default list (module / `masa:` / Saldo Awal; admin creates; AKUNTAN and viewer no button): `tests/unit/checklist-rules` "the
+    default list"; `tests/db/checklist` "proposes from what the client uses", "an admin accepts it…"; `tests/db/checklist-actions`
+    "setting up is admin work"; e2e flow 1.
+  - Next month fresh, a month before none: `tests/db/checklist` "an admin accepts it… next month… a month before"; e2e (July, September).
+  - Otomatis tick / untick and proof lines, *Laporan dikirim* wording: `tests/unit/checklist-rules` "Otomatis proofs, each true and
+    false"; `tests/db/checklist` "Otomatis tasks" (Kotak fills and empties, lock and unlock, export after the lock, no write); e2e proof
+    lines.
+  - Pemeriksaan akhir on both pages; reopening → *Belum*, old review void: `tests/db/checklist` "Pemeriksaan akhir = CloseSignoff";
+    `tests/db/checklist-actions` "ticks and reviews follow the task's rules, from the checklist and from Tutup Buku alike"; e2e flows 2, 4.
+  - Manual flow, who and when, the three refusals verbatim: `tests/unit/checklist-rules` "who may tick and review"; `tests/db/checklist`
+    "a Manual task…" (3 tests: allowed and refused, rank, re-check on every tick); `tests/db/checklist-actions` (verbatim through the
+    actions); e2e flow 2.
+  - Assignment refusals (VIEWER, unassigned AKUNTAN, disabled, lower rank, same person): `tests/unit/checklist-rules` "who may hold a
+    task"; `tests/db/checklist` "assigning: who may hold a task"; `tests/db/checklist-actions` (a viewer as Pereviu, verbatim).
+  - *Lewat tenggat* with who it waits on; board cell and Beranda task link to it: `tests/unit/checklist-rules` "due date and overdue";
+    `tests/db/checklist` "Lewat tenggat, in WIB" (roll-up across months); `tests/db/workspace` "the board's Checklist cell and Beranda's
+    late-task count are the checklist page's own rows"; e2e flow 3.
+  - Tutup Buku line and lock dialog, the lock still succeeds: `tests/db/checklist` "the lock warns, it does not block"; e2e flow 4.
+  - Riwayat for every human tick, untick, review, undo and template change; Otomatis write nothing: `tests/db/checklist` "Riwayat
+    perubahan…", "without a checklist any writer ticks… gains a trace", "Otomatis tasks… write nothing"; e2e flow 2.
+  - Locked month (Manual ticks and reviews work, sign-offs frozen, template refused): `tests/db/checklist` "locked months"; e2e flow 4.
+  - No number moves: `tests/db/checklist` (no journal written by any checklist write); `verify:books` in the central full gate.
+  - 390 px: e2e `noSideScroll` (unconditional).
+  - Permissions also: `tests/unit/permissions` (`checklist.manage`), `tests/unit/action-guards` (the five actions and `signoffAction`),
+    cross-tenant in `tests/db/checklist` and `tests/db/checklist-actions`, `deleteClient` in `tests/db/checklist`, menu order in
+    `tests/unit/nav`.
+- Decisions made while building:
+  - Months are stored as YYYYMM integers (`startPeriod` / `endPeriod`); a removed task's `endPeriod` is the month before the one on
+    screen, and its marks from that month on are deleted with it.
+  - The mark carries the task's kind through a composite FK, which is what lets a CHECK tell a Manual mark from a Pemeriksaan akhir mark.
+    A review is written as an update or a create, never an upsert (Postgres checks an upsert's insert row against the CHECKs first).
+  - A review counts only when later than the tick; the writer stamps it at least 1 ms after the tick so a fast tick + review always
+    counts. Unticking clears a stale review so the row reads as waiting.
+  - "Has a checklist" for a sign-off means its SIGNOFF task is active in that month (a removed *direview partner* task returns that
+    sign-off to today's behaviour). Every sign-off tick now writes a `CHECKLIST` event, with or without a checklist.
+  - A Manual task can be added only once the client has a template (an AKUNTAN can't start a checklist by adding a task).
+  - A disabled or unassigned Pelaksana blocks the tick for everyone, admins included, until an admin reassigns ("waits for an admin to
+    reassign it"); a gone Pereviu blocks only the review.
+  - Pelaksana and Pereviu choices list "Name · Role" (the e2e admin and AKUNTAN share a display name); the Pereviu list already applies
+    the rank rule, and the server checks it again.
+  - Board roll-up of earlier months: the board month and any earlier month still open read every proof; an earlier closed month reads
+    its human tasks and the *Tutup buku* / *Laporan dikirim* proofs only (its other proofs would need that month's controls, which its
+    own page reads). Beranda's late task is pushed for locked clients too.
+  - `signoffAction` changed in the T2 commit (it shares the actions file); T3 holds the Tutup Buku UI.
+  - A month before the template's first month shows only the NextStep ("Checklist klien ini dimulai …" with a link to it): no card and
+    no *Tambah tugas*, so the template is never extended backwards from there.
+  - The write side refuses what a browser could send outside the UI (an unknown task kind, an invalid month) in Bahasa, before the CHECKs.
 
 ## Verification
 
 ## Ship Notes
+- Migration `20261018120000_close_checklist`: additive (enum `ChecklistKind`, tables `ChecklistTask` and `ChecklistMark` with CHECKs and
+  FKs to `Client` and `FirmMember`); no existing column changes, no backfill. Protected tables untouched.
+- No env vars, no dependency, no AI call. The demo seed creates no checklist (the board shows "Belum diatur").
+- Post-merge: open a client's *Checklist tutup buku*; the board's *Checklist* column renders.
+- Rollback: revert the commits; the two tables are unused without the code (drop them in a follow-up migration if needed).

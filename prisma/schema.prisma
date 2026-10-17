@@ -406,6 +406,7 @@ model Client {
   aiRuns             AiRun[]
   uploadItems        UploadItem[]
   pdfPasswords       ClientPdfPassword[]
+  checklistTasks     ChecklistTask[]
   coaVersion         Int                  @default(1)
   /// Modules turned on in the client menu (lib/clients/modules.ts): receivables · inventory · assets · leases · benefits. Presentation only.
   modules            String[]             @default([])
@@ -605,7 +606,7 @@ model AuditEvent {
   clientId  String
   client    Client      @relation(fields: [clientId], references: [id])
   entityId  String?
-  /// CLASSIFY · UNPAIR · IMPORT_REMOVED · CONTROL_NOTE · MAPPING · FINDING_RESOLVED · REPORT_FORMAT · FISCAL_YEAR · SUBLEDGER · DOCUMENT_VOID · ADVANCE · REPORT_EXPORT · MODULES · CREDIT_LIMIT · AUTOMATION …
+  /// CLASSIFY · UNPAIR · IMPORT_REMOVED · CONTROL_NOTE · MAPPING · FINDING_RESOLVED · REPORT_FORMAT · FISCAL_YEAR · SUBLEDGER · DOCUMENT_VOID · ADVANCE · REPORT_EXPORT · MODULES · CREDIT_LIMIT · AUTOMATION · CHECKLIST …
   kind      String
   subject   String
   summary   String
@@ -940,6 +941,67 @@ model CloseSignoff {
   doneBy   FirmMember? @relation("SignoffDoneBy", fields: [doneById], references: [id])
 
   @@unique([periodId, key])
+}
+
+/// Checklist tutup buku (lib/checklist): what a task of a client's template is.
+enum ChecklistKind {
+  /// Otomatis: Buku ticks it from the books at read time. Never stored per month, never reviewed (the proof is the review).
+  AUTO
+  /// Pemeriksaan akhir: one of the three close sign-offs. Its Selesai is the month's CloseSignoff row (the lock rule reads that).
+  SIGNOFF
+  /// The firm's own task with a free title, ticked by its Pelaksana.
+  MANUAL
+}
+
+/// A client's close-checklist template, one row per task, active from `startPeriod` through `endPeriod` (YYYYMM, inclusive; null = still
+/// active). A month's checklist is the tasks active in it joined with that month's marks: nothing is copied per month. Removing a task ends
+/// it before the month on screen; earlier months keep it with their marks.
+model ChecklistTask {
+  id          String          @id @default(cuid())
+  firmId      String
+  clientId    String
+  client      Client          @relation(fields: [clientId], references: [id])
+  kind        ChecklistKind
+  /// AUTO: the proof it reads (lib/checklist/proofs.ts); SIGNOFF: the CloseSignoff key; null for MANUAL.
+  key         String?
+  title       String
+  position    Int
+  /// Pelaksana: an active member who can open the client and write its books.
+  assigneeId  String
+  assignee    FirmMember      @relation("ChecklistAssignee", fields: [assigneeId], references: [id])
+  /// Pereviu (optional, never on AUTO): another such member whose role ranks at least the Pelaksana's.
+  reviewerId  String?
+  reviewer    FirmMember?     @relation("ChecklistReviewer", fields: [reviewerId], references: [id])
+  /// The day of the month after the period on which the task is due, 1–28.
+  dueDay      Int
+  startPeriod Int
+  endPeriod   Int?
+  createdAt   DateTime        @default(now())
+  marks       ChecklistMark[]
+
+  @@unique([id, kind])
+  @@index([clientId])
+}
+
+/// One month's Selesai and Direviu of a human task, sparse (a row exists only once someone ticks or reviews). `kind` is the task's (the
+/// composite key keeps them equal) so the CHECKs can tell a SIGNOFF mark, which holds only the review: its Selesai is the CloseSignoff row.
+/// A review counts only while the task is Selesai and the review is later than the tick.
+model ChecklistMark {
+  id           String        @id @default(cuid())
+  firmId       String
+  taskId       String
+  kind         ChecklistKind
+  task         ChecklistTask @relation(fields: [taskId, kind], references: [id, kind], onDelete: Cascade)
+  year         Int
+  month        Int
+  doneAt       DateTime?
+  doneById     String?
+  doneBy       FirmMember?   @relation("ChecklistDoneBy", fields: [doneById], references: [id])
+  reviewedAt   DateTime?
+  reviewedById String?
+  reviewedBy   FirmMember?   @relation("ChecklistReviewedBy", fields: [reviewedById], references: [id])
+
+  @@unique([taskId, year, month])
 }
 
 /// Deployment-wide settings edited in Pengaturan (e.g. AI key + model). Not firm data: survives demo reset.
@@ -1384,6 +1446,10 @@ model FirmMember {
   proposalsDecided ProposedEntry[]       @relation("ProposalDecidedBy")
   clientAccess     ClientAccess[]
   supportViewedAs  SupportSession[]      @relation("SupportViewedAs")
+  checklistTasks   ChecklistTask[]       @relation("ChecklistAssignee")
+  checklistReviews ChecklistTask[]       @relation("ChecklistReviewer")
+  checklistDone    ChecklistMark[]       @relation("ChecklistDoneBy")
+  checklistChecked ChecklistMark[]       @relation("ChecklistReviewedBy")
 
   @@index([firmId])
 }

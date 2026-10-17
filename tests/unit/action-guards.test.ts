@@ -77,6 +77,13 @@ describe("every server action reaches requireCapability", () => {
   }
 });
 
+describe("the checklist actions (cycle 2026-10-17-checklist-tutup-buku)", () => {
+  it("exist in app/actions.ts and each reaches requireCapability", () => {
+    const ok = guarded(readFileSync(join(ROOT, "actions.ts"), "utf8"));
+    for (const name of ["acceptChecklistAction", "addChecklistTaskAction", "updateChecklistTaskAction", "removeChecklistTaskAction", "markChecklistAction", "signoffAction"]) expect(ok.has(name), name).toBe(true);
+  });
+});
+
 describe("every mutating route handler reaches requireCapability", () => {
   const routes = files.filter((p) => /\/route\.ts$/.test(p));
   for (const path of routes) {

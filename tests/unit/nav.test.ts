@@ -95,6 +95,12 @@ describe("clientSections", () => {
     expect(sectionOf("/approvals")).toMatchObject({ section: { label: "Kotak persetujuan" }, deeper: false });
     expect(url(switchTarget("/clients/a1/approvals", B).href).pathname).toBe("/clients/b1/approvals");
   });
+  it("lists Checklist tutup buku directly before Tutup Buku, after the modules the client shows", () => {
+    const labels = clientSections(["receivables"]).map((s) => s.label);
+    expect(labels.slice(labels.indexOf("Piutang & Utang") + 1, labels.indexOf("Piutang & Utang") + 3)).toEqual(["Checklist tutup buku", "Tutup Buku"]);
+    expect(sectionOf("/checklist")).toMatchObject({ section: { label: "Checklist tutup buku" }, deeper: false });
+    expect(url(switchTarget("/clients/a1/checklist", B, { period: "2026-08" }).href).pathname).toBe("/clients/b1/checklist");
+  });
 });
 
 describe("search", () => {

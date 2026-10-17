@@ -81,6 +81,8 @@ import { AccessError, requireCapability } from "@/lib/auth/session";
 import { AccountEditError, createAccount, removeAccount, updateAccount } from "@/lib/coa/manage";
 import type { Capability } from "@/lib/auth/permissions";
 import { OrgError } from "@/lib/org";
+import { acceptDefault, addTask, markTask, removeTask, setSignoff, updateTask, type MarkStep, type NewTask, type TaskEdit } from "@/lib/checklist/write";
+import { ChecklistError } from "@/lib/checklist/rules";
 import type { FsLine } from "@/lib/coa/template";
 import type { MapMethod } from "@/lib/generated/prisma/enums";
 
@@ -94,7 +96,7 @@ function fail(e: unknown): { ok: false; error: string; needsPassword?: boolean; 
   if (e instanceof PdfPasswordError) return { ok: false, error: e.message, needsPassword: true };
   if (e instanceof YearNeededError) return { ok: false, error: e.message, needsYear: true, yearGuess: e.guess };
   if (e instanceof DeleteClientError || e instanceof EntityEditError || e instanceof AccountEditError || e instanceof AccessError || e instanceof OrgError) return { ok: false, error: e.message };
-  if (e instanceof ParseError || e instanceof LedgerError || e instanceof CloseError || e instanceof OpeningError || e instanceof FindingError || e instanceof RemoveImportError || e instanceof MoneyError || e instanceof RateError || e instanceof RevaluationError || e instanceof LedgerImportError || e instanceof MappingError || e instanceof EntitySettingsError || e instanceof FormatError || e instanceof SubledgerError || e instanceof FakturError || e instanceof BupotError) return { ok: false, error: e.message };
+  if (e instanceof ParseError || e instanceof LedgerError || e instanceof CloseError || e instanceof OpeningError || e instanceof FindingError || e instanceof RemoveImportError || e instanceof MoneyError || e instanceof RateError || e instanceof RevaluationError || e instanceof LedgerImportError || e instanceof MappingError || e instanceof EntitySettingsError || e instanceof FormatError || e instanceof SubledgerError || e instanceof FakturError || e instanceof BupotError || e instanceof ChecklistError) return { ok: false, error: e.message };
   const infra = infraErrorMessage(e);
   console.error(e);
   return { ok: false, error: infra ?? "Terjadi kesalahan tak terduga. Coba lagi." };
@@ -450,13 +452,16 @@ export async function ackControlAction(clientId: string, year: number, month: nu
   }
 }
 
+/**
+ * A Pemeriksaan akhir from Tutup Buku's *Daftar periksa*: the same writer as the checklist (lib/checklist/write setSignoff), so with the
+ * sign-off's task in the month's checklist only its Pelaksana or an admin ticks it; without one any writer does, as before. Logged in
+ * Riwayat either way.
+ */
 export async function signoffAction(clientId: string, year: number, month: number, key: string, done: boolean): Promise<Result> {
   try {
-    const period = await periodFor(clientId, year, month, { mustBeOpen: true });
-    const doneById = (await getCurrentMember()).id;
-    if (done) await prisma.closeSignoff.upsert({ where: { periodId_key: { periodId: period.id, key } }, create: { periodId: period.id, key, doneById }, update: { doneById, doneAt: new Date() } });
-    else await prisma.closeSignoff.deleteMany({ where: { periodId: period.id, key } });
-    revalidatePath(`/clients/${clientId}/close`);
+    const { member } = await requireCapability("books.write", { clientId });
+    await setSignoff(prisma, member, { clientId, year, month, key, done });
+    revalidatePath(`/clients/${clientId}`, "layout");
     return { ok: true };
   } catch (e) {
     return fail(e);
@@ -480,6 +485,67 @@ export async function unlockAction(clientId: string, year: number, month: number
     await clientFor("period.unlock", clientId);
     await unlockPeriod(prisma, clientId, year, month, await getCurrentMember(), reason);
     revalidatePath("/", "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Checklist tutup buku (lib/checklist): setting it up is admin work (`checklist.manage`); a Manual task of one's own and every tick and
+ * review are writes (`books.write`) under the task's own rules (Pelaksana, Pereviu, rank, no self-review). Each refusal is Bahasa, verbatim.
+ */
+export async function acceptChecklistAction(clientId: string, year: number, month: number, assigneeId: string, reviewerId: string | null): Promise<Result<{ count: number }>> {
+  try {
+    const { member } = await requireCapability("checklist.manage", { clientId });
+    const count = await acceptDefault(prisma, member, { clientId, year, month, assigneeId, reviewerId });
+    revalidatePath(`/clients/${clientId}`, "layout");
+    return { ok: true, count };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** *Tambah tugas* (a writer: Manual, themselves as Pelaksana; an admin: anyone) and *Tambah tugas otomatis* (admin only). */
+export async function addChecklistTaskAction(clientId: string, year: number, month: number, task: NewTask): Promise<Result> {
+  try {
+    const { member } = await requireCapability(task.kind === "AUTO" ? "checklist.manage" : "books.write", { clientId });
+    await addTask(prisma, member, { clientId, year, month, ...task });
+    revalidatePath(`/clients/${clientId}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function updateChecklistTaskAction(clientId: string, year: number, month: number, taskId: string, edit: TaskEdit): Promise<Result> {
+  try {
+    const { member } = await requireCapability("checklist.manage", { clientId });
+    await updateTask(prisma, member, { clientId, year, month, taskId, ...edit });
+    revalidatePath(`/clients/${clientId}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function removeChecklistTaskAction(clientId: string, year: number, month: number, taskId: string): Promise<Result> {
+  try {
+    const { member } = await requireCapability("checklist.manage", { clientId });
+    await removeTask(prisma, member, { clientId, year, month, taskId });
+    revalidatePath(`/clients/${clientId}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Selesai or Direviu on or off for one task in one month (a Pemeriksaan akhir's Selesai is its CloseSignoff, as on Tutup Buku). */
+export async function markChecklistAction(clientId: string, year: number, month: number, taskId: string, step: MarkStep, value: boolean): Promise<Result> {
+  try {
+    const { member } = await requireCapability("books.write", { clientId });
+    await markTask(prisma, member, { clientId, year, month, taskId, step, value });
+    revalidatePath(`/clients/${clientId}`, "layout");
     return { ok: true };
   } catch (e) {
     return fail(e);
