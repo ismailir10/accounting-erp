@@ -377,7 +377,7 @@ If the hold needs to be stored on the bank line (a new column) rather than in it
       "instruksi kantor"); *Tandai* controls in `runControls` (open months, notes) and their rows in the AI close review; accounting-rules
       13, 14, 22c. Accept: `dial.test`, `instructions-import.test.ts`, `instruction-controls.test.ts`; existing pipeline and control
       tests unchanged. (deps: T1, T2; parallel with T4)
-- [ ] T4 *Susun dengan AI*: provider method + prompt + parse (closed schema, grounding), `MockProvider.compileInstruction`, budget +
+- [x] T4 *Susun dengan AI*: provider method + prompt + parse (closed schema, grounding), `MockProvider.compileInstruction`, budget +
       cache; accounting-rules 20e; note on ADR 0003. Accept: `instruction-ai.test.ts`. (deps: T2; parallel with T3; reuse:
       `runBudgetedAi`, `EvidenceAiCache`, `resolveProvider`)
 - [ ] T5 UI + actions: the *Instruksi* tab (editor, preview, list, read-only), `app/instruction-actions.ts`, and the origin mark on
@@ -423,6 +423,14 @@ If the hold needs to be stored on the bank line (a new column) rather than in it
     control key in Buku is `kind:<entityId>…`, and the close review, *Jelaskan* (draft only for an entity's control) and *Lihat alasan*
     find the entity from the second segment. Nothing else reads the order.
   - Decision: the new close rule is numbered 22d: 22c already exists (source validation).
+- T4: `lib/instructions/ai-prompt.ts`, `lib/instructions/ai.ts`, `lib/ai/provider.ts`, `.agents/skills/accounting-rules/SKILL.md`
+  (20e), `docs/adrs/0003-hybrid-ai.md` (note), `tests/db/instruction-ai.test.ts` — `compileInstruction` on the provider port (the
+  OpenAI-compatible provider returns the model's text; `MockProvider.instructionAnswer` records one for tests, else NONE). `compileWithAi`
+  asks only for a sentence the reader did not understand, sends the sentence and the targetable accounts (code and name, 1190/1199 out),
+  and reads the answer with `readInstructionAnswer`: one object with exactly the draft's keys (else, or NONE: "AI juga tidak dapat …"),
+  the keyword in the sentence (case and spaces ignored), the amount among `amountsIn(sentence)`, the account in the list, then
+  `validateDraft`. One `runBudgetedAi` call (scope `instruksi:<firm>`, note "Instruksi kantor"), no retry; the answer, kept or refused,
+  is cached by sentence, accounts, model and prompt version (the cache row also holds the sentence, which the origin check reads).
 
 ## Verification
 

@@ -457,6 +457,17 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     against: when the books move that series it is stale and the management pack's *Perubahan Akun* leaves it out, saying so. Last
     month's text is only offered (*Pakai lagi*), never approved for the accountant. One budgeted, cached call (scope `flux:<client>:<month>`,
     its own per-month limit); explanations are commentary, so a closed month still takes one.
+20e. **Instruksi kantor — *Susun dengan AI*** (`lib/instructions/ai.ts`, `ai-prompt.ts`, cycle 2026-10-18-instruksi-kantor): offered only
+    for a sentence Buku's own reader did not understand (an explicit refusal stays a refusal) and only on the click of a member who may
+    approve it. The payload is the sentence (≤ 300 characters) and the account list a rule may target, by code and name (no bank, 1999,
+    3200, 3290; never 1190/1199, as `aiAccounts`) — no bank line, no amount from the books, no client name. The answer is one closed JSON
+    object `{kind: ACCOUNT|FLAG|HOLD|NONE, pattern, direction, accountCode, taxTag, minAmount, inclusive}`; any other key, a second object
+    or NONE ends it. It is kept only when grounded — the keyword is in the sentence (case and spaces ignored), the amount is one Buku's own
+    reader finds in the sentence, the account is in the list — and then passes the same `validateDraft` as the reader's output. One
+    budgeted call (`runBudgetedAi`, scope `instruksi:<firm>`), cached in `EvidenceAiCache` by sentence, account list, model and prompt
+    version, never retried; tests use `MockProvider`. The result is a draft marked *Disusun AI*; only a person's *Setujui* stores it, and
+    the server decides the origin (its reader's result, else a cached AI draft for that sentence, else *Disunting*). Never at run time:
+    imports, controls and the preview read only the approved typed fields.
 21. Provider is OpenAI-compatible `fetch` (OpenCode Zen default) behind `AiProvider`; swap by config, not code.
     Key + model: **Pengaturan (DB, encrypted) overrides env** — resolve via `resolveAiConfig()` (`lib/settings/ai.ts`).
     `AI_BASE_URL` stays **env-only** so a visitor can't redirect the stored key. *Cek koneksi* hits `GET /models` (no tokens).
