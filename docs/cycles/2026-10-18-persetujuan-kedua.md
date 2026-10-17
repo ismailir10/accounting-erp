@@ -442,6 +442,41 @@ migration: stop and ask.
   jurnal*'s notice, the drawer's approval line), `close-panel.tsx` (*Minta buka kembali*, the lock blocker linking to Kotak, *Riwayat buka
   kembali* naming requester and confirmer), the pages (settings, approvals, journals/new with *Menunggu persetujuan* first, journals,
   ledger, close), README. Eligibility shown on a row is computed on the server from the same pure rule the actions enforce.
+- T6 (worker part): `scripts/e2e-setup.ts` gives *KAP Uji Lain* a second ADMIN ("Admin kedua lain") and an AKUNTAN ("Akuntan firma
+  lain"); `e2e/persetujuan-kedua.spec.ts` walks flows 1–5 on a QA client of its own (deleted in `finally`, the card put back to all
+  off), 390 px on the card, Kotak and Tutup Buku. Its Playwright run, the walk with screenshots and the full gate (`demo:reset`,
+  `verify:books`, the investor walk) are the driver's (they need the shared `buku` DB).
+- Acceptance criteria → tests:
+  - Defaults change nothing → `tests/db/second-approval.test.ts` "defaults change nothing" (submit/reversal deep-equal the plain writers,
+    no request, no event; the action returns the entry); existing `adjustment`, `reverse-entry`, `proposals`, `close-explain`,
+    `period-lock` (incl. `unlockAction` → `{ ok: true }` exactly) green unchanged; full gate (driver).
+  - Rp 150.000.000 waits / Rp 100.000.000 posts → unit `routing` "equal posts, strictly above waits"; DB "a Rp 150.000.000 journal waits
+    with no entry and an unchanged trial balance"; e2e flow 2.
+  - Approve posts the stored lines and notes, with the reversal, `postedById` = approver, row APPROVED → DB "approval by another eligible
+    member …" (deep-equal lines, reversal date, Jurnal Umum's "Diajukan … · Disetujui …"); e2e flow 2.
+  - Self-approval (admin too), Akuntan on Admin's/Pemilik's, Admin on Pemilik's allowed, Peninjau, unassigned → unit 4 × 4 matrix; DB
+    "refusals through the actions" (each refusal's sentence, nothing written); e2e flow 4 (no buttons for the Akuntan).
+  - Tolak note ≥ 5, Tarik kembali maker only, double approve / approve vs reject once → DB "Tolak needs a note …", "a double approve, or an
+    approve racing a reject, decides once"; e2e flow 5.
+  - Refused approvals stay pending → DB "the Balik otomatis month closed meanwhile" and "a stale draft's approval is refused".
+  - Balik jurnal waits, duplicate refused (also after the card is turned off) → DB "Balik jurnal above the threshold waits …".
+  - Draf AI above Rp 50.000.000 (MockProvider) → DB "Catat jurnal waits: the draft leaves Draf jurnal …", "a rejection returns the draft
+    …", "below the threshold, or with Draf AI off …", and import removal dropping the requests.
+  - Kotak shows *Persetujuan kedua* first; board count = page; checklist proof counts journals not reopens → `tests/db/approvals.test.ts`
+    "Persetujuan kedua leads the queue …"; e2e flows 2–4.
+  - Lock refused with the count, and after approval/rejection it locks; the *Balik otomatis* month too; *Tutup bulan-bulan sebelumnya* →
+    `tests/db/period-lock.test.ts` "Persetujuan kedua: a month can't be locked …" (3 cases); e2e flow 4.
+  - Reopen with two admins (request keeps it locked, confirm opens + deletes sign-offs + logs requester/confirmer, requester can't confirm,
+    Akuntan refused, one pending per month, reject and cancel), one-admin fallback, setting off + direct unlock cancels → `period-lock`
+    "Persetujuan kedua: reopening with Buka kembali bulan on" (5 cases); e2e flow 3.
+  - Card: Pemilik/Admin save, Akuntan/Peninjau refused "Hanya admin kantor yang dapat mengubah ini.", invalid amounts → field message →
+    `tests/db/settings-actions.test.ts` (4 cases), `tests/db/firm-approvals.test.ts`; e2e flows 1 and 5.
+  - Every step one "Persetujuan kedua" event → DB events asserted in `second-approval` (diajukan, disetujui, ditolak, ditarik, fallback),
+    `period-lock` (diminta, dikonfirmasi, ditolak, dibatalkan, dibuka langsung, fallback), `firm-approvals` / `settings-actions` (card).
+  - Every new action calls `requireCapability` → `tests/unit/action-guards.test.ts` (unchanged).
+  - Deleting a client removes its rows → `tests/db/delete-client.test.ts` "deletes its Persetujuan kedua rows".
+  - 390 px → e2e (card, Kotak, Tutup Buku).
+  - The forms' line and button → unit "the forms' notice"; e2e flow 2.
 
 ## Verification
 
