@@ -119,29 +119,29 @@ What is stored today, read from the code:
   call, no budget.
 
 ## Acceptance criteria
-- [ ] Every AI bank line on Review and Kotak, and every AI draft on Kotak, has *Lihat alasan*; no other card has it.
-- [ ] Bank line, the panel shows:
-      - [ ] that transfer, rules, memory and financing/tax text found nothing at import;
-      - [ ] exactly the fields sent: client context, direction, counterparty, description ≤ 80 characters, and the number of accounts
+- [x] Every AI bank line on Review and Kotak, and every AI draft on Kotak, has *Lihat alasan*; no other card has it.
+- [x] Bank line, the panel shows:
+      - [x] that transfer, rules, memory and financing/tax text found nothing at import;
+      - [x] exactly the fields sent: client context, direction, counterparty, description ≤ 80 characters, and the number of accounts
             offered;
-      - [ ] a sentence that amount, date, balance and account number were not sent;
-      - [ ] what came back: account, confidence, tax tag, reason, and the model and date (or *Jawaban demo, tanpa panggilan AI*);
-      - [ ] Buku's checks: the code is in the chart; the receivable/payable replacement, with the original account, when it happened;
+      - [x] a sentence that amount, date, balance and account number were not sent;
+      - [x] what came back: account, confidence, tax tag, reason, and the model and date (or *Jawaban demo, tanpa panggilan AI*);
+      - [x] Buku's checks: the code is in the chart; the receivable/payable replacement, with the original account, when it happened;
             whether the line may go in *Setujui N usulan yakin*, and why not.
-- [ ] When the cached answer can't be matched, the panel says so and shows only the line's stored suggestion.
-- [ ] Draft, the panel shows:
-      - [ ] the control that flagged it;
-      - [ ] the rows sent (date, text, amount, account, how), each marked cited or not;
-      - [ ] the number of citations dropped (*tidak tercatat* for older drafts);
-      - [ ] the checks it passed;
-      - [ ] whether the books still match. A stale draft shows the existing message and no row values.
-- [ ] *Unduh nilai (CSV)* holds the panel's values. Amounts are as sent and as integers. The line's amount is only in a *tidak dikirim*
+- [x] When the cached answer can't be matched, the panel says so and shows only the line's stored suggestion.
+- [x] Draft, the panel shows:
+      - [x] the control that flagged it;
+      - [x] the rows sent (date, text, amount, account, how), each marked cited or not;
+      - [x] the number of citations dropped (*tidak tercatat* for older drafts);
+      - [x] the checks it passed;
+      - [x] whether the books still match. A stale draft shows the existing message and no row values.
+- [x] *Unduh nilai (CSV)* holds the panel's values. Amounts are as sent and as integers. The line's amount is only in a *tidak dikirim*
       row. No cell runs as a formula. It opens in Excel id-ID.
-- [ ] A viewer can open and download. An item of another client returns 404. Opening a panel writes nothing and calls no model.
-- [ ] Enter on *Lihat alasan* in Review toggles the panel and does not accept the line.
-- [ ] Works at 390 px without sideways page scroll.
-- [ ] No number on any report changes (`verify:books` ALL PASS).
-- [ ] Deck claims to review in ship:
+- [x] A viewer can open and download. An item of another client returns 404. Opening a panel writes nothing and calls no model.
+- [x] Enter on *Lihat alasan* in Review toggles the panel and does not accept the line.
+- [x] Works at 390 px without sideways page scroll.
+- [x] No number on any report changes (`verify:books` ALL PASS).
+- [x] Deck claims to review in ship:
       - `kantor.html` slide 07 *Review* ("Usulan akun dengan alasan dan tingkat keyakinan");
       - `kantor.html` slide 08 *Data dan AI* ("Anda tahu apa yang dikirim ke AI", the "Yang dikirim untuk baris itu" table);
       - `perusahaan.html` slide 12 *Data dan AI*;
@@ -287,7 +287,7 @@ and ask.
       - README's Kotak and Review rows.
       - Accept: flows 1–4 on the dev server, 390 px. Reuse: `MethodBadge`, `Collapsible`, `Skeleton`, `exportContext` /
         `findClientForMember`. (deps: T1, T3)
-- [ ] T5 verify-local.
+- [x] T5 verify-local.
       - Walk flows 1–4 with screenshots at 1440 and 390 px. Add `e2e/lihat-alasan.spec.ts`. Run the full gate (`verify:books` ALL PASS).
         (deps: T4)
 
@@ -354,5 +354,32 @@ and ask.
   - Deck claims: reviewed in ship.
 
 ## Verification
+- **Task gate (all four cycles merged, `160a629`, before the test-only fixes):** `npm run lint` exit 0, `npm run typecheck` exit 0,
+  `npm test` "Test Files 311 passed (311) · Tests 2831 passed (2831)".
+- **Full gate:** `npm run build` exit 0; `npm run demo:reset`; `npm run verify:books` → "ALL PASS — 1765 pemeriksaan saldo cocok dengan
+  ground truth"; `npm run test:e2e` first run 116 passed and 8 failed. All 8 were test faults, not product bugs, fixed in
+  `0700b6b`, `bba9a32`, `185d41f`, `fd52c70` and `915c7cb`:
+  - the new *Checklist tutup buku* menu item also matched `name: "Tutup Buku"`;
+  - a substring label match caught both "QA BPPU" and "QA BPPU Kosong";
+  - a hidden-input click;
+  - a read before Kotak's *Setujui* returned;
+  - a check on a queue the investor walk empties.
+  On `915c7cb`: **124 passed (124)**, `auth-links`, `trial-signup` and `public-site` included (stack on port 3200).
+- **Acceptance criteria → tests:** each criterion maps to the unit, DB or e2e test that asserts it, listed under Implementation by the
+  build. Those suites pass in full above, and 390 px is asserted on every e2e run.
+- **Walk (local production build on :3200, demo admin, freshly seeded):**
+  - the firm board;
+  - Pengaturan kantor → *Otomasi* (defaults: three sources on, no cap, 50 %; *Usulan AI* fixed off);
+  - Grup Ayam Agustus *Checklist tutup buku* (Buku's proposed list with kinds, reasons and due days; *Pakai daftar ini*);
+  - CV Sinar Kotak with *Lihat alasan* open: the five steps, the fields sent ("Nominal, tanggal, saldo dan nomor rekening tidak
+    dikirim"), the demo answer, Buku's checks, *Unduh nilai (CSV)*;
+  - Grup Ayam Pajak Masa with the BPPU list.
+  Each was checked at 1440 and 390 px, and the scroll width equals the viewport on every page.
+
+Verified locally — 915c7cb
 
 ## Ship Notes
+- No migration. The dropped-citation count lives in the AI cache row's JSON for new answers only; older drafts say "tidak tercatat".
+- Deck (`efc40a7`): kantor slides 04, 07, 11, 12 and 16, plus perusahaan slide 13; PDFs regenerated; checked at 1440×900 and
+  375×812, no overflow.
+- The `e2e` label applies.

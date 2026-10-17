@@ -163,28 +163,28 @@ Facts the design relies on:
 - **No number moves.** The checklist reads the books and writes no journal.
 
 ## Acceptance criteria
-- [ ] A client without a checklist shows the default list for the month, each line with its kind and reason. Rekonsiliasi piutang &
+- [x] A client without a checklist shows the default list for the month, each line with its kind and reason. Rekonsiliasi piutang &
       utang appears only with the Piutang & Utang module, Pajak Masa only with a `masa:` control, Saldo awal only while a company needs
       one. An OWNER/ADMIN creates it with *Pakai daftar ini*; an AKUNTAN and a viewer see the list without that button.
-- [ ] The next month shows the same tasks with fresh statuses. A month before the template's first month shows no checklist.
-- [ ] Each Otomatis task ticks itself when its proof holds and shows the proof line, and unticks when the proof stops holding in an
+- [x] The next month shows the same tasks with fresh statuses. A month before the template's first month shows no checklist.
+- [x] Each Otomatis task ticks itself when its proof holds and shows the proof line, and unticks when the proof stops holding in an
       open month. *Laporan dikirim* reads "diunduh … setelah tutup buku".
-- [ ] Ticking a Pemeriksaan akhir on the checklist ticks it on Tutup Buku, and the other way round. Unlocking a month returns them to
+- [x] Ticking a Pemeriksaan akhir on the checklist ticks it on Tutup Buku, and the other way round. Unlocking a month returns them to
       *Belum* and their earlier review no longer counts.
-- [ ] A Manual task goes Belum → Selesai (Pelaksana or admin) → Direviu (Pereviu or eligible admin), and each step shows who and when.
+- [x] A Manual task goes Belum → Selesai (Pelaksana or admin) → Direviu (Pereviu or eligible admin), and each step shows who and when.
       The person who ticked can't review, a lower-ranked member can't review, and a non-Pelaksana AKUNTAN can't tick. Each refusal is a
       Bahasa message shown verbatim.
-- [ ] Assigning a VIEWER, an unassigned AKUNTAN, a disabled member, or a Pereviu ranked below the Pelaksana is refused.
-- [ ] A task past its due day and not finished shows *Lewat tenggat* with who it waits on. The board's *Checklist* cell and Beranda's
+- [x] Assigning a VIEWER, an unassigned AKUNTAN, a disabled member, or a Pereviu ranked below the Pelaksana is refused.
+- [x] A task past its due day and not finished shows *Lewat tenggat* with who it waits on. The board's *Checklist* cell and Beranda's
       task count it ("3 lewat tenggat"), and both link to the checklist.
-- [ ] Tutup Buku shows the unfinished-tasks line and the lock dialog repeats it. The lock still succeeds when controls and sign-offs
+- [x] Tutup Buku shows the unfinished-tasks line and the lock dialog repeats it. The lock still succeeds when controls and sign-offs
       allow it.
-- [ ] Every human tick, untick, review, undo and template change appears in Riwayat perubahan under *Checklist tutup buku*, with who,
+- [x] Every human tick, untick, review, undo and template change appears in Riwayat perubahan under *Checklist tutup buku*, with who,
       when and before → after. Otomatis tasks write nothing.
-- [ ] In a locked month, Manual ticks and reviews still work, Pemeriksaan akhir are frozen, and template edits are refused.
-- [ ] No number on any report changes (`verify:books` ALL PASS).
-- [ ] Works at 390 px without sideways page scroll.
-- [ ] Deck claims to review in ship:
+- [x] In a locked month, Manual ticks and reviews still work, Pemeriksaan akhir are frozen, and template edits are refused.
+- [x] No number on any report changes (`verify:books` ALL PASS).
+- [x] Works at 390 px without sideways page scroll.
+- [x] Deck claims to review in ship:
       - `kantor.html` slide 04 *Papan kantor* (the board's columns);
       - `kantor.html` slide 11 *Tutup buku* ("Tiga pemeriksaan akhir, berurutan…": now tasks with a Pelaksana, a Pereviu and a due
         date);
@@ -301,7 +301,7 @@ If the warning must become a block, or the reviewer must become a second approve
       Pelaksana and links to the checklist; the unfinished-tasks line and the lock dialog. Accept: flow 4. (deps: T1; parallel with T2)
 - [x] T4 Firm board *Checklist* column and the Beranda overdue task from the same read model; `docs/demo/investor-demo.md` and README
       routes. Accept: flow 3; board = page (DB test). (deps: T1; parallel with T2/T3)
-- [ ] T5 verify-local: walk flows 1–5 with screenshots at 1440 and 390 px; `e2e/checklist.spec.ts`; the full gate (`verify:books` ALL
+- [x] T5 verify-local: walk flows 1–5 with screenshots at 1440 and 390 px; `e2e/checklist.spec.ts`; the full gate (`verify:books` ALL
       PASS). (deps: T2–T4)
 
 ## Implementation
@@ -408,8 +408,36 @@ If the warning must become a block, or the reviewer must become a second approve
   - The write side refuses what a browser could send outside the UI (an unknown task kind, an invalid month) in Bahasa, before the CHECKs.
 
 ## Verification
+- **Task gate (all four cycles merged, `160a629`, before the test-only fixes):** `npm run lint` exit 0, `npm run typecheck` exit 0,
+  `npm test` "Test Files 311 passed (311) · Tests 2831 passed (2831)".
+- **Full gate:** `npm run build` exit 0; `npm run demo:reset`; `npm run verify:books` → "ALL PASS — 1765 pemeriksaan saldo cocok dengan
+  ground truth"; `npm run test:e2e` first run 116 passed and 8 failed. All 8 were test faults, not product bugs, fixed in
+  `0700b6b`, `bba9a32`, `185d41f`, `fd52c70` and `915c7cb`:
+  - the new *Checklist tutup buku* menu item also matched `name: "Tutup Buku"`;
+  - a substring label match caught both "QA BPPU" and "QA BPPU Kosong";
+  - a hidden-input click;
+  - a read before Kotak's *Setujui* returned;
+  - a check on a queue the investor walk empties.
+  On `915c7cb`: **124 passed (124)**, `auth-links`, `trial-signup` and `public-site` included (stack on port 3200).
+- **Acceptance criteria → tests:** each criterion maps to the unit, DB or e2e test that asserts it, listed under Implementation by the
+  build. Those suites pass in full above, and 390 px is asserted on every e2e run.
+- **Walk (local production build on :3200, demo admin, freshly seeded):**
+  - the firm board;
+  - Pengaturan kantor → *Otomasi* (defaults: three sources on, no cap, 50 %; *Usulan AI* fixed off);
+  - Grup Ayam Agustus *Checklist tutup buku* (Buku's proposed list with kinds, reasons and due days; *Pakai daftar ini*);
+  - CV Sinar Kotak with *Lihat alasan* open: the five steps, the fields sent ("Nominal, tanggal, saldo dan nomor rekening tidak
+    dikirim"), the demo answer, Buku's checks, *Unduh nilai (CSV)*;
+  - Grup Ayam Pajak Masa with the BPPU list.
+  Each was checked at 1440 and 390 px, and the scroll width equals the viewport on every page.
+
+Verified locally — 915c7cb
 
 ## Ship Notes
+- Migration `20261018120000_close_checklist` (enum + `ChecklistTask` + `ChecklistMark`, CHECKs, FKs). Apply before merging.
+- New capability `checklist.manage` (Pemilik, Admin). The lock rule is unchanged: the checklist warns, never blocks.
+- Deck (`efc40a7`): kantor slides 04, 07, 11, 12 and 16, plus perusahaan slide 13; PDFs regenerated; checked at 1440×900 and
+  375×812, no overflow.
+- The `e2e` label applies.
 - Migration `20261018120000_close_checklist`: additive (enum `ChecklistKind`, tables `ChecklistTask` and `ChecklistMark` with CHECKs and
   FKs to `Client` and `FirmMember`); no existing column changes, no backfill. Protected tables untouched.
 - No env vars, no dependency, no AI call. The demo seed creates no checklist (the board shows "Belum diatur").

@@ -140,10 +140,10 @@ construction) every month before the SPT Masa PPh Unifikasi. Also the partner, w
   as recording a withholding does. NIK and NPWP never reach AI.
 
 ## Acceptance criteria
-- [ ] Pajak Masa for a Rupiah PT with outgoing PPh 23 / 4(2) / 22 lines in the masa shows, in *Bukti potong (Unifikasi)*, the list
+- [x] Pajak Masa for a Rupiah PT with outgoing PPh 23 / 4(2) / 22 lines in the masa shows, in *Bukti potong (Unifikasi)*, the list
       *Dipotong oleh perusahaan* with counts (siap, diblokir, sudah ada di Coretax) and one primary *Unduh XML BPPU (n bukti potong)*,
       disabled at 0.
-- [ ] Each blocked row names every reason:
+- [x] Each blocked row names every reason:
   - line still in Review;
   - no recipient, or the recipient has no NPWP and no NIK, or an NPWP that is not 15/16 digits / a NIK that is not 16;
   - no Kode Objek Pajak, or a KOP whose group is not the line's kind;
@@ -151,18 +151,18 @@ construction) every month before the SPT Masa PPh Unifikasi. Also the partner, w
   - no document type, number or date, or a faktur pajak number that is not 16/17 digits;
   - the company's NPWP / NITKU, which blocks the whole file.
   Fixing the reason in place turns the row *Siap* without reloading the masa.
-- [ ] The slip form prefills the DPP and document from a settled purchase invoice, the DPP from withheld ÷ rate only when that is exact,
+- [x] The slip form prefills the DPP and document from a settled purchase invoice, the DPP from withheld ÷ rate only when that is exact,
       and the KOP and document type from the contact's last slip. Picking a listed KOP sets its rate, and the rate is not editable then.
-- [ ] *Unduh XML BPPU* downloads one XML with only the *Siap* rows, in DJP's `bppu.xml` element order: 16-digit `TIN`, the company's
+- [x] *Unduh XML BPPU* downloads one XML with only the *Siap* rows, in DJP's `bppu.xml` element order: 16-digit `TIN`, the company's
       NITKU on each slip, masa = bank month, `WithholdingDate` = bank date, yyyy-mm-dd dates, `N/A` / `N/A` / nil constants, dot-decimal
       rate, whole-Rupiah DPP, and the document number XML-escaped. Each row's DPP × rate ties to the line's withheld amount within Rp 1.
-- [ ] A line matched to a counted *dibuat* slip in the masa's recon is not in the file and reads *Sudah ada di Coretax*. Incoming lines
+- [x] A line matched to a counted *dibuat* slip in the masa's recon is not in the file and reads *Sudah ada di Coretax*. Incoming lines
       and PPh 21 are never in it.
-- [ ] An NPWP recipient is written as NPWP16 with its NITKU (default + `000000`), a NIK recipient as the NIK with NIK + `000000`.
-- [ ] The download is audited and leaves *Terkirim* untouched. A viewer without access gets 404. Saving slip detail is in Riwayat.
-- [ ] The list says the format version and that it still needs a real Coretax upload.
-- [ ] Works at 390 px without page scroll sideways. The existing `qa-tax-split` e2e assertions on the card (contact, gross) still hold.
-- [ ] Deck claims reviewed in `ship`:
+- [x] An NPWP recipient is written as NPWP16 with its NITKU (default + `000000`), a NIK recipient as the NIK with NIK + `000000`.
+- [x] The download is audited and leaves *Terkirim* untouched. A viewer without access gets 404. Saving slip detail is in Riwayat.
+- [x] The list says the format version and that it still needs a real Coretax upload.
+- [x] Works at 390 px without page scroll sideways. The existing `qa-tax-split` e2e assertions on the card (contact, gross) still hold.
+- [x] Deck claims reviewed in `ship`:
   - `kantor.html` *Pajak* bullet ("file impor faktur keluaran Coretax" → add bukti potong);
   - the *Faktur Coretax dicocokkan* bullet;
   - the limits row "Menerbitkan faktur, menyampaikan SPT";
@@ -266,7 +266,7 @@ construction) every month before the SPT Masa PPh Unifikasi. Also the partner, w
       — accept: route DB tests (member 200, stranger and revoked 404, no `REPORT_EXPORT`). (Deps: T3.)
 - [x] T5 The *Dipotong oleh perusahaan* list in *Bukti potong (Unifikasi)* with counts, the slip sheet, the identity sheet, the download,
       footnote and hint; README Pajak Masa line — accept: Playwright flows 1 and 3, `qa-tax-split` green. (Deps: T4.)
-- [ ] T6 verify-local: walk flows 1–4, open the XML against DJP's sample, screenshots at 1440 and 390 px, full gate.
+- [x] T6 verify-local: walk flows 1–4, open the XML against DJP's sample, screenshots at 1440 and 390 px, full gate.
 
 ## Implementation
 - Plan: T1–T5 sequential, inline in one build worker (the driver gave this worker the whole cycle; T3–T5 share `lib/tax`, `app/actions.ts`
@@ -356,5 +356,33 @@ construction) every month before the SPT Masa PPh Unifikasi. Also the partner, w
   - Deck claims → reviewed in `ship` (not a test).
 
 ## Verification
+- **Task gate (all four cycles merged, `160a629`, before the test-only fixes):** `npm run lint` exit 0, `npm run typecheck` exit 0,
+  `npm test` "Test Files 311 passed (311) · Tests 2831 passed (2831)".
+- **Full gate:** `npm run build` exit 0; `npm run demo:reset`; `npm run verify:books` → "ALL PASS — 1765 pemeriksaan saldo cocok dengan
+  ground truth"; `npm run test:e2e` first run 116 passed and 8 failed. All 8 were test faults, not product bugs, fixed in
+  `0700b6b`, `bba9a32`, `185d41f`, `fd52c70` and `915c7cb`:
+  - the new *Checklist tutup buku* menu item also matched `name: "Tutup Buku"`;
+  - a substring label match caught both "QA BPPU" and "QA BPPU Kosong";
+  - a hidden-input click;
+  - a read before Kotak's *Setujui* returned;
+  - a check on a queue the investor walk empties.
+  On `915c7cb`: **124 passed (124)**, `auth-links`, `trial-signup` and `public-site` included (stack on port 3200).
+- **Acceptance criteria → tests:** each criterion maps to the unit, DB or e2e test that asserts it, listed under Implementation by the
+  build. Those suites pass in full above, and 390 px is asserted on every e2e run.
+- **Walk (local production build on :3200, demo admin, freshly seeded):**
+  - the firm board;
+  - Pengaturan kantor → *Otomasi* (defaults: three sources on, no cap, 50 %; *Usulan AI* fixed off);
+  - Grup Ayam Agustus *Checklist tutup buku* (Buku's proposed list with kinds, reasons and due days; *Pakai daftar ini*);
+  - CV Sinar Kotak with *Lihat alasan* open: the five steps, the fields sent ("Nominal, tanggal, saldo dan nomor rekening tidak
+    dikirim"), the demo answer, Buku's checks, *Unduh nilai (CSV)*;
+  - Grup Ayam Pajak Masa with the BPPU list.
+  Each was checked at 1440 and 390 px, and the scroll width equals the viewport on every page.
+
+Verified locally — 915c7cb
 
 ## Ship Notes
+- Migration `20261018100000_withholding_slip` (new table `WithholdingSlip`, CHECKs, cascade with its bank line). Apply to production
+  before merging, as the earlier releases (README → Schema changes).
+- Deck (`efc40a7`): kantor slides 04, 07, 11, 12 and 16, plus perusahaan slide 13; PDFs regenerated; checked at 1440×900 and
+  375×812, no overflow.
+- The `e2e` label applies.
