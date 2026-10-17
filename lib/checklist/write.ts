@@ -20,6 +20,11 @@ type Month = { clientId: string; year: number; month: number };
 export const LOCKED_SIGNOFF = "Periode sudah ditutup. Buka kembali dulu untuk mengubah.";
 const TITLE_MAX = 200;
 
+/** The month on screen, as the URL gave it (a server action takes anything). */
+function mustMonth(m: Month) {
+  if (![m.year, m.month].every(Number.isInteger) || m.year < 1900 || m.year > 2199 || m.month < 1 || m.month > 12) throw new ChecklistError("Periode tidak valid. Muat ulang halaman.");
+}
+
 function mustManage(actor: ChecklistActor) {
   if (!isAdminRole(actor.role)) throw new ChecklistError(capabilityRefusal("checklist.manage"));
 }
@@ -64,6 +69,7 @@ async function taskFor(tx: Tx, m: Month, taskId: string): Promise<TemplateTask> 
 
 /** *Pakai daftar ini*: the default list, from the month on screen, with one Pelaksana and an optional Pereviu for every task. */
 export async function acceptDefault(db: Db, actor: ChecklistActor, input: Month & { assigneeId: string; reviewerId: string | null }) {
+  mustMonth(input);
   mustManage(actor);
   const lines = await proposeChecklist(db, input.clientId, input.year, input.month);
   return db.$transaction(async (tx) => {
@@ -93,6 +99,7 @@ export type NewTask = { kind: "MANUAL" | "AUTO"; key?: string; title?: string; a
  * kind not in the month's list). It applies from the month on screen.
  */
 export async function addTask(db: Db, actor: ChecklistActor, input: Month & NewTask) {
+  mustMonth(input);
   if (input.kind === "AUTO") mustManage(actor);
   else if (!isAdminRole(actor.role) && input.assigneeId !== actor.id) throw new ChecklistError("Tugas yang Anda tambahkan dikerjakan oleh Anda sendiri sebagai Pelaksana. Admin kantor dapat menugaskan orang lain.");
   mustDueDay(input.dueDay);
@@ -126,6 +133,7 @@ export type TaskEdit = { title: string; assigneeId: string; reviewerId: string |
 
 /** Rename, reassign or move the due day (admin). Shows in every month the task covers; the marks keep who actually ticked. */
 export async function updateTask(db: Db, actor: ChecklistActor, input: Month & { taskId: string } & TaskEdit) {
+  mustMonth(input);
   mustManage(actor);
   mustDueDay(input.dueDay);
   const title = cleanTitle(input.title);
@@ -154,6 +162,7 @@ export async function updateTask(db: Db, actor: ChecklistActor, input: Month & {
  * applied to a month before this one is deleted with its marks; Riwayat keeps the trail either way.
  */
 export async function removeTask(db: Db, actor: ChecklistActor, input: Month & { taskId: string }) {
+  mustMonth(input);
   mustManage(actor);
   return db.$transaction(async (tx) => {
     await mustBeOpen(tx, input);
@@ -200,6 +209,8 @@ async function clearMark(tx: Tx, mark: MarkRow, parts: { done?: boolean; review?
  * Manual ticks and every review stay open after the lock: they are not book writes.
  */
 export async function markTask(db: Db, actor: ChecklistActor, input: Month & { taskId: string; step: MarkStep; value: boolean }) {
+  mustMonth(input);
+  if (input.step !== "done" && input.step !== "review") throw new ChecklistError("Langkah tidak dikenal.");
   return db.$transaction(async (tx) => {
     const task = await taskFor(tx, input, input.taskId);
     if (task.kind === "AUTO") throw new ChecklistError("Tugas otomatis dicentang oleh Buku dari data buku, tidak dengan tangan.");
@@ -272,6 +283,7 @@ async function applyMark(tx: Tx, actor: ChecklistActor, task: TemplateTask, inpu
  * logged in Riwayat. A closed month refuses both (the lock rule itself, accounting-rules 23, is unchanged).
  */
 export async function setSignoff(db: Db, actor: ChecklistActor, input: Month & { key: string; done: boolean }) {
+  mustMonth(input);
   const signoff = CLOSE_SIGNOFFS.find((s) => s.key === input.key);
   if (!signoff) throw new ChecklistError("Pemeriksaan akhir tidak dikenal.");
   return db.$transaction(async (tx) => {

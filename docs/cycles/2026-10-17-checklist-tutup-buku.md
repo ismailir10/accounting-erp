@@ -294,7 +294,7 @@ If the warning must become a block, or the reviewer must become a second approve
       overdue, permission rules, `CHECKLIST` change-log kind, `deleteClient`, `checklist.manage`. Accept: the DB and unit seams above.
       Reuse: `completenessMatrix`, `approvalCounts`, `runControls` / `closeReadiness`, `setupProgress`, `clientModules`, the board's
       *Terkirim* read, `recordEvent`, `can` / `isAdminRole`, `ROLE_LABEL`.
-- [ ] T2 Server actions and the *Checklist tutup buku* page: accept default, add / edit / remove a task, tick, review, undo; the nav
+- [x] T2 Server actions and the *Checklist tutup buku* page: accept default, add / edit / remove a task, tick, review, undo; the nav
       entry. Accept: flows 1, 2 and 5 on the dev server. Reuse: `loadClientPage`, `ScopeBar`, `NextStep`, `StatusPill`, `ProgressFill`,
       `Checkbox`, the access context for viewers. (deps: T1)
 - [ ] T3 Tutup Buku: `signoffAction` through the checklist writer (rules + `CHECKLIST` event); the *Daftar periksa* card names the
@@ -320,6 +320,18 @@ If the warning must become a block, or the reviewer must become a second approve
   `proposeChecklist`), and the board roll-up (`checklistRollup`), all from one `buildRows`. `write.ts`: accept, add, edit, remove,
   tick / review (`markTask`) and the one `CloseSignoff` writer (`setSignoff`), each with one `CHECKLIST` event. Capability
   `checklist.manage` (OWNER, ADMIN): "Hanya admin kantor yang dapat mengatur checklist."
+- T2: `app/actions.ts`, `app/(app)/clients/[id]/checklist/page.tsx`, `components/app/checklist-panel.tsx`, `lib/nav.ts`,
+  `components/app/app-sidebar.tsx`, `README.md`, `AGENTS.md`, `tests/db/checklist-actions.test.ts`, `tests/unit/action-guards.test.ts`,
+  `tests/unit/nav.test.ts` — five actions (`acceptChecklistAction`, `addChecklistTaskAction`, `updateChecklistTaskAction`,
+  `removeChecklistTaskAction`, `markChecklistAction`), each through `requireCapability` (`checklist.manage` for the template and an
+  Otomatis task, `books.write` for a Manual task and every tick / review). The page: ScopeBar (month only), the viewer's NextStep
+  (no template · before the first month · locked · "Kerjakan N tugas Anda" · "Reviu N tugas" · waiting on others · done), the proposal
+  card with *Pakai daftar ini* (the one primary button, admins) and its Pelaksana / Pereviu dialog, the summary line with
+  `ProgressFill`, one card with divided rows grouped Lewat tenggat → Belum → Menunggu reviu and the finished ones folded. Checkboxes
+  (`id` + `htmlFor`) for Manual and Pemeriksaan akhir, check / empty icons for Otomatis and for viewers (no buttons at all);
+  *Tandai direviu* (outline) and *Batalkan reviu* (ghost) only when the viewer may review; *Tambah tugas* for writers; *Atur checklist*
+  (admins) adds *Ubah* per row and *Tambah tugas otomatis*. Pereviu choices list only eligible members ranked ≥ the Pelaksana. The menu
+  lists *Checklist tutup buku* directly before *Tutup Buku*.
 
 ## Verification
 

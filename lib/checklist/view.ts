@@ -99,6 +99,8 @@ export type ChecklistRow = {
   unknown: boolean;
   /** The Pelaksana or Pereviu can no longer hold the task (disabled, unassigned, role changed): an admin reassigns it. */
   problem: string | null;
+  /** Which of them it is: a gone Pelaksana stops the tick, a gone Pereviu the review. */
+  gone: { assignee: boolean; reviewer: boolean };
 };
 
 type MarkIn = { taskId: string; doneAt: Date | null; doneById: string | null; doneBy: { name: string } | null; reviewedAt: Date | null; reviewedById: string | null; reviewedBy: { name: string } | null };
@@ -149,12 +151,13 @@ export function buildRows(input: { tasks: TemplateTask[]; marks: MarkIn[]; signo
       state = humanStatus(done, review, Boolean(t.reviewerId));
     }
     const overdue = !state.finished && !unknown && +input.today > +due;
+    const notes = input.people ? holderNotes(t, input.people) : { assignee: null, reviewer: null };
     const who = state.waitsOn === "Pereviu" ? reviewer : state.waitsOn === "Pelaksana" ? assignee : null;
     return {
       id: t.id, kind: t.kind, key: t.key, title: t.title, eyebrow: KIND_EYEBROW[t.kind], assignee, reviewer, dueDay: t.dueDay,
       due: due.toISOString().slice(0, 10), dueLabel: formatDate(due), done, review, status: state.status, finished: state.finished,
       overdue, daysLate: overdue ? daysLate(due, input.today) : 0, waitsOn: who && state.waitsOn ? { role: state.waitsOn, id: who.id, name: who.name } : null,
-      proof, unknown, problem: input.people ? ((n) => n.assignee ?? n.reviewer)(holderNotes(t, input.people)) : null,
+      proof, unknown, problem: notes.assignee ?? notes.reviewer, gone: { assignee: Boolean(notes.assignee), reviewer: Boolean(notes.reviewer) },
     };
   });
 }
