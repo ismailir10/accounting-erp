@@ -16,7 +16,10 @@ import type { Control } from "@/lib/controls";
 export const BASELINE_MONTHS = 3;
 /** Materiality: this percentage of the baseline's average monthly P&L volume (Σ |movement| over P&L accounts). */
 export const MATERIALITY_PERCENT = 1n;
-/** Flux: the month differs from the baseline average by at least this percentage of it (and by ≥ materiality). */
+/**
+ * Flux: the month differs from the baseline average by at least this percentage of it (and by ≥ materiality). The default of the
+ * firm's *Perubahan minimal* (`Firm.fluxPercent`, Pengaturan kantor → Otomasi); the scan reads the firm's value.
+ */
 export const FLUX_PERCENT = 50n;
 /** Possible duplicates: identical entries at most this many days apart. */
 export const DUPLICATE_DAYS = 3;
@@ -30,8 +33,25 @@ export type AccountFinding = { account: Account; current: bigint };
 export type DormantFinding = AccountFinding & { isNew: boolean };
 export type DupEntry = { id: string; date: Date; kind: EntryKind; memo: string; sourceRef: string | null; bankTransactionId: string | null; ledgerImportId: string | null; amount: bigint; accountId: string };
 export type DupFinding = { first: DupEntry; second: DupEntry; account: Account; amount: bigint };
+/**
+ * The firm's *Ambang fluktuasi* as one company's scan applies it: the Rupiah floor (*Selisih minimal*) only for a company kept in
+ * Rupiah (a Rupiah figure is never compared with another currency's minor units, rule 3), and the percent.
+ */
+export type FluxThresholds = { floor: bigint | null; percent: number; /** The firm's Rupiah floor, when this company's currency can't use it. */ ignoredFloor: bigint | null };
+
+export async function fluxThresholds(db: Db, clientId: string, entityId: string | null): Promise<FluxThresholds> {
+  const [{ firm }, entity] = await Promise.all([
+    db.client.findUniqueOrThrow({ where: { id: clientId }, select: { firm: { select: { fluxFloor: true, fluxPercent: true } } } }),
+    entityId ? db.entity.findUniqueOrThrow({ where: { id: entityId }, select: { functionalCurrency: true } }) : null,
+  ]);
+  const rupiah = !entity || entity.functionalCurrency === "IDR";
+  return { floor: rupiah ? firm.fluxFloor : null, percent: firm.fluxPercent, ignoredFloor: rupiah ? null : firm.fluxFloor };
+}
+
 export type LedgerScan = {
   materiality: bigint | null;
+  /** The flux thresholds this scan applied (the firm's, Rupiah floor for Rupiah companies only). */
+  thresholds: FluxThresholds;
   /** Baseline months with activity, oldest first, as `YYYY-MM`. */
   baseline: string[];
   /** Per account id: natural movement for each baseline month (0 when none), then the current month. */
@@ -53,7 +73,8 @@ function shift(year: number, month: number, by: number) {
 }
 
 export async function scanLedger(db: Db, clientId: string, entityId: string, year: number, month: number): Promise<LedgerScan> {
-  const accounts = new Map((await db.account.findMany({ where: { clientId } })).map((a) => [a.id, a]));
+  const [accountRows, thresholds] = await Promise.all([db.account.findMany({ where: { clientId } }), fluxThresholds(db, clientId, entityId)]);
+  const accounts = new Map(accountRows.map((a) => [a.id, a]));
   const months = Array.from({ length: BASELINE_MONTHS + 1 }, (_, i) => shift(year, month, i - BASELINE_MONTHS));
   // Natural movement per account per month (last element = the period), non-opening lines only.
   const moves = await Promise.all(
@@ -78,7 +99,7 @@ export async function scanLedger(db: Db, clientId: string, entityId: string, yea
   for (const id of new Set([...current.keys(), ...activeIdx.flatMap((i) => [...prior[i].keys()])])) {
     series.set(id, [...activeIdx.map((i) => prior[i].get(id) ?? 0n), current.get(id) ?? 0n]);
   }
-  const empty: LedgerScan = { materiality: null, baseline, series, flux: [], flip: [], dormant: [], dup: [] };
+  const empty: LedgerScan = { materiality: null, thresholds, baseline, series, flux: [], flip: [], dormant: [], dup: [] };
   if (activeIdx.length === 0 || current.size === 0) return empty;
 
   const n = BigInt(activeIdx.length);
@@ -98,7 +119,9 @@ export async function scanLedger(db: Db, clientId: string, entityId: string, yea
       if (history.filter((v) => v !== undefined).length >= 2) {
         const sum = history.reduce<bigint>((s, v) => s + (v ?? 0n), 0n);
         const diffN = cur * n - sum; // Δ × n, exact
-        if (abs(diffN) >= materiality * n && abs(diffN) * 100n >= abs(sum) * FLUX_PERCENT) {
+        // |Δ| ≥ max(materiality, the firm's Rupiah floor) and |Δ| ≥ the firm's percent of the average (default 50 %).
+        const floor = thresholds.floor !== null && thresholds.floor > materiality ? thresholds.floor : materiality;
+        if (abs(diffN) >= floor * n && abs(diffN) * 100n >= abs(sum) * BigInt(thresholds.percent)) {
           scan.flux.push({ account: a, current: cur, average: sum / n, months: activeIdx.length, delta: diffN / n });
         }
       }

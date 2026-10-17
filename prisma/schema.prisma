@@ -207,6 +207,17 @@ model Firm {
   aiMonthlyTokenBudget Int?
   /// Most active members allowed; null = no cap.
   seatLimit            Int?
+  /// Otomasi kantor (cycle 2026-10-17-otomasi): which deterministic sources may post an imported bank line directly. The dial can only
+  /// send more to Review: AI and the simple guess never post (accounting-rules 14). Defaults = the behaviour before the dial existed.
+  autoPostTransfer     Boolean          @default(true)
+  autoPostRules        Boolean          @default(true)
+  autoPostMemory       Boolean          @default(true)
+  /// Whole Rupiah; a line whose absolute amount is above it waits in Review whatever its source. Null = no cap. CHECK > 0.
+  autoPostCap          BigInt?
+  /// Ambang fluktuasi (accounting-rules 22b): the flux scan's minimum difference in whole Rupiah (Rupiah companies only; null = none,
+  /// CHECK > 0) and its minimum change against the account's average in whole percent (CHECK 1–1000).
+  fluxFloor            BigInt?
+  fluxPercent          Int              @default(50)
   createdAt            DateTime         @default(now())
   clients              Client[]
   rules                Rule[]
@@ -594,7 +605,7 @@ model AuditEvent {
   clientId  String
   client    Client      @relation(fields: [clientId], references: [id])
   entityId  String?
-  /// CLASSIFY · UNPAIR · IMPORT_REMOVED · CONTROL_NOTE · MAPPING · FINDING_RESOLVED · REPORT_FORMAT · FISCAL_YEAR · SUBLEDGER · DOCUMENT_VOID · ADVANCE · REPORT_EXPORT · MODULES · CREDIT_LIMIT …
+  /// CLASSIFY · UNPAIR · IMPORT_REMOVED · CONTROL_NOTE · MAPPING · FINDING_RESOLVED · REPORT_FORMAT · FISCAL_YEAR · SUBLEDGER · DOCUMENT_VOID · ADVANCE · REPORT_EXPORT · MODULES · CREDIT_LIMIT · AUTOMATION …
   kind      String
   subject   String
   summary   String

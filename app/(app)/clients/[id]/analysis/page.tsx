@@ -15,7 +15,9 @@ import { currencyNote, FxMissing, withFx } from "@/components/app/fx-missing";
 import { FxMissingError } from "@/lib/reports/fx";
 import { monthlyBalance, monthlyIncome, ratios } from "@/lib/reports/analysis";
 import { figuresOf, margins, topMovers, trend } from "@/lib/reports/insights";
-import { FLUX_PERCENT, MATERIALITY_PERCENT } from "@/lib/controls/anomaly";
+import { fluxThresholds, MATERIALITY_PERCENT } from "@/lib/controls/anomaly";
+import { formatRupiah } from "@/lib/money";
+import { isAdminRole } from "@/lib/auth/permissions";
 import { managementSummary } from "@/lib/reports/management";
 import { fluxExplanations } from "@/lib/reports/flux-explanation";
 import { resolveAiConfig } from "@/lib/settings/ai";
@@ -79,6 +81,8 @@ export default async function AnalysisPage({ params, searchParams }: { params: P
       ? await Promise.all([topMovers(prisma, key, summary), fluxExplanations(prisma, key, summary), resolveAiConfig(prisma), requireWorkspaceSession()])
       : [null, null, null, null];
     const canWrite = session ? accessView(session).canWrite : false;
+    // The firm's Ambang fluktuasi as this company's scan applies it (the Rupiah floor only for a Rupiah company).
+    const [thresholds, { member }] = await Promise.all([fluxThresholds(prisma, client.id, scope.mode === "entity" ? scope.value : null), requireWorkspaceSession()]);
     // Flagged movers whose explanation is missing or no longer matches the books: what stands between the pack and the owner.
     const current = (code: string) => explained?.current.get(code)?.stale === false;
     const open = movers?.movers.filter((m) => m.flagged && !current(m.code)) ?? [];
@@ -141,9 +145,11 @@ export default async function AnalysisPage({ params, searchParams }: { params: P
             )}
           </CardContent>
         </Card>
-        <p className="text-xs text-muted-foreground">
-          Ambang: selisih ≥ {MATERIALITY_PERCENT.toString()} % dari rata-rata volume Laba Rugi bulanan dan ≥ {FLUX_PERCENT.toString()} % dari rata-rata akunnya — sama dengan
-          kontrol Fluktuasi Laba Rugi di Tutup Buku. Tren dan margin dari Laba Rugi per bulan; pilih angkanya untuk membuka tabelnya.
+        <p className="text-xs text-muted-foreground" data-testid="flux-thresholds">
+          Ambang: selisih ≥ {MATERIALITY_PERCENT.toString()} % dari rata-rata volume Laba Rugi bulanan{thresholds.floor !== null && `, minimal ${formatRupiah(thresholds.floor)},`} dan ≥ {thresholds.percent} % dari rata-rata akunnya — sama dengan
+          kontrol Fluktuasi Laba Rugi di Tutup Buku.
+          {thresholds.ignoredFloor !== null && ` Selisih minimal ${formatRupiah(thresholds.ignoredFloor)} tidak dipakai karena perusahaan ini tidak berbuku Rupiah.`}{" "}
+          Diatur di {isAdminRole(member.role) ? <Link href="/settings" className="drill">Pengaturan kantor</Link> : "Pengaturan kantor"}. Tren dan margin dari Laba Rugi per bulan; pilih angkanya untuk membuka tabelnya.
         </p>
       </div>
     );
