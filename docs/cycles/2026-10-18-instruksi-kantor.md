@@ -380,7 +380,7 @@ If the hold needs to be stored on the bank line (a new column) rather than in it
 - [x] T4 *Susun dengan AI*: provider method + prompt + parse (closed schema, grounding), `MockProvider.compileInstruction`, budget +
       cache; accounting-rules 20e; note on ADR 0003. Accept: `instruction-ai.test.ts`. (deps: T2; parallel with T3; reuse:
       `runBudgetedAi`, `EvidenceAiCache`, `resolveProvider`)
-- [ ] T5 UI + actions: the *Instruksi* tab (editor, preview, list, read-only), `app/instruction-actions.ts`, and the origin mark on
+- [x] T5 UI + actions: the *Instruksi* tab (editor, preview, list, read-only), `app/instruction-actions.ts`, and the origin mark on
       Pengaturan klien's rule tables; README (routes, settings). Accept: `instruction-actions.test.ts`; flows 1, 3–5 on the dev server.
       (deps: T2–T4; reuse: `AccountPicker`, `NextStep`, `LinkTabs`, the `AutomationCard` layout)
 - [ ] T6 verify-local: walk flows 1–5 with screenshots at 1440 and 390 px; `e2e/instruksi-kantor.spec.ts`; the full gate (`demo:reset`,
@@ -431,6 +431,19 @@ If the hold needs to be stored on the bank line (a new column) rather than in it
   the keyword in the sentence (case and spaces ignored), the amount among `amountsIn(sentence)`, the account in the list, then
   `validateDraft`. One `runBudgetedAi` call (scope `instruksi:<firm>`, note "Instruksi kantor"), no retry; the answer, kept or refused,
   is cached by sentence, accounts, model and prompt version (the cache row also holds the sentence, which the origin check reads).
+- T5: `app/instruction-actions.ts`, `app/(app)/settings/page.tsx`, `components/app/instruction-editor.tsx`,
+  `components/app/instruction-list.tsx`, `lib/instructions/labels.ts`, `app/(app)/clients/[id]/settings/page.tsx`, `README.md`,
+  `tests/db/instruction-actions.test.ts` — five actions, each behind the scope's guard (`org.settings` for *Semua klien*,
+  `books.write` on the client otherwise; *Matikan* reads the instruction in the firm first, then guards by its own scope). *Susun* and
+  the preview validate and read only; `Setujui` is the one write. The *Instruksi* tab (between *Umum* and *Tim*, every role) holds the
+  NextStep, the editor for members who may approve in some scope (*Semua klien* for admins, then the clients they may open), and the
+  list: divided rows with the sentence, the compiled sentence, kind and scope, "Disetujui … oleh … · origin", *Matikan* with a confirm
+  naming what stops, and "N dimatikan" folded. The editor's preview is the approval screen: every field editable (keyword, direction,
+  account via `AccountPicker`, tax tag, amount and operator); an edit marks it stale ("Perbarui contoh") and *Setujui* stays off until
+  the preview is current or while a duplicate blocks it; hints are outline buttons that re-preview; matched lines show per client and
+  month, then up to 20 rows (client and current account hidden below `md`). The words and shapes the client component needs live in
+  `lib/instructions/labels.ts` (no server-only imports). Pengaturan klien's rule tables mark an instruction rule "Instruksi kantor",
+  linked to its row on the list.
 
 ## Verification
 

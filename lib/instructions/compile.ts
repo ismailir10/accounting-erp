@@ -2,13 +2,14 @@ import type { AccountType, Direction, TaxTag } from "@/lib/generated/prisma/enum
 import { isClassifiable, TAX_TAG_LABEL } from "@/lib/coa/template";
 import { isGenericKey } from "@/lib/import/normalize";
 import { formatRupiah } from "@/lib/money";
+import { DRAFT_KEYS, KIND_LABEL, MAX_SENTENCE, type DraftField, type DraftJson, type InstructionKind } from "@/lib/instructions/labels";
 
 /**
  * Instruksi kantor (cycle 2026-10-18-instruksi-kantor, accounting-rules 13, 14, 22d, 20e): a plain-Bahasa sentence read by Buku's own
  * deterministic reader into exactly one compiled form, validated by one closed schema (the same for the reader's and the AI's output).
  * Pure: no database, no model. Nothing here runs at import or control time; run time reads only the stored typed fields.
  */
-export type InstructionKind = "ACCOUNT" | "FLAG" | "HOLD";
+export { DRAFT_KEYS, KIND_LABEL, MAX_SENTENCE, ORIGIN_LABEL, PATTERNS_LINE, type DraftField, type DraftJson, type InstructionKind } from "@/lib/instructions/labels";
 export type InstructionDraft = {
   kind: InstructionKind;
   /** Upper case, 3–60 characters; a case-insensitive substring of the bank description. */
@@ -21,11 +22,6 @@ export type InstructionDraft = {
   /** With minAmount: true = at least, false = strictly above. */
   inclusive: boolean;
 };
-/** The draft as JSON carries it (browser, cache, Riwayat): the amount as a string of digits. */
-export type DraftJson = Omit<InstructionDraft, "minAmount"> & { minAmount: string | null };
-export const DRAFT_KEYS = ["kind", "pattern", "direction", "accountCode", "taxTag", "minAmount", "inclusive"] as const;
-export type DraftField = (typeof DRAFT_KEYS)[number];
-
 /** One account of the charts in scope (their union by code): what the reader and the validator may target. */
 export type ScopeAccount = { code: string; name: string; type: AccountType; classifiable: boolean; transfer: boolean };
 
@@ -38,10 +34,7 @@ export const scopeAccount = (a: { code: string; name: string; type: AccountType;
   transfer: !!a.isClearing || !!a.isIntercompany,
 });
 
-export const KIND_LABEL: Record<InstructionKind, string> = { ACCOUNT: "Aturan akun", FLAG: "Tandai", HOLD: "Tahan di Review" };
 export const NOT_UNDERSTOOD = "Buku belum memahami kalimat ini.";
-export const PATTERNS_LINE = "Aturan akun: <kata kunci> selalu <akun> · Tandai: tandai pengeluaran > Rp10 jt · Tahan: <kata kunci> selalu ke Review";
-export const MAX_SENTENCE = 300;
 export const REFUSAL = {
   empty: "Tulis instruksinya dulu.",
   long: `Instruksi maksimal ${MAX_SENTENCE} karakter.`,
