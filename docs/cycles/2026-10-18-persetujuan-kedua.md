@@ -477,6 +477,9 @@ migration: stop and ask.
   - Deleting a client removes its rows → `tests/db/delete-client.test.ts` "deletes its Persetujuan kedua rows".
   - 390 px → e2e (card, Kotak, Tutup Buku).
   - The forms' line and button → unit "the forms' notice"; e2e flow 2.
+- Worker gate (isolated `buku_test_c`): lint and typecheck clean; full `npm test` 313/314 files, 2888/2888 tests passed — the one file
+  failing was `db-drift.test.ts`'s `afterAll` (DROP DATABASE timed out under concurrent worktrees; it shares a fixed DB name), green re-run
+  alone (3/3); `npm run build` exit 0. Deck claims (`kantor.html`, `perusahaan.html`) and `docs/roadmap.md` §3 are left to ship's deck review.
 
 ## Verification
 
