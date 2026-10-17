@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import type { Db } from "@/lib/db";
 import { runControls, type Control } from "@/lib/controls";
 import { byPart, flaggedBankRows } from "@/lib/controls/sanity";
-import { scanLedger, sourceLabel } from "@/lib/controls/anomaly";
+import { scanLedger, sourceLabel, type LedgerScan } from "@/lib/controls/anomaly";
+import type { Account } from "@/lib/generated/prisma/client";
 import { formatMonthShort, formatPeriod, periodBounds } from "@/lib/format";
 import { financialYear } from "@/lib/fiscal";
 import { formatMoney } from "@/lib/money";
@@ -51,7 +52,10 @@ export async function gather(db: Db, clientId: string, year: number, month: numb
     links.set(t.id, { id: t.id, label: `${t.date.toISOString().slice(0, 10)} ${t.description.slice(0, 40)}`, href: `${base}/ledger/${code}?period=${pk}&entity=${entityId}` });
     return { id: t.id, date: t.date.toISOString().slice(0, 10), text: t.description.slice(0, DESCRIPTION), amount: formatMoney(t.amount, currency), account: code, how: `${t.method} ${t.confidence.toFixed(2)}` };
   };
-  const bySize = <T extends { amount: bigint }>(rows: T[]) => [...rows].sort((a, b) => (abs(b.amount) > abs(a.amount) ? 1 : abs(b.amount) < abs(a.amount) ? -1 : 0));
+  const linked = ({ row, link }: Linked) => {
+    links.set(link.id, link);
+    return row;
+  };
 
   const reviewed: CloseReviewControl[] = [];
   for (const c of flagged) {
@@ -127,27 +131,10 @@ export async function gather(db: Db, clientId: string, year: number, month: numb
         });
       } else {
         const found = kind === "flux" ? scan.flux : kind === "flip" ? scan.flip : scan.dormant;
-        const months = [...scan.baseline, pk].map((k) => formatMonthShort(Number(k.slice(0, 4)), Number(k.slice(5))));
-        const summaries = take(found).map((f) => {
-          const id = `akun:${e.id}:${f.account.code}`;
-          links.set(id, { id, label: `${f.account.code} ${f.account.name}`, href: ledger(f.account.code) });
-          const series = scan.series.get(f.account.id) ?? [];
-          const text = `Mutasi ${f.account.code} ${f.account.name}: ${series.map((v, i) => `${months[i]} ${fmt(v)}`).join(" · ")}`;
-          return { id, date: "", text: text.slice(0, 240), amount: fmt(f.current), account: f.account.code, how: `sisi normal ${f.account.normalBalance === "DEBIT" ? "debit" : "kredit"}` };
-        });
+        const summaries = take(found).map((f) => linked(accountSeriesRow(scan, f.account, f.current, e, year, month)));
         rows.push(...summaries);
-        const lines = await db.journalLine.findMany({
-          where: { entityId: e.id, date: { gte: start, lte: end }, accountId: { in: found.slice(0, summaries.length).map((f) => f.account.id) }, entry: { kind: { not: "OPENING" } } },
-          include: { account: { select: { code: true } }, entry: { select: { kind: true, memo: true, sourceRef: true, bankTransactionId: true } } },
-          orderBy: [{ date: "asc" }, { id: "asc" }], // stable ties for bySize: the payload is the cache key
-        });
-        rows.push(
-          ...take(bySize(lines.map((l) => ({ ...l, amount: l.debit - l.credit })))).map((l) => {
-            const id = `jl:${l.id}`;
-            links.set(id, { id, label: `${l.date.toISOString().slice(0, 10)} ${l.account.code} ${(l.memo ?? l.entry.memo).slice(0, 40)}`, href: ledger(l.account.code) });
-            return { id, date: l.date.toISOString().slice(0, 10), text: (l.memo ?? l.entry.memo).slice(0, DESCRIPTION), amount: fmt(l.amount), account: l.account.code, how: sourceLabel({ ...l.entry, sourceRef: l.sourceRef ?? l.entry.sourceRef }) }; // the line's own sheet!row when it has one
-          }),
-        );
+        const lines = await accountLineRows(db, e, found.slice(0, summaries.length).map((f) => f.account.id), year, month);
+        rows.push(...take(lines).map(linked));
       }
     } else if (e && kind === "going-concern") {
       // What the deficit is made of (ADR 0009: rows that explain the flag): each equity account at the month's end, the client's own
@@ -272,3 +259,48 @@ export async function reviewClose(db: Db, firmId: string, clientId: string, year
 }
 
 const abs = (v: bigint) => (v < 0n ? -v : v);
+const bySize = <T extends { amount: bigint }>(rows: T[]) => [...rows].sort((a, b) => (abs(b.amount) > abs(a.amount) ? 1 : abs(b.amount) < abs(a.amount) ? -1 : 0));
+
+/** A row the review sends, with the link that opens it on screen. */
+type Linked = { row: CloseReviewRow; link: ReviewLink };
+type ScanEntity = { id: string; functionalCurrency: string };
+const ledgerHref = (clientId: string, e: ScanEntity, year: number, month: number, code: string) =>
+  `/clients/${clientId}/ledger/${code}?period=${year}-${String(month).padStart(2, "0")}&entity=${e.id}`;
+
+/**
+ * A ledger-scan account as the close review sends it (rule 22b, ADR 0009 amendment): its movement in each baseline month and this
+ * month (`akun:<entity>:<code>`). Shared with the movers' explanation draft (accounting-rules 20d) so both send identical rows.
+ */
+export function accountSeriesRow(scan: LedgerScan, account: Account, current: bigint, e: ScanEntity, year: number, month: number): Linked {
+  const fmt = (v: bigint) => formatMoney(v, e.functionalCurrency);
+  const months = [...scan.baseline, `${year}-${String(month).padStart(2, "0")}`].map((k) => formatMonthShort(Number(k.slice(0, 4)), Number(k.slice(5))));
+  const id = `akun:${e.id}:${account.code}`;
+  const series = scan.series.get(account.id) ?? [];
+  const text = `Mutasi ${account.code} ${account.name}: ${series.map((v, i) => `${months[i]} ${fmt(v)}`).join(" · ")}`;
+  return {
+    row: { id, date: "", text: text.slice(0, 240), amount: fmt(current), account: account.code, how: `sisi normal ${account.normalBalance === "DEBIT" ? "debit" : "kredit"}` },
+    link: { id, label: `${account.code} ${account.name}`, href: ledgerHref(account.clientId, e, year, month, account.code) },
+  };
+}
+
+/**
+ * The month's journal lines on these accounts (OPENING excluded, as the scan), largest first, as the close review sends them
+ * (`jl:<line>`, memo ≤ 80 characters, the line's own `sheet!row` when it has one). The caller caps how many it sends.
+ */
+export async function accountLineRows(db: Db, e: ScanEntity, accountIds: string[], year: number, month: number): Promise<Linked[]> {
+  const { start, end } = periodBounds(year, month);
+  const lines = await db.journalLine.findMany({
+    where: { entityId: e.id, date: { gte: start, lte: end }, accountId: { in: accountIds }, entry: { kind: { not: "OPENING" } } },
+    include: { account: { select: { code: true, clientId: true } }, entry: { select: { kind: true, memo: true, sourceRef: true, bankTransactionId: true } } },
+    orderBy: [{ date: "asc" }, { id: "asc" }], // stable ties for bySize: the payload is the cache key
+  });
+  return bySize(lines.map((l) => ({ ...l, amount: l.debit - l.credit }))).map((l) => {
+    const id = `jl:${l.id}`;
+    const date = l.date.toISOString().slice(0, 10);
+    const memo = l.memo ?? l.entry.memo;
+    return {
+      row: { id, date, text: memo.slice(0, DESCRIPTION), amount: formatMoney(l.amount, e.functionalCurrency), account: l.account.code, how: sourceLabel({ ...l.entry, sourceRef: l.sourceRef ?? l.entry.sourceRef }) },
+      link: { id, label: `${date} ${l.account.code} ${memo.slice(0, 40)}`, href: ledgerHref(l.account.clientId, e, year, month, l.account.code) },
+    };
+  });
+}

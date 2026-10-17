@@ -414,6 +414,8 @@ model Entity {
   /// ISO 4217 code; journal amounts of this entity are minor units of it (ADR 0006). Registry: lib/fx/currency.ts.
   functionalCurrency String               @default("IDR")
   reportingFramework ReportingFramework   @default(SAK_EP)
+  /// Seller NITKU (22 digits) for the Coretax faktur file; null = head office, the NPWP16 + "000000".
+  nitku              String?
   bankAccounts       BankAccount[]
   entries            JournalEntry[]
   sourceAccounts     SourceAccount[]
@@ -592,7 +594,7 @@ model AuditEvent {
   clientId  String
   client    Client      @relation(fields: [clientId], references: [id])
   entityId  String?
-  /// CLASSIFY · UNPAIR · IMPORT_REMOVED · CONTROL_NOTE · MAPPING · FINDING_RESOLVED · REPORT_FORMAT · FISCAL_YEAR · SUBLEDGER · DOCUMENT_VOID · ADVANCE · REPORT_EXPORT · MODULES
+  /// CLASSIFY · UNPAIR · IMPORT_REMOVED · CONTROL_NOTE · MAPPING · FINDING_RESOLVED · REPORT_FORMAT · FISCAL_YEAR · SUBLEDGER · DOCUMENT_VOID · ADVANCE · REPORT_EXPORT · MODULES · CREDIT_LIMIT …
   kind      String
   subject   String
   summary   String
@@ -1553,7 +1555,16 @@ model Contact {
   npwp             String?
   /// Sales channel (UC-B5), free text: Marketplace, Reseller, Langsung…
   channel          String?
+  /// Credit limit in whole Rupiah (cycle 2026-10-17-pengingat-piutang), compared per IDR company with the customer's net receivable.
+  /// Metadata only, never posted. CHECK in the migration: NULL or > 0.
+  creditLimit      BigInt?
   createdAt        DateTime          @default(now())
+  /// Buyer identity for the Coretax faktur file (personal data: never sent to AI, never logged). NIK = 16 digits, used when no NPWP.
+  nik              String?
+  /// 22 digits; null = the NPWP16 + "000000" (head office).
+  nitku            String?
+  address          String?
+  email            String?
   invoices         Invoice[]
   /// Bank lines matched to this contact (their unmatched rest is the contact's advance).
   bankTransactions BankTransaction[]
@@ -1602,6 +1613,11 @@ model Invoice {
   voidEntry        JournalEntry?       @relation("InvoiceVoidEntry", fields: [voidEntryId], references: [id], onDelete: Restrict)
   voidedById       String?
   voidedBy         FirmMember?         @relation("InvoiceVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+  /// The one faktur item of a sales invoice for Coretax: A barang / B jasa, Kode Barang/Jasa, Satuan (UM.xxxx), name (null = description).
+  fakturItemKind   String?
+  fakturItemCode   String?
+  fakturUnit       String?
+  fakturItemName   String?
 
   @@unique([entityId, direction, number])
   @@index([clientId])
@@ -2013,6 +2029,29 @@ model ReportComment {
   approvedAt   DateTime @default(now())
 
   @@unique([entityId, year, month])
+  @@index([clientId])
+}
+
+/// Wawasan keuangan: the accountant-approved explanation of one P&L account's movement in a month (accounting-rules 20d).
+model FluxExplanation {
+  id           String   @id @default(cuid())
+  firmId       String
+  clientId     String
+  entityId     String
+  year         Int
+  month        Int
+  accountCode  String
+  text         String
+  /// AI (a cited draft that passed the number check, unedited) or ACCOUNTANT (typed or edited by the accountant).
+  source       String
+  /// The account's movement it was approved against: { baseline: ["YYYY-MM"…], values: [minor units as strings…] } — stale when it moves.
+  series       Json
+  /// The row ids an AI draft cited (`akun:…`, `jl:…`); empty for the accountant's own words.
+  refs         Json
+  approvedById String?
+  approvedAt   DateTime @default(now())
+
+  @@unique([entityId, year, month, accountCode])
   @@index([clientId])
 }
 

@@ -120,6 +120,7 @@ export default async function JournalsPage({ params, searchParams }: { params: P
                     </p>
                   </div>
                   {e.source && <p className="text-xs break-words text-muted-foreground">Sumber: {e.source}</p>}
+                  {e.origin && <p className="text-xs break-words text-muted-foreground" data-testid="entry-origin">Asal: {e.origin}</p>}
                   <table className="w-full max-w-3xl table-fixed text-sm">
                     <thead className="sr-only">
                       <tr>

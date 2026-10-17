@@ -93,7 +93,7 @@ Top five invariants (full list in `accounting-rules`):
 ## 5. Repo map
 
 ```
-app/(app)/                 pages (Beranda + /clients/[id]/{import,review,ledger,trial-balance,reports,journals/new,close,settings})
+app/(app)/                 pages (Beranda + /clients/[id]/{import,approvals,review,ledger,trial-balance,reports,journals/new,close,settings})
 app/*actions.ts            server actions — the only UI write paths, each through `requireCapability` (or `requirePlatformAdmin`)
 components/ui/             shadcn (base-nova on @base-ui/react), vendored — edit sparingly
 components/app/            product components (Money, StatusPill, NextStep, charts, forms)
@@ -104,6 +104,7 @@ lib/ledger-import/         ledger/Neraca files: read → check → map (source a
 lib/fx/                    currency registry + exact rate math, Kurs table, revaluation
 lib/classify/  lib/ai/     transfer matcher, rules, memory; OpenAI-compatible LLM provider + cache + budget
 lib/reports/  lib/controls/ TB, Laba Rugi, Neraca, client report format, Excel/PDF set, combined worksheet, tax card; close controls + lock
+lib/approvals/             Kotak persetujuan: the month's proposals of every kind as one read model (no table); the firm board counts it
 lib/demo/                  scenario generator, bank-format writers, seed, ground-truth verifier
 prisma/                    schema + migrations (CHECK constraints live in the init migration)
 tests/{unit,db}/           Vitest (DB tests use buku_test)       e2e/  Playwright investor walk

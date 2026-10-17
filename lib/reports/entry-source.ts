@@ -52,3 +52,7 @@ export function entrySource(e: EntrySourceInput): string | null {
   if (e.reverses) return `Membalik jurnal “${e.reverses.memo}”`;
   return e.sourceRef;
 }
+
+/** One journal line's source: an imported line names its own file row (`sheet!row`); any other line its entry's source. */
+export const lineSource = (l: { sourceRef: string | null; entry: EntrySourceInput }): string | null =>
+  l.sourceRef && l.entry.ledgerImport ? `${l.entry.ledgerImport.fileName} · ${l.sourceRef}` : entrySource(l.entry);

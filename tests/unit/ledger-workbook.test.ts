@@ -26,15 +26,16 @@ const acct = (code: string, name: string, normalBalance: "DEBIT" | "CREDIT") => 
 describe("ledger workbooks", () => {
   it("Jurnal Umum: a header row per journal, its lines, and SUM totals that balance", async () => {
     const entries: RegisterEntry[] = [
-      { id: "a", date: dateOnly(2026, 9, 3), entity: "PT Uji", kind: "ADJUSTMENT", memo: "Gaji September", source: null, postedBy: "Sari", postedAt: new Date(), reversedOn: null, lines: [{ code: "6100", name: "Beban Gaji", memo: null, debit: 12_000_000n, credit: 0n }, { code: "1110", name: "Kas Kecil", memo: null, debit: 0n, credit: 12_000_000n }] },
-      { id: "b", date: dateOnly(2026, 9, 5), entity: "PT Uji", kind: "BANK", memo: "TRSF CR MITRA", source: "BCA Giro · bca.csv, baris 2", postedBy: "Sistem", postedAt: new Date(), reversedOn: null, lines: [{ code: "1101", name: "Bank BCA", memo: null, debit: 4_250_000n, credit: 0n }, { code: "4100", name: "Penjualan", memo: null, debit: 0n, credit: 4_250_000n }] },
+      { id: "a", date: dateOnly(2026, 9, 3), entity: "PT Uji", kind: "ADJUSTMENT", memo: "Gaji September", source: null, origin: null, postedBy: "Sari", postedAt: new Date(), reversedOn: null, lines: [{ code: "6100", name: "Beban Gaji", memo: null, debit: 12_000_000n, credit: 0n }, { code: "1110", name: "Kas Kecil", memo: null, debit: 0n, credit: 12_000_000n }] },
+      { id: "b", date: dateOnly(2026, 9, 5), entity: "PT Uji", kind: "BANK", memo: "TRSF CR MITRA", source: "BCA Giro · bca.csv, baris 2", origin: "Usulan AI 4100 (92 %) disetujui", postedBy: "Sistem", postedAt: new Date(), reversedOn: null, lines: [{ code: "1101", name: "Bank BCA", memo: null, debit: 4_250_000n, credit: 0n }, { code: "4100", name: "Penjualan", memo: null, debit: 0n, credit: 4_250_000n }] },
     ];
     const ws = await read(await journalWorkbook(meta, "September 2026", entries));
     const r = rows(ws);
     expect(r[0]).toEqual(["PT Uji Sejahtera"]);
     expect(r[1]).toEqual(["Jurnal Umum"]);
     expect(r.find((x) => x[0] === "2026-09-03")).toEqual(["2026-09-03", "Penyesuaian", "PT Uji", "Gaji September", null, null, null, null, "Dicatat oleh Sari"]);
-    expect(r.find((x) => x[8] === "BCA Giro · bca.csv, baris 2")?.[1]).toBe("Mutasi bank");
+    // The source column names the proposal the entry was approved from after its source row.
+    expect(r.find((x) => x[8] === "BCA Giro · bca.csv, baris 2 · Usulan AI 4100 (92 %) disetujui")?.[1]).toBe("Mutasi bank");
     expect(r.at(-1)!.slice(3)).toEqual(["Jumlah (2 jurnal)", null, null, "=SUM(G9:G14)→16250000", "=SUM(H9:H14)→16250000"]);
   });
 

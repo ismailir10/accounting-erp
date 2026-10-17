@@ -3,7 +3,7 @@
 import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, Plus } from "lucide-react";
+import { Bell, ChevronDown, ChevronRight, Pencil, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -15,6 +15,8 @@ import { ReceivablesTabs } from "@/components/app/receivables-tabs";
 import { SimpleSelect } from "@/components/app/simple-select";
 import { Money } from "@/components/app/money";
 import { StatusPill } from "@/components/app/status";
+import { useAccess } from "@/components/app/access-context";
+import { CreditLimitDialog, ReminderDialog, type ReminderTarget } from "@/components/app/receivable-reminder";
 import { createInvoiceAction, settleAction, settleCandidatesAction, settleFifoAction, tagAdvanceAction, unsettleAction, voidInvoiceAction } from "@/app/actions";
 import { Textarea } from "@/components/ui/textarea";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -48,9 +50,16 @@ export function Receivables(props: {
   contactOptions: { id: string; name: string }[];
   accounts: { counter: Account[]; arAp: Account[] };
   defaultDate: string;
+  /** Piutang only (cycle 2026-10-17-pengingat-piutang): the reminder text per `entityId:contactId` with an overdue invoice on the date. */
+  reminders?: Record<string, string>;
+  reminder?: { date: string; monthOpen: boolean; periodKey: string };
 }) {
   const router = useRouter();
+  const { canWrite } = useAccess();
   const w = WORDS[props.direction];
+  const [limitFor, setLimitFor] = useState<{ id: string; name: string; limit: string | null } | null>(null);
+  const [reminding, setReminding] = useState<ReminderTarget | null>(null);
+  const reminders = props.direction === "SALES" ? (props.reminders ?? {}) : {};
   const [form, setForm] = useState<InvoiceForm | null>(null);
   const [matching, setMatching] = useState<{ invoice: InvoiceView; candidates: CandidateView[] | null } | null>(null);
   const [amounts, setAmounts] = useState<Record<string, string>>({});
@@ -183,6 +192,11 @@ export function Receivables(props: {
         const cmp = props.comparison.find((c) => c.entityId === a.entityId);
         const withAdvance = BigInt(a.totals.advance) !== 0n;
         const unallocated = BigInt(a.unallocated);
+        // Batas kredit: Piutang of a Rupiah company; Pengingat: a customer with an overdue invoice on the reminder date.
+        const limits = props.direction === "SALES" && a.currency === "IDR";
+        const remind = a.rows.some((r) => reminders[`${a.entityId}:${r.contactId}`]);
+        const company = props.entities.find((e) => e.id === a.entityId)?.name ?? a.entity;
+        const end = remind ? "text-right" : "pr-6 text-right";
         return (
           <Card key={a.entityId} data-testid={`aging-${a.entity}`}>
             <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
@@ -199,41 +213,82 @@ export function Receivables(props: {
                     <TableHead className="pl-6">{w.party}</TableHead>
                     {BUCKETS.map((b) => <TableHead key={b} className="hidden text-right md:table-cell">{BUCKET_LABEL[b]}</TableHead>)}
                     {withAdvance && <TableHead className="hidden text-right whitespace-normal md:table-cell">Uang muka / kelebihan bayar</TableHead>}
-                    <TableHead className="pr-6 text-right">Jumlah</TableHead>
+                    <TableHead className={end}>Jumlah</TableHead>
+                    {remind && <TableHead className="pr-6"><span className="sr-only">Pengingat</span></TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {a.rows.map((r) => (
-                    <TableRow key={r.contact} data-credit={r.credit || undefined}>
-                      <TableCell className="pl-6 whitespace-normal">
-                        {r.contact} <span className="text-xs text-muted-foreground">· {r.count ? `${r.count} ${w.docLower}` : "uang muka"}</span>
-                        {r.credit && <span className="text-xs text-review"> · kelebihan bayar</span>}
-                      </TableCell>
-                      {BUCKETS.map((b) => <TableCell key={b} className="hidden text-right md:table-cell"><Money value={BigInt(r.buckets[b])} currency={a.currency} /></TableCell>)}
-                      {withAdvance && <TableCell className="hidden text-right md:table-cell"><Money value={-BigInt(r.advance)} currency={a.currency} /></TableCell>}
-                      <TableCell className={r.credit ? "pr-6 text-right text-review" : "pr-6 text-right"}><Money strong value={BigInt(r.net)} currency={a.currency} /></TableCell>
-                    </TableRow>
-                  ))}
+                  {a.rows.map((r) => {
+                    const text = reminders[`${a.entityId}:${r.contactId}`];
+                    return (
+                      <TableRow key={r.contact} data-credit={r.credit || undefined} data-testid={`aging-row-${r.contact}`}>
+                        <TableCell className="pl-6 whitespace-normal">
+                          {r.contact}
+                          {limits && canWrite && (
+                            <Button variant="ghost" size="icon-xs" className="ml-1 align-middle" aria-label={`Ubah batas kredit ${r.contact}`} onClick={() => setLimitFor({ id: r.contactId, name: r.contact, limit: r.limit })}>
+                              <Pencil />
+                            </Button>
+                          )}{" "}
+                          <span className="text-xs text-muted-foreground">· {r.count ? `${r.count} ${w.docLower}` : "uang muka"}</span>
+                          {r.credit && <span className="text-xs text-review"> · kelebihan bayar</span>}
+                          {r.limit && (
+                            <div className="text-xs text-muted-foreground">
+                              <span className="hidden md:inline">Batas {formatMoney(BigInt(r.limit), "IDR")}</span>
+                              {r.over && <span className="text-review" data-testid="over-limit"><span className="hidden md:inline"> · </span>lewat batas kredit</span>}
+                            </div>
+                          )}
+                        </TableCell>
+                        {BUCKETS.map((b) => <TableCell key={b} className="hidden text-right md:table-cell"><Money value={BigInt(r.buckets[b])} currency={a.currency} /></TableCell>)}
+                        {withAdvance && <TableCell className="hidden text-right md:table-cell"><Money value={-BigInt(r.advance)} currency={a.currency} /></TableCell>}
+                        <TableCell className={r.credit ? `${end} text-review` : end}><Money strong value={BigInt(r.net)} currency={a.currency} /></TableCell>
+                        {remind && (
+                          <TableCell className="w-0 pr-4 text-right">
+                            {text && props.reminder && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                aria-label={`Pengingat ${r.contact}`}
+                                onClick={() =>
+                                  setReminding({
+                                    key: `${a.entityId}:${r.contactId}`,
+                                    customer: r.contact,
+                                    company,
+                                    text,
+                                    statementHref: `/clients/${props.clientId}/receivables/statement?${new URLSearchParams({ entity: a.entityId, contact: r.contactId, period: props.reminder!.periodKey })}`,
+                                  })
+                                }
+                              >
+                                <Bell /> Pengingat
+                              </Button>
+                            )}
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
                 <TableFooter>
                   <TableRow>
                     <TableCell className="pl-6 font-medium">Jumlah</TableCell>
                     {BUCKETS.map((b) => <TableCell key={b} className="hidden text-right md:table-cell"><Money strong value={BigInt(a.totals[b])} currency={a.currency} /></TableCell>)}
                     {withAdvance && <TableCell className="hidden text-right md:table-cell"><Money strong value={-BigInt(a.totals.advance)} currency={a.currency} /></TableCell>}
-                    <TableCell className="pr-6 text-right"><Money strong value={BigInt(a.totals.net)} currency={a.currency} /></TableCell>
+                    <TableCell className={end}><Money strong value={BigInt(a.totals.net)} currency={a.currency} /></TableCell>
+                    {remind && <TableCell className="pr-6" />}
                   </TableRow>
                   {unallocated !== 0n && (
                     <TableRow data-testid="unallocated">
                       <TableCell className="pl-6 whitespace-normal text-review">Belum dialokasikan <span className="text-xs">· {a.unallocatedLines} mutasi bank, lihat di bawah</span></TableCell>
                       <TableCell className="hidden md:table-cell" colSpan={BUCKETS.length + (withAdvance ? 1 : 0)} />
-                      <TableCell className="pr-6 text-right"><Money value={-unallocated} currency={a.currency} /></TableCell>
+                      <TableCell className={end}><Money value={-unallocated} currency={a.currency} /></TableCell>
+                      {remind && <TableCell className="pr-6" />}
                     </TableRow>
                   )}
                   {cmp && (
                     <TableRow data-testid="subledger-ledger">
                       <TableCell className="pl-6 text-muted-foreground whitespace-normal" colSpan={1}>Buku besar ({cmp.accounts.join(", ")})</TableCell>
                       <TableCell className="hidden md:table-cell" colSpan={BUCKETS.length + (withAdvance ? 1 : 0)} />
-                      <TableCell className="pr-6 text-right"><Money muted value={BigInt(cmp.ledger)} currency={cmp.currency} /></TableCell>
+                      <TableCell className={end}><Money muted value={BigInt(cmp.ledger)} currency={cmp.currency} /></TableCell>
+                      {remind && <TableCell className="pr-6" />}
                     </TableRow>
                   )}
                 </TableFooter>
@@ -466,6 +521,9 @@ export function Receivables(props: {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <CreditLimitDialog key={limitFor?.id ?? "none"} clientId={props.clientId} customer={limitFor} onClose={() => setLimitFor(null)} />
+      {props.reminder && <ReminderDialog key={reminding?.key ?? "none"} target={reminding} date={props.reminder.date} monthOpen={props.reminder.monthOpen} onClose={() => setReminding(null)} />}
     </div>
   );
 }

@@ -11,6 +11,9 @@ import { ACCOUNT_CODES, isClassifiable } from "@/lib/coa/template";
 import { defaultTaxMonth } from "@/lib/tax/masa";
 import { checkWithholding, type Withholding } from "@/lib/tax/withholding";
 
+/** What a line in Review proposed when the reviewer decided on it, as its `CLASSIFY` event keeps it (`after.suggestion`). */
+export type ClassifySuggestion = { accountCode: string; taxTag: TaxTag | null; method: string; confidence: number };
+
 type ReviewArgs = {
   bankTxId: string;
   accountCode: string;
@@ -73,7 +76,10 @@ export async function reviewTransactionTx(tx: Tx, args: ReviewArgs) {
   const parts = await tx.bankTxSplit.findMany({ where: { bankTransactionId: t.id }, orderBy: { position: "asc" }, select: { accountCode: true, amount: true } });
   if (parts.length && !args.replaceSplit) throw new LedgerError("Mutasi ini dipecah ke beberapa akun. Ubah lewat Pecah transaksi, atau gabungkan dulu ke satu akun di Buku Besar.");
   if (parts.length) await tx.bankTxSplit.deleteMany({ where: { bankTransactionId: t.id } });
-  await postBankTransaction(tx, t.id, { accountCode: args.accountCode, taxTag: args.taxTag, withholding }, { actorId: args.actorId });
+  const entry = await postBankTransaction(tx, t.id, { accountCode: args.accountCode, taxTag: args.taxTag, withholding }, { actorId: args.actorId });
+  // The proposal this decision was taken on (a line still in Review): kept on the event with the RECLASS it produced, so the entry
+  // names its origin ("Usulan AI 6120 (92 %) disetujui", lib/reports/entry-origin.ts). A later *Ubah akun* decides on no proposal.
+  const suggestion: ClassifySuggestion | null = t.status === "NEEDS_REVIEW" && t.suggestedCode ? { accountCode: t.suggestedCode, taxTag: t.taxTag, method: t.method, confidence: t.confidence } : null;
   // Merging a split back is a decision too, even onto the account first suggested.
   const changed = args.accountCode !== t.suggestedCode || args.taxTag !== t.taxTag || parts.length > 0;
   // Riwayat (ADR 0013): every decision that moves the line's classification, from where it was to where it goes.
@@ -88,7 +94,7 @@ export async function reviewTransactionTx(tx: Tx, args: ReviewArgs) {
       subject: `bankTx:${t.id}`,
       summary: `${t.description.slice(0, 70)} · ${formatMoney(t.amount < 0n ? -t.amount : t.amount, t.bankAccount.currency)}: ${tag(from)} → ${tag(to)}`,
       before: from,
-      after: to,
+      after: { ...to, suggestion, entryId: entry?.id ?? null },
       actorId: args.actorId,
     });
   }

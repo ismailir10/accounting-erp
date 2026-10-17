@@ -23,7 +23,7 @@ const KIND_LABEL: Record<Kind, string> = { PT: "PT", CV: "CV", BADAN_USAHA_ASING
 
 /** `blocked`: why it can't be removed (the server's own check), null when it can. `numberLocked`: a statement was read for the account. */
 export type BankView = { id: string; label: string; bank: Bank; number: string; code: string; isOverdraft: boolean; numberLocked: boolean; blocked: string | null };
-export type EntityView = { id: string; name: string; shortName: string; npwp: string; kind: Kind; blocked: string | null; banks: BankView[] };
+export type EntityView = { id: string; name: string; shortName: string; npwp: string; nitku: string; kind: Kind; blocked: string | null; banks: BankView[] };
 
 /** Fields of one bank account (bank, number, name, PRK). `prefix` is the error-key path the server reports under. */
 function BankFields({ value, onChange, errors, prefix }: { value: { bank: Bank; number: string; label: string; isOverdraft: boolean }; onChange: (v: { bank: Bank; number: string; label: string; isOverdraft: boolean }) => void; errors: Record<string, string>; prefix: string }) {
@@ -125,13 +125,16 @@ function EditEntity({ clientId, entity, canRemove, onDone }: { clientId: string;
   const [name, setName] = useState(entity.name);
   const [shortName, setShortName] = useState(entity.shortName);
   const [npwp, setNpwp] = useState(entity.npwp);
+  const [nitku, setNitku] = useState(entity.nitku);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const id = `edit-${entity.id}`;
+  // The seller's NITKU in the Coretax faktur file: companies only (a foreign one has no NPWP, an owner issues no faktur here).
+  const company = entity.kind === "PT" || entity.kind === "CV";
   async function save() {
     setBusy(true);
     try {
-      const r = await renameEntityAction(clientId, entity.id, { name, shortName, npwp });
+      const r = await renameEntityAction(clientId, entity.id, { name, shortName, npwp, ...(company ? { nitku } : {}) });
       if (!r.ok) {
         setErrors(r.fields ?? {});
         return void toast.error(r.error);
@@ -162,6 +165,13 @@ function EditEntity({ clientId, entity, canRemove, onDone }: { clientId: string;
             <FieldLabel htmlFor={`${id}-npwp`}>NPWP (opsional)</FieldLabel>
             <Input id={`${id}-npwp`} value={npwp} aria-invalid={!!errors.npwp} onChange={(e) => { setNpwp(e.target.value); clear(); }} placeholder="15 atau 16 angka" />
             <FieldError>{errors.npwp}</FieldError>
+          </Field>
+        )}
+        {company && (
+          <Field className="sm:col-span-2">
+            <FieldLabel htmlFor={`${id}-nitku`}>NITKU untuk faktur (opsional)</FieldLabel>
+            <Input id={`${id}-nitku`} value={nitku} inputMode="numeric" aria-invalid={!!errors.nitku} onChange={(e) => { setNitku(e.target.value); clear(); }} placeholder="Kosong = kantor pusat (NPWP + 000000)" />
+            <FieldError>{errors.nitku}</FieldError>
           </Field>
         )}
       </div>

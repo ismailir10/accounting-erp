@@ -43,3 +43,9 @@ a draft journal, validated before storage (accounts from the chart, never a bank
 row's amount) and stored as a `ProposedEntry`. Only the accountant's click posts it — through `postJournal()`, or through the
 reviewer's writer when the draft re-classifies a single bank line. A draft note only prefills the acknowledgement dialog.
 
+
+**Note (17 Oct 2026, cycle wawasan-keuangan).** A second path reads the books under the amendment's payload: *Susun dengan AI* on a
+mover of Analisis keuangan → *Wawasan* drafts why one flagged P&L account moved, for the owner. It sends only what the close review
+sends for that account (its movement per baseline month and this month, and up to ten of the month's largest lines on it) and may only
+cite those rows (decision 3); every number in the draft must appear in them, and only the accountant's approval stores it
+(accounting-rules 20d). Same budget, cache and no-retry rules (decision 5).

@@ -21,7 +21,7 @@ import { aiRunForView } from "@/lib/ai/background";
 export const metadata = { title: "Review transaksi" };
 
 export default async function ReviewPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: SearchParams }) {
-  const { client, base, scope, period, scopeLabel, entityOptions, periodOptions } = await loadClientPage(params, searchParams);
+  const { client, base, scope, period, scopeLabel, entityOptions, periodOptions, sp } = await loadClientPage(params, searchParams);
   const txs = await prisma.bankTransaction.findMany({
     where: { firmId: client.firmId, entityId: { in: scope.entityIds }, date: { lte: period.end }, status: "NEEDS_REVIEW" },
     include: { bankAccount: { include: { entity: true } } },
@@ -71,7 +71,7 @@ export default async function ReviewPage({ params, searchParams }: { params: Pro
           </a>
         </div>
       )}
-      <ReviewQueue items={items} accounts={options} scope={{ entityIds: scope.entityIds, period: period.key }} clientId={client.id} simpleGuesses={simpleGuesses} aiReady={Boolean(ai.apiKey && ai.model)} canSetUpAi={isAdminRole(member.role)} aiRun={aiRun} />
+      <ReviewQueue items={items} accounts={options} scope={{ entityIds: scope.entityIds, period: period.key }} clientId={client.id} simpleGuesses={simpleGuesses} aiReady={Boolean(ai.apiKey && ai.model)} canSetUpAi={isAdminRole(member.role)} aiRun={aiRun} focusId={typeof sp.tx === "string" ? sp.tx : null} />
     </div>
   );
 }

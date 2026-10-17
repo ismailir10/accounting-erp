@@ -8,6 +8,7 @@ import { setupProgress } from "@/lib/setup-progress";
 import { askEvidence } from "@/lib/evidence/answers";
 import { completenessMatrix } from "@/lib/controls/completeness";
 import { financialYear, fiscalEndMonth } from "@/lib/fiscal";
+import { approvalCounts } from "@/lib/approvals/queue";
 
 export type WorkspaceInput = { scope?: string; period?: string };
 export class WorkspaceInputError extends Error {}
@@ -86,11 +87,13 @@ export async function getWorkspaceOverview(db: Db, access: WorkspaceAccess, inpu
   }));
   // Close is a client/group operation. Never imply that an entity-only filter changes its controls.
   const clients = await Promise.all(scope.clients.filter(c => scope.clientIds.includes(c.id)).map(async c => {
-    const [controls, period, activity, completeness] = await Promise.all([
+    const [controls, period, activity, completeness, approvals] = await Promise.all([
       runControls(db, c.id, scope.year, scope.month),
       db.period.findUnique({ where: { clientId_year_month: { clientId: c.id, year: scope.year, month: scope.month } }, include: { signoffs: true } }),
       db.journalEntry.count({ where: { firmId, entity: { clientId: c.id }, date: { gte: start, lte: end } } }),
       completenessMatrix(db, c.id, scope.year, scope.month, 1),
+      // Persetujuan: the client's Kotak for the month, every company (the same read model as the page, so the counts agree).
+      approvalCounts(db, { clientId: c.id, year: scope.year, month: scope.month }),
     ]);
     // Papan kantor (I5a): Sumber is this month's completeness; Terkirim the first report out after the lock (as in close:timeline).
     const sumber = { rows: completeness.rows.length, gaps: completeness.rows.filter((r) => r.cells.some((cell) => cell.state === "missing" || cell.state === "broken")).length };
@@ -107,7 +110,7 @@ export async function getWorkspaceOverview(db: Db, access: WorkspaceAccess, inpu
     const setup = await setupProgress(db, c.id, { period: { year: scope.year, month: scope.month }, missingStatements: missingStatements.map(m => m.title) });
     // The findings that hold the close, failed first: what Tanya Buku names when asked what blocks the books.
     const open = [...readiness.fails, ...readiness.unacked].map((control) => ({ title: control.title, scope: control.scope, status: control.status, href: workspaceHref(control.href ?? `/clients/${c.id}/close`, scope) }));
-    return { id: c.id, name: c.name, state, label: labels[state], sumber, open, sentAt: sent?.createdAt ?? null, importHref: workspaceHref(`/clients/${c.id}/import`, scope), reviewHref: workspaceHref(`/clients/${c.id}/review`, scope), hasActivity: activity > 0, openReview: entities.filter(e => e.clientId === c.id).reduce((n, e) => n + e.openReview, 0), failCount: readiness.fails.length, reviewCount: readiness.unacked.length, missingSignoffs: readiness.missing.length, missingStatements, taxIssues, setup: { step: setup.current, hasData: setup.hasData, hasBanks: setup.hasBanks, next: setup.next, opening: setup.needsOpening.map(e => e.shortName) }, closeHref: workspaceHref(`/clients/${c.id}/close`, scope) };
+    return { id: c.id, name: c.name, state, label: labels[state], sumber, open, sentAt: sent?.createdAt ?? null, importHref: workspaceHref(`/clients/${c.id}/import`, scope), approvals: approvals.total, approvalsHref: workspaceHref(`/clients/${c.id}/approvals`, scope, { entity: "combined" }), hasActivity: activity > 0, failCount: readiness.fails.length, reviewCount: readiness.unacked.length, missingSignoffs: readiness.missing.length, missingStatements, taxIssues, setup: { step: setup.current, hasData: setup.hasData, hasBanks: setup.hasBanks, next: setup.next, opening: setup.needsOpening.map(e => e.shortName) }, closeHref: workspaceHref(`/clients/${c.id}/close`, scope) };
   }));
   // The detail names the client when the company's own name doesn't (an owner "Budi Santoso" can belong to two clients).
   const tasks: WorkspaceTask[] = entities.filter(e => e.openReview > 0).map(e => ({ id: `review:${e.id}`, title: `Periksa ${e.openReview} transaksi`, detail: `${e.name === e.clientName ? e.name : `${e.clientName} · ${e.name}`} · sampai ${scope.periodLabel}`, href: e.reviewHref, priority: "high", clientId: e.clientId, entityId: e.id }));
