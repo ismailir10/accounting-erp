@@ -224,7 +224,7 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
       stranger and revoked 404, no `REPORT_EXPORT`). (Deps: T2, T3.)
 - [x] T5 Card *Faktur keluaran untuk Coretax* on Pajak Masa, with the identity sheet and the bulk item form — accept: Playwright flows
       1 and 3. (Deps: T4.)
-- [ ] T6 verify-local: walk flows 1–4, open the XML, screenshots at 1440 and 390 px, full gate.
+- [x] T6 verify-local: walk flows 1–4, open the XML, screenshots at 1440 and 390 px, full gate.
 
 ## Implementation
 - Plan: T1–T5 sequential, inline in one build worker (the driver gave this worker the whole cycle; T3–T5 share `lib/tax`,
@@ -271,8 +271,25 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
   - Decision: the upload deadline shows as a hint ("paling lambat 15 <bulan berikutnya>; belum dicek dengan PER-11/PJ/2025"), never a block.
 
 ## Verification
+- **Walk (local, :3200, demo admin):** `e2e/coretax-faktur.spec.ts`: a masa with three sales invoices shows 2 *Siap*, 1 *Diblokir* with its
+  reasons ("PPN Rp 600.000 tidak sama dengan 12% × 11/12 × DPP (Rp 550.000)…"), fixed in place (buyer identity, item), and *Unduh XML*
+  holds the *Siap* rows only. The card names the format as untested against a real Coretax upload. Screenshots at 1440 and 390 px.
+- **Task gate (head `ff2dbee`, all four cycles merged):** `npm run lint` exit 0, `npm run typecheck` exit 0, `npm test` "Test Files 298
+  passed (298) · Tests 2710 passed (2710)" (1041 s).
+- **Full gate:** `npm run build` exit 0; `npm run demo:reset`; `npm run verify:books` → "ALL PASS — 1765 pemeriksaan saldo cocok dengan
+  ground truth"; `npm run test:e2e` 110 passed and 3 failed only on the local environment (`APP_URL` and the local auth stack on port 3000
+  instead of 3200, the same as the jurnal-umum cycle recorded); with both on 3200 `auth-links` and `trial-signup` re-ran and passed (3/3),
+  and `public-site` passed.
+- **While walking:** two new e2e expectations were wrong against the demo (the July 6170 mover holds one line, not three; the closed-month
+  Kotak test read the URL before navigation) and were fixed; Wawasan counted the group's opening-only February as the year's lowest month
+  and in the average, fixed in `d096678` (the trend starts at the first month with a Laba Rugi figure, unit-tested).
+
+Verified locally — ff2dbee
 
 ## Ship Notes
+- Deck: kantor slides 04 (Persetujuan column), 07 (Kotak), 10 (Piutang: batas kredit, pengingat), 12 (Coretax file, Wawasan) and 16
+  (limits), perusahaan slide 13; PDFs regenerated; checked at 1440×900 and 375×812, no overflow.
+- The `e2e` label applies (app flows).
 - Migration `20261017120000_coretax_faktur`: additive nullable columns only (`Contact.nik/nitku/address/email`, `Entity.nitku`,
   `Invoice.fakturItemKind/fakturItemCode/fakturUnit/fakturItemName`), no backfill, no CHECK. Rollback: revert the code; the columns can
   stay (nothing else reads them).

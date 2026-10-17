@@ -149,7 +149,7 @@ and *Kirim lewat WhatsApp*, and Buku never sends anything itself. This cycle use
       shared piece that both use. The page passes the reminder texts, built server-side with the view, and the closed-month flag. Add the
       over-limit count to the "cocok" `NextStep` sentence. Extend `e2e/receivables.spec.ts`. Accept: e2e flows 1–2, screenshots at 1440 and
       390 px. (deps: T1, T2)
-- [ ] T4 Docs + verify-local. Update the README *Piutang & Utang* row and the accounting-rules 5c sentence (limit = metadata, reminders
+- [x] T4 Docs + verify-local. Update the README *Piutang & Utang* row and the accounting-rules 5c sentence (limit = metadata, reminders
       derived, nothing posted). Run the full gate and walk flows 1–4. (deps: T3)
 
 ## Implementation
@@ -193,5 +193,27 @@ and *Kirim lewat WhatsApp*, and Buku never sends anything itself. This cycle use
   statement are derived at read time, with nothing posted, stored or sent. The full gate and flows 1–4 stay with verify-local.
 
 ## Verification
+- **Walk (local, production build on :3200, demo admin):** `e2e/receivables.spec.ts` on a fresh client: a limit below the open amount shows
+  *lewat batas kredit*, above it the mark goes, `0` and `abc` are refused in Bahasa, both changes are in Riwayat; *Pengingat* on INV-300
+  ("jatuh tempo 1 Agu 2026 … terlambat 30 hari", Rp 5.550.000, signed "PT Piutang Uji"), the edited text in the `wa.me` link, the statement
+  PDF with every open invoice, no *Pengingat* on Utang. Screenshots at 1440 and 390 px; no sideways scroll.
+- **Task gate (head `ff2dbee`, all four cycles merged):** `npm run lint` exit 0, `npm run typecheck` exit 0, `npm test` "Test Files 298
+  passed (298) · Tests 2710 passed (2710)" (1041 s).
+- **Full gate:** `npm run build` exit 0; `npm run demo:reset`; `npm run verify:books` → "ALL PASS — 1765 pemeriksaan saldo cocok dengan
+  ground truth"; `npm run test:e2e` 110 passed and 3 failed only on the local environment (`APP_URL` and the local auth stack on port 3000
+  instead of 3200, the same as the jurnal-umum cycle recorded); with both on 3200 `auth-links` and `trial-signup` re-ran and passed (3/3),
+  and `public-site` passed.
+- **While walking:** two new e2e expectations were wrong against the demo (the July 6170 mover holds one line, not three; the closed-month
+  Kotak test read the URL before navigation) and were fixed; Wawasan counted the group's opening-only February as the year's lowest month
+  and in the average, fixed in `d096678` (the trend starts at the first month with a Laba Rugi figure, unit-tested).
+
+Verified locally — ff2dbee
 
 ## Ship Notes
+- Migration `20261017110000_contact_credit_limit`: one nullable `Contact.creditLimit BIGINT` with a CHECK (NULL or > 0). Apply it to
+  production before merging (README → Schema changes; the build refuses a pending migration, ADR 0019). Rollback: revert the code; the
+  column can stay.
+- No env var, dependency or AI call; no report number moves.
+- Deck: kantor slides 04 (Persetujuan column), 07 (Kotak), 10 (Piutang: batas kredit, pengingat), 12 (Coretax file, Wawasan) and 16
+  (limits), perusahaan slide 13; PDFs regenerated; checked at 1440×900 and 375×812, no overflow.
+- The `e2e` label applies (app flows).

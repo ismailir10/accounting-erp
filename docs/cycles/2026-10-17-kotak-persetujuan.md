@@ -211,7 +211,7 @@ If traceability turns out to need a column after all, that is a migration: stop 
         decision.
       - Shown on Jurnal Umum, the Buku Besar drawer and the Excel source column.
       Accept: unit and DB tests, flow 2. (parallel with T2/T3)
-- [ ] T5 verify-local: walk flows 1–5 with screenshots at 1440 and 390 px; `e2e/kotak-persetujuan.spec.ts`; the full gate
+- [x] T5 verify-local: walk flows 1–5 with screenshots at 1440 and 390 px; `e2e/kotak-persetujuan.spec.ts`; the full gate
       (`verify:books` ALL PASS). (deps: T2–T4)
 
 ## Implementation
@@ -268,5 +268,26 @@ If traceability turns out to need a column after all, that is a migration: stop 
   - A viewer gets a NextStep of their own and no buttons at all (the *Ubah* links included).
 
 ## Verification
+- **Walk (local, :3200, demo admin):** CV Sinar Retail, August: the board's *Persetujuan* cell equals the Kotak count (2 usulan), *Setujui 1
+  usulan yakin* offers only the 83 % grosir line, *Ubah di Review* opens Review on the RAK DISPLAY line; Grup Ayam July (closed) shows the
+  queue read-only; on a QA client bank lines, scheduled journals and a Coretax faktur approved from Kotak each name their origin in Jurnal
+  Umum. 1440 and 390 px: scroll width = viewport. `verify:books` ALL PASS (no report number moves).
+- **Task gate (head `ff2dbee`, all four cycles merged):** `npm run lint` exit 0, `npm run typecheck` exit 0, `npm test` "Test Files 298
+  passed (298) · Tests 2710 passed (2710)" (1041 s).
+- **Full gate:** `npm run build` exit 0; `npm run demo:reset`; `npm run verify:books` → "ALL PASS — 1765 pemeriksaan saldo cocok dengan
+  ground truth"; `npm run test:e2e` 110 passed and 3 failed only on the local environment (`APP_URL` and the local auth stack on port 3000
+  instead of 3200, the same as the jurnal-umum cycle recorded); with both on 3200 `auth-links` and `trial-signup` re-ran and passed (3/3),
+  and `public-site` passed.
+- **While walking:** two new e2e expectations were wrong against the demo (the July 6170 mover holds one line, not three; the closed-month
+  Kotak test read the URL before navigation) and were fixed; Wawasan counted the group's opening-only February as the year's lowest month
+  and in the average, fixed in `d096678` (the trend starts at the first month with a Laba Rugi figure, unit-tested).
+
+Verified locally — ff2dbee
 
 ## Ship Notes
+- No migration: the origin is JSON added to the `CLASSIFY` event already written. Decisions taken before this ships show no origin (audit
+  events are append-only).
+- The board's *Review* column is now *Persetujuan*; the deck says so (kantor slide 04).
+- Deck: kantor slides 04 (Persetujuan column), 07 (Kotak), 10 (Piutang: batas kredit, pengingat), 12 (Coretax file, Wawasan) and 16
+  (limits), perusahaan slide 13; PDFs regenerated; checked at 1440×900 and 375×812, no overflow.
+- The `e2e` label applies (app flows).
