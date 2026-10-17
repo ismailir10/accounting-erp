@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  The element structure of DJP's "bppu.xml" (pajak.go.id, bppu.zip, dated 2024-11-07 on the Template XML dan Converter index),
+  transcribed by hand on 2026-10-17: every element name and its order as DJP wrote them (SP2DNumber as xsi:nil), with our own
+  placeholder values instead of DJP's. It is the reference for the tag-order test in tests/unit/coretax-bppu-xml.test.ts.
+-->
+<BpuBulk xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+	<TIN>0000000000000001</TIN>
+	<ListOfBpu>
+		<Bpu>
+			<TaxPeriodMonth>1</TaxPeriodMonth>
+			<TaxPeriodYear>2025</TaxPeriodYear>
+			<CounterpartTin>0000000000000002</CounterpartTin>
+			<IDPlaceOfBusinessActivityOfIncomeRecipient>0000000000000002000000</IDPlaceOfBusinessActivityOfIncomeRecipient>
+			<TaxCertificate>N/A</TaxCertificate>
+			<TaxObjectCode>00-000-00</TaxObjectCode>
+			<TaxBase>1</TaxBase>
+			<Rate>1</Rate>
+			<Document>CommercialInvoice</Document>
+			<DocumentNumber>x</DocumentNumber>
+			<DocumentDate>2025-01-01</DocumentDate>
+			<IDPlaceOfBusinessActivity>0000000000000001000000</IDPlaceOfBusinessActivity>
+			<GovTreasurerOpt>N/A</GovTreasurerOpt>
+			<SP2DNumber xsi:nil="true"/>
+			<WithholdingDate>2025-01-01</WithholdingDate>
+		</Bpu>
+	</ListOfBpu>
+</BpuBulk>

@@ -50,7 +50,7 @@ export const headOfficeNitku = (npwp: string) => `${npwp}000000`;
  * A typed NITKU against its holder's NPWP16 (`tin`): 22 digits starting with it. Empty, or the head office's NPWP16 + 000000, reads as
  * null (the file then writes the head office), so the default keeps following the NPWP.
  */
-export function readNitku(raw: string | null | undefined, tin: string | null, holder: "pembeli" | "perusahaan"): { ok: true; nitku: string | null } | { ok: false; error: string } {
+export function readNitku(raw: string | null | undefined, tin: string | null, holder: "pembeli" | "penerima" | "perusahaan"): { ok: true; nitku: string | null } | { ok: false; error: string } {
   const d = digitsOnly(raw);
   if (d === null || (d && !NITKU.test(d))) return { ok: false, error: "NITKU berisi 22 angka: 16 angka NPWP dan 6 angka kode tempat usaha (pusat 000000)." };
   if (!d) return { ok: true, nitku: null };

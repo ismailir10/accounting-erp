@@ -33,7 +33,7 @@ for (const deck of ["kantor", "perusahaan"]) {
     const reader = page.getByRole("navigation", { name: "Tautan presentasi" });
     await expect(reader).toBeVisible();
     await expect(page.locator("#s5 .s-foot")).toBeVisible();
-    expect(await page.locator("#s5").evaluate((slide) => Math.abs(slide.getBoundingClientRect().top - 70) < 2)).toBe(true);
+    await expect.poll(() => page.locator("#s5").evaluate((slide) => Math.abs(slide.getBoundingClientRect().top - 70) < 2)).toBe(true);
     expect(await page.locator(".slide").evaluateAll((slides) => slides.every((slide) => !(slide as HTMLElement).inert))).toBe(true);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.evaluate(() => { location.hash = "#6"; });

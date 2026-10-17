@@ -24,7 +24,10 @@ export function ClosePanel(props: {
   month: number;
   periodLabel: string;
   controls: Control[];
-  signoffs: { key: string; label: string; done: boolean; by: string | null }[];
+  /** `pelaksana`: the sign-off's Pelaksana once the month's checklist has its task; `blocked`: why this member may not tick it now. */
+  signoffs: { key: string; label: string; done: boolean; by: string | null; pelaksana?: string | null; blocked?: string | null }[];
+  /** Checklist tutup buku for the month: where it is and how many tasks are unfinished (a warning, never a blocker). */
+  checklist?: { href: string; open: number } | null;
   locked: boolean;
   lockedAt: string | null;
   blockers: string[];
@@ -158,17 +161,23 @@ export function ClosePanel(props: {
           <CardContent className="space-y-3">
             {props.signoffs.map((s) => (
               // Not wrapped in <label>: a wrapping label re-forwards the click and toggles twice.
-              <div key={s.key} className="flex items-start gap-2 text-sm">
+              <div key={s.key} className="flex items-start gap-2 text-sm" data-testid="signoff">
                 <Checkbox
                   id={`signoff-${s.key}`}
                   checked={s.done}
-                  disabled={pending || props.locked}
+                  disabled={pending || props.locked || Boolean(s.blocked)}
                   onCheckedChange={(v) => run(() => signoffAction(clientId, year, month, s.key, Boolean(v)))}
                   className="mt-0.5"
                 />
-                <label htmlFor={`signoff-${s.key}`} className="cursor-pointer">{s.label}{s.by && <span className="block text-xs text-muted-foreground">Dicentang {s.by}</span>}</label>
+                <label htmlFor={`signoff-${s.key}`} className="cursor-pointer">
+                  {s.label}
+                  {s.pelaksana && <span className="block text-xs text-muted-foreground">Pelaksana {s.pelaksana}</span>}
+                  {s.by && <span className="block text-xs text-muted-foreground">Dicentang {s.by}</span>}
+                  {s.blocked && !props.locked && <span className="block text-xs text-muted-foreground" data-testid="signoff-blocked">{s.blocked}</span>}
+                </label>
               </div>
             ))}
+            {props.checklist && <Link href={props.checklist.href} className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">Buka checklist <ChevronRight className="size-3.5" /></Link>}
           </CardContent>
         </Card>
         <Card className={props.locked ? "border-pass/30" : ""}>
@@ -183,6 +192,12 @@ export function ClosePanel(props: {
               <ul className="space-y-1 text-sm text-muted-foreground">
                 {props.blockers.map((b) => <li key={b}>• {b}</li>)}
               </ul>
+            )}
+            {/* A warning, not a blocker: the checklist never holds the lock (accounting-rules 23). */}
+            {!props.locked && props.checklist && props.checklist.open > 0 && (
+              <p className="text-sm text-muted-foreground" data-testid="checklist-warning">
+                <Link href={props.checklist.href} className="underline-offset-4 hover:text-foreground hover:underline">Checklist: {props.checklist.open} tugas belum selesai</Link>
+              </p>
             )}
             {props.locked ? (
               props.isAdmin ? (
@@ -227,7 +242,7 @@ export function ClosePanel(props: {
             <DialogTitle>{confirm === "lock" ? `Tutup buku ${props.periodLabel}?` : `Buka kembali ${props.periodLabel}?`}</DialogTitle>
             <DialogDescription>
               {confirm === "lock"
-                ? `Setelah ditutup, impor mutasi, reklasifikasi dan jurnal ke ${props.periodLabel} ditolak sampai periodenya dibuka kembali. Catatan kontrol dan daftar periksa ikut tersimpan.`
+                ? `Setelah ditutup, impor mutasi, reklasifikasi dan jurnal ke ${props.periodLabel} ditolak sampai periodenya dibuka kembali. Catatan kontrol dan daftar periksa ikut tersimpan.${props.checklist?.open ? ` ${props.checklist.open} tugas checklist belum selesai; buku tetap bisa ditutup.` : ""}`
                 : `Periode ${props.periodLabel} bisa diubah lagi. Laporan yang sudah dikirim ke klien bisa berbeda setelah ada perubahan.`}
             </DialogDescription>
           </DialogHeader>

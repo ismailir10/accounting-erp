@@ -57,7 +57,7 @@ export function formatSen(sen: bigint): string {
   return `${neg ? "-" : ""}${whole}${cents === 0n ? "" : `.${cents.toString().padStart(2, "0")}`}`;
 }
 
-const iso = (d: Date) => d.toISOString().slice(0, 10);
+export const iso = (d: Date) => d.toISOString().slice(0, 10);
 
 /** XML 1.0 text: the five entities escaped, characters XML cannot hold (controls, lone surrogates) dropped. */
 export function xmlText(s: string): string {
@@ -70,14 +70,18 @@ export function xmlText(s: string): string {
     .replace(/'/g, "&apos;");
 }
 
-type Node = [name: string, value: string | Node[]];
+/** An element: text, children, or null for `xsi:nil="true"` (the root then declares the xsi namespace). Shared with the BPPU file. */
+export type XmlNode = [name: string, value: string | XmlNode[] | null];
+type Node = XmlNode;
 
-function write(nodes: Node[], depth: number, out: string[]) {
+/** Tab-indented like DJP's samples; an empty text element is self-closed, as there. */
+export function writeXml(nodes: Node[], depth: number, out: string[]) {
   const pad = "\t".repeat(depth);
   for (const [name, value] of nodes) {
-    if (Array.isArray(value)) {
+    if (value === null) out.push(`${pad}<${name} xsi:nil="true"/>`);
+    else if (Array.isArray(value)) {
       out.push(`${pad}<${name}>`);
-      write(value, depth + 1, out);
+      writeXml(value, depth + 1, out);
       out.push(`${pad}</${name}>`);
     } else out.push(value === "" ? `${pad}<${name}/>` : `${pad}<${name}>${xmlText(value)}</${name}>`);
   }
@@ -143,7 +147,7 @@ export function fakturXml(seller: FakturSeller, rows: FakturXmlRow[], part?: { i
     `<!-- Buku: faktur keluaran untuk impor Coretax, ${FORMAT_LABEL}, belum diuji dengan unggahan nyata. ${rows.length} faktur${part && part.of > 1 ? `, bagian ${part.index} dari ${part.of}` : ""}. -->`,
     '<TaxInvoiceBulk xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="TaxInvoice.xsd">',
   ];
-  write([["TIN", seller.tin], ["ListOfTaxInvoice", rows.map((r) => taxInvoice(seller, r))]], 1, out);
+  writeXml([["TIN", seller.tin], ["ListOfTaxInvoice", rows.map((r) => taxInvoice(seller, r))]], 1, out);
   out.push("</TaxInvoiceBulk>", "");
   return out.join("\n");
 }

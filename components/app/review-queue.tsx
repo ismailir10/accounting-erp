@@ -21,6 +21,8 @@ import { cn } from "@/lib/utils";
 import { accountantHints, bulkAcceptable, isSureSuggestion } from "@/lib/classify/hints";
 import type { AiRunView } from "@/lib/ai/run";
 import { AiRunStatus, useAiRun } from "@/components/app/ai-run-status";
+import { ReasoningDisclosure } from "@/components/app/reasoning-panel";
+import { hasReasoning } from "@/lib/approvals/has-reasoning";
 
 export type ReviewItem = {
   id: string;
@@ -411,13 +413,22 @@ export function ReviewQueue({
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                <MethodBadge method={i.method} />
-                <span>{i.reason.replace(/^AI: /, "")}</span>
-                {i.method === "AI" && (
-                  <span className={cn("num text-xs", i.confidence < 0.7 && "font-medium text-review")}>
-                    · {i.confidence < 0.7 ? "keyakinan rendah, cek lagi" : "keyakinan"} {Math.round(i.confidence * 100)}%
-                  </span>
-                )}
+                {(() => {
+                  const line = (toggle?: React.ReactNode) => (
+                    <>
+                      <MethodBadge method={i.method} />
+                      <span>{i.reason.replace(/^AI: /, "")}</span>
+                      {i.method === "AI" && (
+                        <span className={cn("num text-xs", i.confidence < 0.7 && "font-medium text-review")}>
+                          · {i.confidence < 0.7 ? "keyakinan rendah, cek lagi" : "keyakinan"} {Math.round(i.confidence * 100)}%
+                        </span>
+                      )}
+                      {toggle}
+                    </>
+                  );
+                  // Only an AI suggestion has steps to show; a rule, memory, transfer or guess says why in its reason already.
+                  return hasReasoning(i) && clientId ? <ReasoningDisclosure clientId={clientId} itemId={i.id}>{line}</ReasoningDisclosure> : line();
+                })()}
               </div>
               {(() => {
                 const hints = hintsFor(i, c);

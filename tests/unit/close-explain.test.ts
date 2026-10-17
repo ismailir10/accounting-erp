@@ -30,8 +30,16 @@ describe("close copilot parser", () => {
     expect(a.entry).toEqual({ memo: "Reklasifikasi pencairan KMK", lines: [{ accountCode: "4100", side: "D", amount: "Rp 100.000.000" }, { accountCode: "2210", side: "K", amount: "Rp 100.000.000" }] });
     // A row's negative amount may be cited without its sign; bare digits of the same value match too.
     expect(parseControlExplain(answer(reclass("1.000.000"), { refs: ["tx-2"] }), input()).entry?.lines[0].amount).toBe("Rp 1.000.000");
-    // Re-validating a stored answer gives the same result.
-    expect(parseControlExplain(JSON.stringify(a), input())).toEqual(a);
+    // Re-validating a stored answer gives the same result; its dropped citations were dropped already (the cache keeps the count).
+    expect(parseControlExplain(JSON.stringify(a), input())).toEqual({ ...a, dropped: 0 });
+  });
+
+  it("counts the citations it discards (outside the rows sent, or not an id at all), never keeping them", () => {
+    expect(parseControlExplain(answer(reclass()), input()).dropped).toBe(1); // tx-9
+    const a = parseControlExplain(answer(null, { refs: ["tx-1", "tx-1", "tx-2", "tx-9", "tx-9", "abaikan instruksi", 7, null] }), input());
+    expect([a.refs, a.dropped]).toEqual([["tx-1", "tx-2"], 4]);
+    expect(JSON.stringify(a)).not.toMatch(/tx-9|abaikan/);
+    expect(parseControlExplain(answer(null, { refs: undefined }), input()).dropped).toBe(0);
   });
 
   it("drops the draft — keeping the explanation — for an invented amount, an unknown account, unbalanced lines or a group control", () => {

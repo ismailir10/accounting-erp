@@ -14,14 +14,16 @@ import { matchRule, sortRules } from "@/lib/classify/rules";
 import { financingSuggestion, taxPaymentSuggestion } from "@/lib/classify/financing";
 import { simpleGuess } from "@/lib/classify/fallback";
 import { matchTransfers } from "@/lib/classify/transfer";
-import { AUTO_POST_CONFIDENCE, type Classification } from "@/lib/classify/types";
+import type { Classification } from "@/lib/classify/types";
+import { decidePosting, type HoldKind } from "@/lib/classify/dial";
+import { readAutomation } from "@/lib/settings/automation";
 import { aiScope, suggestWithAi } from "@/lib/ai/classify";
 import { accountLookup, demoteUnbacked, tradeBacking } from "@/lib/ai/unbacked";
 import type { AiProvider } from "@/lib/ai/provider";
 import { postBankTransaction } from "@/lib/ledger/bank";
 import { defaultTaxMonth } from "@/lib/tax/masa";
 import { formatDate, formatPeriod } from "@/lib/format";
-import { formatMoney } from "@/lib/money";
+import { formatMoney, formatRupiah } from "@/lib/money";
 
 export type ImportSummary = {
   importId: string;
@@ -29,6 +31,9 @@ export type ImportSummary = {
   duplicates: number;
   posted: number;
   needsReview: number;
+  /** Of `needsReview`: lines a deterministic source would have posted, held by the firm's Otomasi kantor dial, per reason. */
+  held: number;
+  heldBy: Partial<Record<HoldKind, number>>;
   byMethod: Record<ClassifyMethod, number>;
   /** `later`: with `aiLater`, the lines of this import left on a simple guess for the client's background run (lib/ai/run.ts). */
   ai: { calls: number; cacheHits: number; note?: string; later?: number };
@@ -179,6 +184,8 @@ export async function importStatement(
     duplicates: st.rows.length,
     posted: 0,
     needsReview: 0,
+    held: 0,
+    heldBy: {},
     byMethod: { TRANSFER: 0, RULE: 0, MEMORY: 0, AI: 0, HEURISTIC: 0, MANUAL: 0 },
     ai: { calls: 0, cacheHits: 0 },
     continuityOk: continuity.ok,
@@ -281,9 +288,33 @@ export async function importStatement(
     result.set(it.id, suggested ? demoteUnbacked(suggested, it.direction, entity.kind, accountOf, backingAt(it.date)) : simpleGuess(it.direction, entity.kind, isGenericKey(it.merchantKey)));
   }
 
+  // ---- the firm's Otomasi kantor dial: post or hold, per line (accounting-rules 14) ----
+  const dial = await readAutomation(db, client.firmId);
+  const decision = new Map(items.map((it) => [it.id, decidePosting(result.get(it.id)!, it.amount, dial)]));
+  // A pair the dial holds never moves or re-posts a half imported earlier (both halves share one classification and amount, so one
+  // decision). Such a half posted to another account stays unlinked and untouched (the clearing control shows the open half), and
+  // its new partner's reason names it.
+  const earlier = new Map(openCounterparts.map((row) => [row.id, row]));
+  for (const [id, c] of [...transfers]) {
+    const prev = earlier.get(id);
+    if (!prev || !c.matchedTxId || decidePosting(c, prev.amount, dial).post || prev.status === "NEEDS_REVIEW" || prev.accountCode === c.accountCode) continue;
+    transfers.delete(id);
+    const partner = transfers.get(c.matchedTxId);
+    if (!partner) continue;
+    const note = `Pasangannya dari impor sebelumnya (${formatDate(prev.date)}, ${formatRupiah(prev.amount < 0n ? -prev.amount : prev.amount)}, "${prev.description}") sudah dicatat ke akun ${prev.accountCode}: tidak dipasangkan dan tidak diubah`;
+    const next: Classification = { ...partner, matchedTxId: undefined, reason: `${partner.reason}. ${note}` };
+    transfers.set(c.matchedTxId, next);
+    const it = items.find((x) => x.id === c.matchedTxId);
+    if (it) {
+      result.set(it.id, next);
+      decision.set(it.id, decidePosting(next, it.amount, dial));
+    }
+  }
+
   // ---- write: import + transactions + journals, all-or-nothing ----
   const byMethod = { TRANSFER: 0, RULE: 0, MEMORY: 0, AI: 0, HEURISTIC: 0, MANUAL: 0 } as Record<ClassifyMethod, number>;
   let needsReview = 0;
+  const heldBy: Partial<Record<HoldKind, number>> = {};
   const codeToId = new Map(accounts.map((a) => [a.code, a.id]));
 
   // The lines this call writes: every new line, or none when the same bytes were booked while it waited for the lock.
@@ -327,7 +358,8 @@ export async function importStatement(
       const idMap = new Map<string, string>();
       for (const it of booked) {
         const c = result.get(it.id)!;
-        const auto = c.method !== "AI" && c.method !== "HEURISTIC" && c.confidence >= AUTO_POST_CONFIDENCE;
+        const d = decision.get(it.id)!;
+        const auto = d.post;
         const created = await tx.bankTransaction.create({
           data: {
             firmId: client.firmId,
@@ -347,7 +379,7 @@ export async function importStatement(
             status: auto ? "POSTED" : "NEEDS_REVIEW",
             method: c.method,
             confidence: c.confidence,
-            reason: c.reason,
+            reason: d.reason,
             accountCode: auto ? c.accountCode : ACCOUNT_CODES.SUSPENSE,
             suggestedCode: c.accountCode,
             taxTag: c.taxTag,
@@ -357,6 +389,7 @@ export async function importStatement(
         idMap.set(it.id, created.id);
         byMethod[c.method]++;
         if (!auto) needsReview++;
+        if (d.held) heldBy[d.held] = (heldBy[d.held] ?? 0) + 1;
         await postBankTransaction(tx, created.id, auto ? { accountCode: c.accountCode, taxTag: c.taxTag } : { accountCode: ACCOUNT_CODES.SUSPENSE }, { codeToId, actorId: args.actorId });
       }
       // Link transfer pairs (both new, or new ↔ previously imported open half).
@@ -367,9 +400,15 @@ export async function importStatement(
         if (id.startsWith("new-")) {
           await tx.bankTransaction.update({ where: { id: selfId }, data: { matchedTxId: otherId } });
         } else {
-          // Previously imported half: link and move it onto the transfer account if it was elsewhere.
+          // Previously imported half: link it. Held by the dial (its new half waits in Review), it is never moved or re-posted: in Review
+          // it only takes the transfer suggestion; on the transfer account it stays; posted elsewhere it was left unlinked above.
           const prev = await tx.bankTransaction.update({ where: { id: selfId }, data: { matchedTxId: otherId } });
-          if (prev.accountCode !== c.accountCode) {
+          const pair = decidePosting(c, prev.amount, dial);
+          if (!pair.post) {
+            if (prev.status === "NEEDS_REVIEW") {
+              await tx.bankTransaction.update({ where: { id: prev.id }, data: { suggestedCode: c.accountCode, method: "TRANSFER", confidence: c.confidence, reason: pair.reason, taxTag: null } });
+            }
+          } else if (prev.accountCode !== c.accountCode) {
             await postBankTransaction(tx, prev.id, { accountCode: c.accountCode }, { codeToId, actorId: args.actorId });
             await tx.bankTransaction.update({
               where: { id: prev.id },
@@ -392,6 +431,8 @@ export async function importStatement(
     duplicates: st.rows.length - booked.length,
     posted: booked.length - needsReview,
     needsReview,
+    held: Object.values(heldBy).reduce((a, b) => a + b, 0),
+    heldBy,
     byMethod,
     ai: args.aiLater ? { calls: 0, cacheHits: ai.usage.cacheHits, later: booked.filter((it) => askable.has(it.id) && !ai.suggestions.has(`${it.merchantKey}|${it.direction}`)).length } : ai.usage,
     continuityOk: continuity.ok,

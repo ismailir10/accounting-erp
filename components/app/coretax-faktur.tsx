@@ -178,7 +178,7 @@ export function CoretaxFaktur({
 
       <Sheet open={open !== null} onOpenChange={(o) => !o && setOpen(null)}>
         <SheetContent className="w-full overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md">
-          {open?.kind === "buyer" && <BuyerForm key={open.contact.id} clientId={clientId} contact={open.contact} onDone={() => setOpen(null)} />}
+          {open?.kind === "buyer" && <IdentityForm key={open.contact.id} clientId={clientId} contact={open.contact} onDone={() => setOpen(null)} />}
           {open?.kind === "item" && <ItemForm key={open.rows.map((r) => r.invoiceId).join()} clientId={clientId} rows={open.rows} label={label} onDone={() => setOpen(null)} />}
         </SheetContent>
       </Sheet>
@@ -266,9 +266,13 @@ function RowLines({ r, receivablesHref, onOpen }: { r: CoretaxRow; receivablesHr
   );
 }
 
-/** *Lengkapi pembeli*: the buyer's identity on the contact, reused every month. */
-function BuyerForm({ clientId, contact, onDone }: { clientId: string; contact: CoretaxContact; onDone: () => void }) {
+/**
+ * *Lengkapi pembeli* / *Lengkapi identitas*: a contact's tax identity, entered once and reused every month — the faktur's buyer, or (cycle
+ * 2026-10-17-bppu-files) the bukti potong's recipient, who needs no address. NIK, address and email go into the files only.
+ */
+export function IdentityForm({ clientId, contact, onDone, holder = "pembeli" }: { clientId: string; contact: CoretaxContact; onDone: () => void; holder?: "pembeli" | "penerima" }) {
   const router = useRouter();
+  const buyer = holder === "pembeli";
   const [v, setV] = useState({ npwp: contact.npwp, nik: contact.nik, nitku: contact.nitku, address: contact.address, email: contact.email });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -281,7 +285,7 @@ function BuyerForm({ clientId, contact, onDone }: { clientId: string; contact: C
     setBusy(true);
     try {
       // A NITKU belongs to an NPWP: without one it is not sent.
-      const r = await setContactTaxIdentityAction({ clientId, contactId: contact.id, ...v, nitku: v.npwp.trim() ? v.nitku : "" });
+      const r = await setContactTaxIdentityAction({ clientId, contactId: contact.id, ...v, nitku: v.npwp.trim() ? v.nitku : "", holder });
       if (!r.ok) {
         setErrors(r.fields ?? {});
         return void toast.error(r.error);
@@ -296,8 +300,12 @@ function BuyerForm({ clientId, contact, onDone }: { clientId: string; contact: C
   return (
     <div className="flex flex-col gap-4" data-testid="coretax-buyer-form">
       <SheetHeader>
-        <SheetTitle>Pembeli: {contact.name}</SheetTitle>
-        <SheetDescription>Disimpan di kontak dan dipakai untuk semua fakturnya. Isi NPWP; pembeli tanpa NPWP diisi NIK dan alamat.</SheetDescription>
+        <SheetTitle>{buyer ? "Pembeli" : "Penerima penghasilan"}: {contact.name}</SheetTitle>
+        <SheetDescription>
+          {buyer
+            ? "Disimpan di kontak dan dipakai untuk semua fakturnya. Isi NPWP; pembeli tanpa NPWP diisi NIK dan alamat."
+            : "Disimpan di kontak dan dipakai untuk semua bukti potongnya. Isi NPWP; penerima tanpa NPWP diisi NIK."}
+        </SheetDescription>
       </SheetHeader>
       <div className="space-y-4 px-4">
         <Field>
@@ -312,24 +320,30 @@ function BuyerForm({ clientId, contact, onDone }: { clientId: string; contact: C
           <FieldError>{errors.nitku}</FieldError>
         </Field>
         <Field>
-          <FieldLabel htmlFor="buyer-nik">NIK (pembeli tanpa NPWP)</FieldLabel>
+          <FieldLabel htmlFor="buyer-nik">NIK ({holder} tanpa NPWP)</FieldLabel>
           <Input id="buyer-nik" inputMode="numeric" value={v.nik} aria-invalid={!!errors.nik} onChange={(e) => set({ nik: e.target.value })} placeholder="16 angka" />
           <FieldError>{errors.nik}</FieldError>
         </Field>
-        <Field>
-          <FieldLabel htmlFor="buyer-address">Alamat</FieldLabel>
-          <Input id="buyer-address" value={v.address} aria-invalid={!!errors.address} onChange={(e) => set({ address: e.target.value })} placeholder={v.npwp.trim() ? "Opsional: Coretax mengisi dari data NPWP" : "Wajib untuk pembeli dengan NIK"} />
-          <FieldError>{errors.address}</FieldError>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="buyer-email">Email (opsional)</FieldLabel>
-          <Input id="buyer-email" type="email" value={v.email} aria-invalid={!!errors.email} onChange={(e) => set({ email: e.target.value })} />
-          <FieldError>{errors.email}</FieldError>
-        </Field>
-        <p className="text-xs text-muted-foreground">NIK, alamat dan email hanya masuk ke file faktur; tidak pernah dikirim ke AI.</p>
+        {buyer && (
+          <>
+            <Field>
+              <FieldLabel htmlFor="buyer-address">Alamat</FieldLabel>
+              <Input id="buyer-address" value={v.address} aria-invalid={!!errors.address} onChange={(e) => set({ address: e.target.value })} placeholder={v.npwp.trim() ? "Opsional: Coretax mengisi dari data NPWP" : "Wajib untuk pembeli dengan NIK"} />
+              <FieldError>{errors.address}</FieldError>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="buyer-email">Email (opsional)</FieldLabel>
+              <Input id="buyer-email" type="email" value={v.email} aria-invalid={!!errors.email} onChange={(e) => set({ email: e.target.value })} />
+              <FieldError>{errors.email}</FieldError>
+            </Field>
+          </>
+        )}
+        <p className="text-xs text-muted-foreground">
+          {buyer ? "NIK, alamat dan email hanya masuk ke file faktur; tidak pernah dikirim ke AI." : "NPWP dan NIK hanya masuk ke file bukti potong; tidak pernah dikirim ke AI."}
+        </p>
       </div>
       <SheetFooter>
-        <Button onClick={save} disabled={busy} data-testid="coretax-buyer-save">{busy ? "Menyimpan…" : "Simpan pembeli"}</Button>
+        <Button onClick={save} disabled={busy} data-testid="coretax-buyer-save">{busy ? "Menyimpan…" : buyer ? "Simpan pembeli" : "Simpan penerima"}</Button>
       </SheetFooter>
     </div>
   );

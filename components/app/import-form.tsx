@@ -20,6 +20,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { BANKS, GROUP_ORDER, bankName } from "@/lib/banks";
 import type { ImportSummary } from "@/lib/import/pipeline";
 import type { AiRunView } from "@/lib/ai/run";
+import { heldLine } from "@/lib/classify/dial";
 import { cn } from "@/lib/utils";
 import { MAX_UPLOAD_BYTES, UPLOAD_TOO_BIG } from "@/lib/upload";
 
@@ -349,6 +350,7 @@ export function ImportForm({ clientId, banks, sample, openingPending = [], aiRun
                 <div className="rounded-md bg-pass-subtle p-2 text-pass"><div className="num text-xl font-semibold">{result.posted}</div><div className="text-xs">langsung dijurnal</div></div>
                 <div className="rounded-md bg-review-subtle p-2 text-review"><div className="num text-xl font-semibold">{result.needsReview}</div><div className="text-xs">perlu review</div></div>
               </div>
+              {heldLine(result.heldBy) && <p className="text-xs text-muted-foreground" data-testid="import-held">{heldLine(result.heldBy)}. Diatur di Pengaturan kantor.</p>}
               <ul className="space-y-1">
                 {methodRows(result).map(([label, n]) => (
                   <li key={label} className="flex justify-between"><span className="text-muted-foreground">{label}</span><span className="num font-medium">{n}</span></li>

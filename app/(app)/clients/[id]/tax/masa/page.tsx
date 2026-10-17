@@ -3,7 +3,7 @@ import { Download } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { loadClientPage } from "@/lib/client-page";
 import { type SearchParams, withParams } from "@/lib/scope";
-import { dateOnly, formatDate, formatPeriod, periodBounds } from "@/lib/format";
+import { dateOnly, formatDate, formatPeriod, periodBounds, toIsoDate } from "@/lib/format";
 import { formatRupiah } from "@/lib/money";
 import { packApplies } from "@/lib/tax/pack";
 import { masaReport, ppnLine, pph25Notes, pph25StateLabel, previousStateLabel, rowNotes, terNote, terRow, withholdingLabel, type MasaRow, type Pph25, type WithholdingLine } from "@/lib/tax/masa-report";
@@ -20,6 +20,9 @@ import type { WithholdingKind } from "@/lib/generated/prisma/enums";
 import { DIRECTION_LABEL, fakturCounterAccounts, fakturNotes, fakturRecon } from "@/lib/tax/faktur";
 import { fakturKeluaranDraft, fakturKeluaranFiles } from "@/lib/tax/coretax-faktur";
 import { CoretaxFaktur } from "@/components/app/coretax-faktur";
+import { bppuDraft, bppuFile } from "@/lib/tax/coretax-bppu";
+import { CoretaxBppu } from "@/components/app/coretax-bppu";
+import { accessView, requireWorkspaceSession } from "@/lib/auth/session";
 import { ScopeBar } from "@/components/app/scope-bar";
 import { Money } from "@/components/app/money";
 import { StatusPill } from "@/components/app/status";
@@ -76,6 +79,12 @@ export default async function TaxMasaPage({ params, searchParams }: { params: Pr
   const uploadBy = period.month === 12 ? dateOnly(period.year + 1, 1, 15) : dateOnly(period.year, period.month + 1, 15);
   const bupot = await bupotRecon(prisma, { clientId: client.id, entityId: entity.id, year: period.year, month: period.month });
   const bupotGap = bupotNotes(bupot)[0];
+  // Bukti potong for Coretax (cycle 2026-10-17-bppu-files): the company's withheld payments as BPPU slips.
+  const bppu = await bppuDraft(prisma, { clientId: client.id, entityId: entity.id, year: period.year, month: period.month });
+  const bppuHref = bppuFile(bppu) ? withParams(`${base}/tax/masa/coretax-bppu`, { period: period.key, entity: entity.id }) : null;
+  const contacts = bppu.rows.length ? await prisma.contact.findMany({ where: { clientId: client.id }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [];
+  const { canWrite } = accessView(await requireWorkspaceSession());
+  const sptBy = period.month === 12 ? dateOnly(period.year + 1, 1, 20) : dateOnly(period.year, period.month + 1, 20);
   const day = (d: Date) => formatDate(d);
   const offset = report.rows.find((r) => r.key === "PPN")!.ppn!.offset;
   // PPh 25 is a row for every normal-regime company: with no instalment yet it asks for one. Under PP 55 there is none.
@@ -238,7 +247,38 @@ export default async function TaxMasaPage({ params, searchParams }: { params: Pr
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <WithholdingTable title="Dipotong oleh perusahaan: buat bukti potongnya di Coretax" lines={report.withheldByUs} empty="Tidak ada pemotongan oleh perusahaan masa ini." />
+          <CoretaxBppu
+            clientId={client.id}
+            canWrite={canWrite}
+            href={bppuHref}
+            counts={bppu.counts}
+            companyReasons={bppu.companyReasons.map((r) => r.text)}
+            rows={bppu.rows.map((r) => ({
+              id: r.bankTransactionId,
+              date: day(r.date),
+              description: r.description,
+              kind: r.kind,
+              gross: r.gross.toString(),
+              withheld: r.withheld.toString(),
+              inReview: r.inReview,
+              ppnSplit: r.ppnSplit,
+              recipient: r.recipient && { id: r.recipient.id, name: r.recipient.name, npwp: r.recipient.npwp ?? "", nik: r.recipient.nik ?? "", nitku: r.recipient.nitku ?? "", address: r.recipient.address ?? "", email: r.recipient.email ?? "", fromLine: r.recipient.fromLine },
+              kop: r.kop ?? "",
+              rate: r.rate,
+              dpp: r.dpp?.toString() ?? "",
+              documentType: r.documentType ?? "",
+              documentNumber: r.documentNumber ?? "",
+              documentDate: r.documentDate ? toIsoDate(r.documentDate) : "",
+              prefill: r.prefill,
+              status: r.status,
+              reasons: r.reasons,
+              coretaxNumber: r.coretaxNumber,
+            }))}
+            contacts={contacts}
+            settingsHref={`${base}/settings`}
+            reviewHref={withParams(`${base}/review`, { period: period.key })}
+            sptBy={day(sptBy)}
+          />
           <WithholdingTable title="Dipotong oleh pelanggan: minta bukti potongnya" lines={report.withheldFromUs} empty="Tidak ada pemotongan oleh pelanggan masa ini." />
           <BupotRecon
             clientId={client.id}

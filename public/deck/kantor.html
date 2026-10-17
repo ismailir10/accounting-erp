@@ -224,7 +224,7 @@
     <div class="split rw">
       <div>
         <h2 data-a>Satu layar untuk semua klien: siapa yang macet, di tahap apa.</h2>
-        <p class="lead" data-a>Papan kantor di Beranda menunjukkan untuk setiap klien: file bulan ini, usulan yang menunggu persetujuan, status tutup buku, dan kapan laporannya pertama diunduh.</p>
+        <p class="lead" data-a>Papan kantor di Beranda menunjukkan untuk setiap klien: file bulan ini, usulan yang menunggu persetujuan, tugas checklist yang lewat tenggat, status tutup buku, dan kapan laporannya pertama diunduh.</p>
       </div>
       <div class="viz" data-a>
         <div class="c board fl-scroll">
@@ -330,8 +330,8 @@
       <div>
         <h2 data-a>AI mengusulkan. <em>Anda memutuskan.</em></h2>
         <ul class="pts">
-          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Yang memenuhi pemeriksaan, tanpa AI.</b> Transfer yang terbukti, aturan dan memori klien bisa dibukukan langsung; akuntan tetap memeriksa hasilnya.</div></li>
-          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>AI hanya untuk sisanya.</b> Usulan akun dengan alasan dan tingkat keyakinan, menunggu di Kotak persetujuan.</div></li>
+          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Yang memenuhi pemeriksaan, tanpa AI.</b> Transfer yang terbukti, aturan dan memori klien dibukukan langsung sesuai otomasi kantor, dengan batas nominal; akuntan tetap memeriksa hasilnya.</div></li>
+          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>AI hanya untuk sisanya.</b> Usulan akun dengan alasan dan tingkat keyakinan, menunggu di Kotak persetujuan; <i>Lihat alasan</i> menunjukkan apa yang dikirim dan diperiksa.</div></li>
           <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Keputusan Anda diingat.</b> Memori klien membantu mengenali penerima dan arah transaksi yang sama; hasilnya tetap bisa dikoreksi.</div></li>
         </ul>
       </div>
@@ -470,7 +470,7 @@
         <h2 data-a>Bulan dikunci setelah semua kontrol beres.</h2>
         <ul class="pts">
           <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Yang gagal diperbaiki, yang janggal dijelaskan.</b> Selisih tidak ditutup dengan akun penyeimbang, tetapi dicatat sebagai temuan.</div></li>
-          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Tiga pemeriksaan akhir, berurutan.</b> Bukti pendukung, penyesuaian, review partner; bulan sebelumnya harus sudah dikunci.</div></li>
+          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Checklist per klien, lalu pemeriksaan akhir.</b> Pelaksana, pereviu dan tenggat per tugas; bulan sebelumnya harus sudah dikunci.</div></li>
           <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Setelah dikunci, angka tetap.</b> Impor dan jurnal ke bulan itu ditolak. Membuka kembali hanya admin, dengan alasan tercatat.</div></li>
         </ul>
       </div>
@@ -499,7 +499,7 @@
         <h2 data-a>Satu buku besar. Paket untuk setiap pembaca.</h2>
         <ul class="pts">
           <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Klien dan auditor.</b> Laporan keuangan dengan CALK (SAK EMKM, EP, atau Umum) dalam Excel dan PDF, plus Jurnal Umum, Buku Besar dan Neraca Saldo.</div></li>
-          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Pajak.</b> Kertas kerja Pajak Masa, file impor faktur keluaran Coretax, dan estimasi PPh badan.</div></li>
+          <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Pajak.</b> Kertas kerja Pajak Masa, file impor faktur keluaran dan bukti potong Coretax, dan estimasi PPh badan.</div></li>
           <li data-a><i><svg viewBox="0 0 16 16"><use href="#i-check"/></svg></i><div><b>Bank dan pemilik.</b> Paket kredit bank, laporan manajemen dengan wawasan dan penjelasan yang Anda setujui.</div></li>
         </ul>
         <p class="note" data-a>Selama bulan belum dikunci, laporan bertanda Draf</p>
@@ -693,7 +693,7 @@
       <div class="viz" data-a>
         <div class="c lim">
           <div class="row lim-grid"><b>Umpan bank langsung</b><span>Yang masuk adalah rekening koran yang diunggah, atau dikirim klien lewat tautan.</span></div>
-          <div class="row lim-grid"><b>Menerbitkan faktur, menyampaikan SPT</b><span>Buku menyiapkan file impor faktur dan kertas kerja; nomor faktur dan SPT tetap lewat Coretax. Buku bukan PJAP.</span></div>
+          <div class="row lim-grid"><b>Menerbitkan faktur, menyampaikan SPT</b><span>Buku menyiapkan file impor faktur, bukti potong dan kertas kerja; nomor faktur dan SPT tetap lewat Coretax. Buku bukan PJAP.</span></div>
           <div class="row lim-grid"><b>Konsolidasi SAK penuh</b><span>Yang tersedia: kertas kerja gabungan untuk manajemen.</span></div>
           <div class="row lim-grid"><b>Mengirim jurnal ke Accurate atau Jurnal</b><span>Arah impor saja: buku lama masuk ke Buku.</span></div>
           <div class="row lim-grid"><b>Membaca scan tanpa AI</b><span>Scan perlu ekspor teks, atau Baca scan dengan AI dinyalakan.</span></div>

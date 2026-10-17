@@ -14,6 +14,7 @@ export type Capability =
   | "period.unlock"
   | "import.remove"
   | "close.batch" // close many past months at once
+  | "checklist.manage" // set up a client's close checklist: accept the default, add an Otomatis task, rename, reassign, remove
   | "client.delete"
   | "org.settings" // Google Drive, organisation settings
   | "members.manage" // invite, disable, change roles, assign clients
@@ -30,6 +31,7 @@ const MATRIX: Record<Capability, readonly MemberRole[]> = {
   "period.unlock": ADMINS,
   "import.remove": ADMINS,
   "close.batch": ADMINS,
+  "checklist.manage": ADMINS,
   "client.delete": ADMINS,
   "org.settings": ADMINS,
   "members.manage": ADMINS,
@@ -52,6 +54,7 @@ const REFUSAL: Record<Capability, string> = {
   "period.unlock": "Hanya admin kantor yang dapat membuka kembali periode.",
   "import.remove": "Hanya admin kantor yang dapat menghapus impor.",
   "close.batch": "Hanya admin kantor yang dapat menutup beberapa bulan sekaligus.",
+  "checklist.manage": "Hanya admin kantor yang dapat mengatur checklist.",
   "client.delete": "Hanya admin kantor yang dapat menghapus klien.",
   "org.settings": "Hanya admin kantor yang dapat mengubah ini.",
   "members.manage": "Hanya pemilik atau admin kantor yang dapat mengatur tim.",

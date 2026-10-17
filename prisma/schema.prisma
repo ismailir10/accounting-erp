@@ -207,6 +207,17 @@ model Firm {
   aiMonthlyTokenBudget Int?
   /// Most active members allowed; null = no cap.
   seatLimit            Int?
+  /// Otomasi kantor (cycle 2026-10-17-otomasi): which deterministic sources may post an imported bank line directly. The dial can only
+  /// send more to Review: AI and the simple guess never post (accounting-rules 14). Defaults = the behaviour before the dial existed.
+  autoPostTransfer     Boolean          @default(true)
+  autoPostRules        Boolean          @default(true)
+  autoPostMemory       Boolean          @default(true)
+  /// Whole Rupiah; a line whose absolute amount is above it waits in Review whatever its source. Null = no cap. CHECK > 0.
+  autoPostCap          BigInt?
+  /// Ambang fluktuasi (accounting-rules 22b): the flux scan's minimum difference in whole Rupiah (Rupiah companies only; null = none,
+  /// CHECK > 0) and its minimum change against the account's average in whole percent (CHECK 1–1000).
+  fluxFloor            BigInt?
+  fluxPercent          Int              @default(50)
   createdAt            DateTime         @default(now())
   clients              Client[]
   rules                Rule[]
@@ -395,6 +406,7 @@ model Client {
   aiRuns             AiRun[]
   uploadItems        UploadItem[]
   pdfPasswords       ClientPdfPassword[]
+  checklistTasks     ChecklistTask[]
   coaVersion         Int                  @default(1)
   /// Modules turned on in the client menu (lib/clients/modules.ts): receivables · inventory · assets · leases · benefits. Presentation only.
   modules            String[]             @default([])
@@ -594,7 +606,7 @@ model AuditEvent {
   clientId  String
   client    Client      @relation(fields: [clientId], references: [id])
   entityId  String?
-  /// CLASSIFY · UNPAIR · IMPORT_REMOVED · CONTROL_NOTE · MAPPING · FINDING_RESOLVED · REPORT_FORMAT · FISCAL_YEAR · SUBLEDGER · DOCUMENT_VOID · ADVANCE · REPORT_EXPORT · MODULES · CREDIT_LIMIT …
+  /// CLASSIFY · UNPAIR · IMPORT_REMOVED · CONTROL_NOTE · MAPPING · FINDING_RESOLVED · REPORT_FORMAT · FISCAL_YEAR · SUBLEDGER · DOCUMENT_VOID · ADVANCE · REPORT_EXPORT · MODULES · CREDIT_LIMIT · AUTOMATION · CHECKLIST …
   kind      String
   subject   String
   summary   String
@@ -716,6 +728,8 @@ model BankTransaction {
   /// The customer/supplier this line was matched for (UC-B5): what stays unmatched on a receivable/payable account is their advance.
   contactId     String?
   contact       Contact?            @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  /// The bukti potong detail of a payment the company withheld from (cycle 2026-10-17-bppu-files): metadata, never posted.
+  slip          WithholdingSlip?
   createdAt     DateTime            @default(now())
 
   @@unique([bankAccountId, hash])
@@ -927,6 +941,67 @@ model CloseSignoff {
   doneBy   FirmMember? @relation("SignoffDoneBy", fields: [doneById], references: [id])
 
   @@unique([periodId, key])
+}
+
+/// Checklist tutup buku (lib/checklist): what a task of a client's template is.
+enum ChecklistKind {
+  /// Otomatis: Buku ticks it from the books at read time. Never stored per month, never reviewed (the proof is the review).
+  AUTO
+  /// Pemeriksaan akhir: one of the three close sign-offs. Its Selesai is the month's CloseSignoff row (the lock rule reads that).
+  SIGNOFF
+  /// The firm's own task with a free title, ticked by its Pelaksana.
+  MANUAL
+}
+
+/// A client's close-checklist template, one row per task, active from `startPeriod` through `endPeriod` (YYYYMM, inclusive; null = still
+/// active). A month's checklist is the tasks active in it joined with that month's marks: nothing is copied per month. Removing a task ends
+/// it before the month on screen; earlier months keep it with their marks.
+model ChecklistTask {
+  id          String          @id @default(cuid())
+  firmId      String
+  clientId    String
+  client      Client          @relation(fields: [clientId], references: [id])
+  kind        ChecklistKind
+  /// AUTO: the proof it reads (lib/checklist/proofs.ts); SIGNOFF: the CloseSignoff key; null for MANUAL.
+  key         String?
+  title       String
+  position    Int
+  /// Pelaksana: an active member who can open the client and write its books.
+  assigneeId  String
+  assignee    FirmMember      @relation("ChecklistAssignee", fields: [assigneeId], references: [id])
+  /// Pereviu (optional, never on AUTO): another such member whose role ranks at least the Pelaksana's.
+  reviewerId  String?
+  reviewer    FirmMember?     @relation("ChecklistReviewer", fields: [reviewerId], references: [id])
+  /// The day of the month after the period on which the task is due, 1–28.
+  dueDay      Int
+  startPeriod Int
+  endPeriod   Int?
+  createdAt   DateTime        @default(now())
+  marks       ChecklistMark[]
+
+  @@unique([id, kind])
+  @@index([clientId])
+}
+
+/// One month's Selesai and Direviu of a human task, sparse (a row exists only once someone ticks or reviews). `kind` is the task's (the
+/// composite key keeps them equal) so the CHECKs can tell a SIGNOFF mark, which holds only the review: its Selesai is the CloseSignoff row.
+/// A review counts only while the task is Selesai and the review is later than the tick.
+model ChecklistMark {
+  id           String        @id @default(cuid())
+  firmId       String
+  taskId       String
+  kind         ChecklistKind
+  task         ChecklistTask @relation(fields: [taskId, kind], references: [id, kind], onDelete: Cascade)
+  year         Int
+  month        Int
+  doneAt       DateTime?
+  doneById     String?
+  doneBy       FirmMember?   @relation("ChecklistDoneBy", fields: [doneById], references: [id])
+  reviewedAt   DateTime?
+  reviewedById String?
+  reviewedBy   FirmMember?   @relation("ChecklistReviewedBy", fields: [reviewedById], references: [id])
+
+  @@unique([taskId, year, month])
 }
 
 /// Deployment-wide settings edited in Pengaturan (e.g. AI key + model). Not firm data: survives demo reset.
@@ -1371,6 +1446,10 @@ model FirmMember {
   proposalsDecided ProposedEntry[]       @relation("ProposalDecidedBy")
   clientAccess     ClientAccess[]
   supportViewedAs  SupportSession[]      @relation("SupportViewedAs")
+  checklistTasks   ChecklistTask[]       @relation("ChecklistAssignee")
+  checklistReviews ChecklistTask[]       @relation("ChecklistReviewer")
+  checklistDone    ChecklistMark[]       @relation("ChecklistDoneBy")
+  checklistChecked ChecklistMark[]       @relation("ChecklistReviewedBy")
 
   @@index([firmId])
 }
@@ -1568,6 +1647,8 @@ model Contact {
   invoices         Invoice[]
   /// Bank lines matched to this contact (their unmatched rest is the contact's advance).
   bankTransactions BankTransaction[]
+  /// Bukti potong whose recipient was picked on the slip (the bank line itself has no contact).
+  withholdingSlips WithholdingSlip[]
 
   @@unique([clientId, name])
 }
@@ -2127,6 +2208,37 @@ model CoretaxBupot {
   @@unique([entityId, direction, number])
   @@index([clientId])
   @@index([entityId, year, month])
+}
+
+/// The bukti potong (BPPU, Unifikasi) detail of one outgoing bank line the company withheld PPh 23 / 4(2) / 22 from (cycle
+/// 2026-10-17-bppu-files): what Coretax's XML import needs and the books don't hold. Metadata only: it never posts and never changes the
+/// line's `whtKind` / `whtAmount` (rule 5h); it may be set in a locked month. Deleted with its bank line. CHECKs in the migration:
+/// dpp NULL or > 0; rate NULL or 0 < rate <= 10000; kop and rate both set or both NULL.
+model WithholdingSlip {
+  id                String          @id @default(cuid())
+  firmId            String
+  clientId          String
+  entityId          String
+  bankTransactionId String          @unique
+  bankTransaction   BankTransaction @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+  /// The recipient, only when the bank line has no contact of its own (withheld in Review).
+  contactId         String?
+  contact           Contact?        @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  /// Kode Objek Pajak, NN-NNN-NN.
+  kop               String?
+  /// Tarif in hundredths of a percent (2 % = 200, 1,75 % = 175).
+  rate              Int?
+  /// DPP in whole Rupiah.
+  dpp               BigInt?
+  /// CommercialInvoice | TaxInvoice | Contract | PaymentProof (DJP's DocType).
+  documentType      String?
+  documentNumber    String?
+  documentDate      DateTime?       @db.Date
+  updatedById       String?
+  updatedAt         DateTime        @updatedAt
+
+  @@index([clientId])
+  @@index([contactId])
 }
 
 /// PPh 25 angsuran per bulan from a masa onward (rule 5j): the instalment of a masa is the latest `from` on or before it. Set by the

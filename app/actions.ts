@@ -31,6 +31,7 @@ import { createInvoice, voidInvoice, type InvoiceInput } from "@/lib/receivables
 import { setContactChannel } from "@/lib/receivables/channels";
 import { setCreditLimit } from "@/lib/receivables/credit-limit";
 import { setContactTaxIdentity, setInvoiceFakturItem } from "@/lib/receivables/faktur-identity";
+import { setWithholdingSlip } from "@/lib/tax/withholding-slip";
 import { settleFifo, settleWithReclass, tagAdvance, unsettle } from "@/lib/receivables/settle";
 import { candidateViews, type CandidateView } from "@/lib/receivables/view";
 import { postCkpn, saveCkpnSetting, type CkpnSettingInput } from "@/lib/receivables/ckpn";
@@ -64,6 +65,7 @@ import { MAX_UPLOAD_BYTES } from "@/lib/upload";
 import { postRevaluation, RevaluationError } from "@/lib/fx/revalue";
 import { reviewClose, type CloseReviewView } from "@/lib/controls/ai-review";
 import { explainControl, ExplainError, type ControlExplanation } from "@/lib/controls/explain";
+import { ReasoningError, reasoningFor, reasoningSteps, type ReasoningStep } from "@/lib/approvals/reasoning";
 import { dismissProposal, postProposal } from "@/lib/adjust/proposals";
 import { postSuspenseCorrection, SUSPENSE_NOT_DISMISSABLE, SUSPENSE_PREFIX } from "@/lib/adjust/suspense";
 import { AiBudgetError } from "@/lib/ai/budget";
@@ -80,6 +82,8 @@ import { AccessError, requireCapability } from "@/lib/auth/session";
 import { AccountEditError, createAccount, removeAccount, updateAccount } from "@/lib/coa/manage";
 import type { Capability } from "@/lib/auth/permissions";
 import { OrgError } from "@/lib/org";
+import { acceptDefault, addTask, markTask, removeTask, setSignoff, updateTask, type MarkStep, type NewTask, type TaskEdit } from "@/lib/checklist/write";
+import { ChecklistError } from "@/lib/checklist/rules";
 import type { FsLine } from "@/lib/coa/template";
 import type { MapMethod } from "@/lib/generated/prisma/enums";
 
@@ -92,8 +96,8 @@ type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; needs
 function fail(e: unknown): { ok: false; error: string; needsPassword?: boolean; needsYear?: boolean; yearGuess?: number | null } {
   if (e instanceof PdfPasswordError) return { ok: false, error: e.message, needsPassword: true };
   if (e instanceof YearNeededError) return { ok: false, error: e.message, needsYear: true, yearGuess: e.guess };
-  if (e instanceof DeleteClientError || e instanceof EntityEditError || e instanceof AccountEditError || e instanceof AccessError || e instanceof OrgError) return { ok: false, error: e.message };
-  if (e instanceof ParseError || e instanceof LedgerError || e instanceof CloseError || e instanceof OpeningError || e instanceof FindingError || e instanceof RemoveImportError || e instanceof MoneyError || e instanceof RateError || e instanceof RevaluationError || e instanceof LedgerImportError || e instanceof MappingError || e instanceof EntitySettingsError || e instanceof FormatError || e instanceof SubledgerError || e instanceof FakturError || e instanceof BupotError) return { ok: false, error: e.message };
+  if (e instanceof DeleteClientError || e instanceof EntityEditError || e instanceof AccountEditError || e instanceof AccessError || e instanceof OrgError || e instanceof ReasoningError) return { ok: false, error: e.message };
+  if (e instanceof ParseError || e instanceof LedgerError || e instanceof CloseError || e instanceof OpeningError || e instanceof FindingError || e instanceof RemoveImportError || e instanceof MoneyError || e instanceof RateError || e instanceof RevaluationError || e instanceof LedgerImportError || e instanceof MappingError || e instanceof EntitySettingsError || e instanceof FormatError || e instanceof SubledgerError || e instanceof FakturError || e instanceof BupotError || e instanceof ChecklistError) return { ok: false, error: e.message };
   const infra = infraErrorMessage(e);
   console.error(e);
   return { ok: false, error: infra ?? "Terjadi kesalahan tak terduga. Coba lagi." };
@@ -449,13 +453,16 @@ export async function ackControlAction(clientId: string, year: number, month: nu
   }
 }
 
+/**
+ * A Pemeriksaan akhir from Tutup Buku's *Daftar periksa*: the same writer as the checklist (lib/checklist/write setSignoff), so with the
+ * sign-off's task in the month's checklist only its Pelaksana or an admin ticks it; without one any writer does, as before. Logged in
+ * Riwayat either way.
+ */
 export async function signoffAction(clientId: string, year: number, month: number, key: string, done: boolean): Promise<Result> {
   try {
-    const period = await periodFor(clientId, year, month, { mustBeOpen: true });
-    const doneById = (await getCurrentMember()).id;
-    if (done) await prisma.closeSignoff.upsert({ where: { periodId_key: { periodId: period.id, key } }, create: { periodId: period.id, key, doneById }, update: { doneById, doneAt: new Date() } });
-    else await prisma.closeSignoff.deleteMany({ where: { periodId: period.id, key } });
-    revalidatePath(`/clients/${clientId}/close`);
+    const { member } = await requireCapability("books.write", { clientId });
+    await setSignoff(prisma, member, { clientId, year, month, key, done });
+    revalidatePath(`/clients/${clientId}`, "layout");
     return { ok: true };
   } catch (e) {
     return fail(e);
@@ -479,6 +486,67 @@ export async function unlockAction(clientId: string, year: number, month: number
     await clientFor("period.unlock", clientId);
     await unlockPeriod(prisma, clientId, year, month, await getCurrentMember(), reason);
     revalidatePath("/", "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Checklist tutup buku (lib/checklist): setting it up is admin work (`checklist.manage`); a Manual task of one's own and every tick and
+ * review are writes (`books.write`) under the task's own rules (Pelaksana, Pereviu, rank, no self-review). Each refusal is Bahasa, verbatim.
+ */
+export async function acceptChecklistAction(clientId: string, year: number, month: number, assigneeId: string, reviewerId: string | null): Promise<Result<{ count: number }>> {
+  try {
+    const { member } = await requireCapability("checklist.manage", { clientId });
+    const count = await acceptDefault(prisma, member, { clientId, year, month, assigneeId, reviewerId });
+    revalidatePath(`/clients/${clientId}`, "layout");
+    return { ok: true, count };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** *Tambah tugas* (a writer: Manual, themselves as Pelaksana; an admin: anyone) and *Tambah tugas otomatis* (admin only). */
+export async function addChecklistTaskAction(clientId: string, year: number, month: number, task: NewTask): Promise<Result> {
+  try {
+    const { member } = await requireCapability(task.kind === "AUTO" ? "checklist.manage" : "books.write", { clientId });
+    await addTask(prisma, member, { clientId, year, month, ...task });
+    revalidatePath(`/clients/${clientId}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function updateChecklistTaskAction(clientId: string, year: number, month: number, taskId: string, edit: TaskEdit): Promise<Result> {
+  try {
+    const { member } = await requireCapability("checklist.manage", { clientId });
+    await updateTask(prisma, member, { clientId, year, month, taskId, ...edit });
+    revalidatePath(`/clients/${clientId}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function removeChecklistTaskAction(clientId: string, year: number, month: number, taskId: string): Promise<Result> {
+  try {
+    const { member } = await requireCapability("checklist.manage", { clientId });
+    await removeTask(prisma, member, { clientId, year, month, taskId });
+    revalidatePath(`/clients/${clientId}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Selesai or Direviu on or off for one task in one month (a Pemeriksaan akhir's Selesai is its CloseSignoff, as on Tutup Buku). */
+export async function markChecklistAction(clientId: string, year: number, month: number, taskId: string, step: MarkStep, value: boolean): Promise<Result> {
+  try {
+    const { member } = await requireCapability("books.write", { clientId });
+    await markTask(prisma, member, { clientId, year, month, taskId, step, value });
+    revalidatePath(`/clients/${clientId}`, "layout");
     return { ok: true };
   } catch (e) {
     return fail(e);
@@ -713,8 +781,11 @@ export async function setCreditLimitAction(input: { clientId: string; contactId:
   }
 }
 
-/** A buyer's tax identity for the Coretax faktur file (NPWP / NIK / NITKU / address / email); an empty field clears it. */
-export async function setContactTaxIdentityAction(input: { clientId: string; contactId: string; npwp: string; nik: string; nitku: string; address: string; email: string }): Promise<Result> {
+/**
+ * A contact's tax identity for the Coretax files (NPWP / NIK / NITKU / address / email); an empty field clears it. `holder` names the
+ * contact in the messages: the faktur's buyer (default) or the bukti potong's recipient.
+ */
+export async function setContactTaxIdentityAction(input: { clientId: string; contactId: string; npwp: string; nik: string; nitku: string; address: string; email: string; holder?: "pembeli" | "penerima" }): Promise<Result> {
   try {
     const client = await writeClient(input.clientId);
     await setContactTaxIdentity(prisma, {
@@ -725,12 +796,40 @@ export async function setContactTaxIdentityAction(input: { clientId: string; con
       nitku: String(input.nitku ?? ""),
       address: String(input.address ?? ""),
       email: String(input.email ?? ""),
+      holder: input.holder === "penerima" ? "penerima" : "pembeli",
       actorId: (await getCurrentMember()).id,
     });
     revalidatePath(`/clients/${client.id}`, "layout");
     return { ok: true };
   } catch (e) {
     return editFail(e);
+  }
+}
+
+/**
+ * The bukti potong detail of one withheld payment (cycle 2026-10-17-bppu-files): recipient when the line has none, KOP, rate, DPP and
+ * reference document. `books.write`, as recording the withholding is; metadata only, so a locked month is no bar.
+ */
+export async function setWithholdingSlipAction(input: { clientId: string; bankTransactionId: string; contactId?: string | null; contactName?: string | null; kop: string; rate?: string | null; dpp: string; documentType: string; documentNumber: string; documentDate: string }): Promise<Result> {
+  try {
+    const client = await writeClient(input.clientId);
+    await setWithholdingSlip(prisma, {
+      clientId: client.id,
+      bankTransactionId: String(input.bankTransactionId ?? ""),
+      contactId: input.contactId ? String(input.contactId) : null,
+      contactName: input.contactName ? String(input.contactName) : null,
+      kop: String(input.kop ?? ""),
+      rate: input.rate ? String(input.rate) : null,
+      dpp: String(input.dpp ?? ""),
+      documentType: String(input.documentType ?? ""),
+      documentNumber: String(input.documentNumber ?? ""),
+      documentDate: String(input.documentDate ?? ""),
+      actorId: (await getCurrentMember()).id,
+    });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
   }
 }
 
@@ -1299,6 +1398,19 @@ export async function explainControlAction(clientId: string, year: number, month
       console.error(e);
       return { ok: false, error: "AI tidak tersedia saat ini. Kontrol tetap berjalan; coba lagi nanti." };
     }
+    return fail(e);
+  }
+}
+
+/**
+ * *Lihat alasan* (cycle 2026-10-17-lihat-alasan): the steps behind an AI bank line or AI draft of the client. Reads only — anyone who
+ * may read the books, viewers included; no AI call, no budget, nothing stored. Another client's item is "Usulan tidak ditemukan."
+ */
+export async function reasoningAction(clientId: string, itemId: string): Promise<Result<{ steps: ReasoningStep[] }>> {
+  try {
+    const client = await clientFor("books.read", clientId);
+    return { ok: true, steps: reasoningSteps(await reasoningFor(prisma, { firmId: client.firmId, clientId: client.id }, String(itemId))) };
+  } catch (e) {
     return fail(e);
   }
 }
