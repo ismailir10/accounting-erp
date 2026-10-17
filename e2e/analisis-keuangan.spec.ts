@@ -62,3 +62,48 @@ test("Wawasan: trend and margin equal their tables; a group asks for one company
   await expect(page).not.toHaveURL(/tab=/);
   await expect(page.getByTestId("trend-net")).toBeVisible();
 });
+
+/**
+ * Wawasan, flow 2: PT Jasa Kreatif Digital, July 2026 — 6170 Beban Jasa Profesional is over the threshold with its three largest lines and
+ * their source, opens its Buku Besar, and a typed explanation, once approved, is in the management pack's Perubahan Akun. It is removed
+ * at the end so the demo stays as seeded. (CI has no AI key: *Susun dengan AI* is covered by DB tests with MockProvider.)
+ */
+test("Wawasan: explain a flagged mover; the management pack carries it", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("link", { name: "PT Jasa Kreatif Digital", exact: true }).first().click();
+  await page.waitForURL(/\/clients\/[^/]+/);
+  const base = page.url().match(/^.*\/clients\/[^/?]+/)![0];
+
+  await page.goto(`${base}/analysis?period=2026-07&tab=wawasan`);
+  const mover = page.getByTestId("mover-6170");
+  await expect(mover).toContainText("Melewati ambang");
+  await expect(mover).toContainText("17.450.000");
+  await expect(mover).toContainText("11.466.666");
+  await expect(mover.getByTestId("mover-lines").locator(":scope > li")).toHaveCount(3);
+  await expect(page.getByTestId("next-step")).toContainText("Jelaskan 1 akun yang melewati ambang");
+
+  await mover.getByTestId("mover-account").click();
+  await expect(page).toHaveURL(/\/ledger\/6170\?.*period=2026-07/);
+  await page.goBack();
+
+  const editor = page.getByTestId("mover-6170").getByTestId("flux-explanation");
+  await editor.getByRole("button", { name: "Tulis penjelasan" }).click();
+  const text = "Tagihan konsultan pajak dan audit interim jatuh di bulan yang sama.";
+  await editor.getByLabel("Penjelasan akun 6170").fill(text);
+  await editor.getByRole("button", { name: "Setujui" }).click();
+  await expect(editor.getByTestId("flux-explanation-approved")).toContainText("Disetujui");
+  await expect(editor.getByTestId("flux-explanation-approved")).toContainText(text);
+  await expect(page.getByTestId("next-step")).toContainText("sudah dijelaskan");
+
+  await page.goto(`${base}/reports?period=2026-07`);
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByTestId("fs-download-management").click()]);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load((await readFile(await download.path())) as unknown as ArrayBuffer);
+  const rows: unknown[][] = [];
+  wb.getWorksheet("Perubahan Akun")!.eachRow((r) => rows.push([r.getCell(1).value, r.getCell(7).value]));
+  expect(rows).toContainEqual(["6170", text]);
+
+  await page.goto(`${base}/analysis?period=2026-07&tab=wawasan`);
+  await page.getByTestId("mover-6170").getByRole("button", { name: "Hapus penjelasan" }).click();
+  await expect(page.getByTestId("mover-6170").getByTestId("flux-explanation-approved")).toHaveCount(0);
+});

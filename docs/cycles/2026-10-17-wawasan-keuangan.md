@@ -166,7 +166,7 @@ the explanation of a movement is the accountant's, approved and kept, with AI on
       anomaly branch (`lib/controls/ai-review.ts`) so the close review and the draft send identical rows; reuse `runBudgetedAi`,
       `EvidenceAiCache`, `allowedNumbers` / `foreignNumbers`, `recordEvent` (`REPORT_COMMENT`); three actions via `writeClient`; client
       deletion; accounting-rules 20d + ADR 0009 note; DB tests — accept: Test seams' DB list passes (deps: T1; parallel with T2).
-- [ ] T4 Editor on each mover (keyed like `ManagementNoteCard`), NextStep, *Pakai lagi*, the *Penjelasan* column in
+- [x] T4 Editor on each mover (keyed like `ManagementNoteCard`), NextStep, *Pakai lagi*, the *Penjelasan* column in
       `managementWorkbook`; e2e flow 2; workbook test — accept: flows 2–4 walk (deps: T2, T3).
 - [ ] T5 verify-local: walk flows 1–4, screenshots at 1440 and 390 px, full gate.
 
@@ -198,6 +198,15 @@ the explanation of a movement is the accountant's, approved and kept, with AI on
   shares ten rows between the series and the lines when several accounts are flagged; for one account they are identical, tested);
   the accountant's own words may also use the figures Penggerak shows (average, difference, %) without a warning; scope limit 60 000
   tokens per client-month, 6 000 output tokens per draft.
+- T4: `components/app/flux-explanation.tsx` (keyed per company, month and account like `ManagementNoteCard`; write controls from
+  `useAccess`, so a viewer sees the approved text only), `app/(app)/clients/[id]/analysis/page.tsx` (one management summary feeds the
+  movers and the explanations; the NextStep for writers while a flagged mover has no current explanation, the done state for everyone
+  once all are explained), `e2e/analisis-keuangan.spec.ts` (flow 2, typed; it removes its explanation at the end so the demo stays as
+  seeded), README (the Wawasan part of the Analisis keuangan row; committed with T3). The workbook's *Penjelasan* column and its test
+  landed in T3.
+  Decisions: an approved explanation offers *Ubah penjelasan* (prefilled, saved as the accountant's) and *Hapus penjelasan*; *Pakai
+  lagi* shows last month's text above the buttons and prefills the editor, and is hidden from viewers (it is a write affordance); a
+  stale explanation counts as unexplained for the NextStep.
 
 ## Verification
 

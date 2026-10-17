@@ -3,10 +3,10 @@ import { ChevronRight, Download } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { loadClientPage } from "@/lib/client-page";
 import { type SearchParams, withParams } from "@/lib/scope";
-import { formatPeriod, monthName } from "@/lib/format";
+import { formatDateTime, formatPeriod, monthName } from "@/lib/format";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { PageHeader } from "@/components/app/page-header";
+import { NextStep, PageHeader } from "@/components/app/page-header";
 import { ScopeBar } from "@/components/app/scope-bar";
 import { LinkTabs } from "@/components/app/link-tabs";
 import { RatioTable, TrendTable } from "@/components/app/trend-table";
@@ -16,6 +16,11 @@ import { FxMissingError } from "@/lib/reports/fx";
 import { monthlyBalance, monthlyIncome, ratios } from "@/lib/reports/analysis";
 import { figuresOf, margins, topMovers, trend } from "@/lib/reports/insights";
 import { FLUX_PERCENT, MATERIALITY_PERCENT } from "@/lib/controls/anomaly";
+import { managementSummary } from "@/lib/reports/management";
+import { fluxExplanations } from "@/lib/reports/flux-explanation";
+import { resolveAiConfig } from "@/lib/settings/ai";
+import { accessView, requireWorkspaceSession } from "@/lib/auth/session";
+import { FluxExplanationCard } from "@/components/app/flux-explanation";
 
 export const metadata = { title: "Analisis keuangan" };
 
@@ -68,10 +73,25 @@ export default async function AnalysisPage({ params, searchParams }: { params: P
     const figures = pl.statements.map(figuresOf);
     const t = trend(pl.months, figures, currency);
     // Movers are per company, as the flux scan and the management pack are; a group view asks for one.
-    const movers = scope.mode === "entity" ? await topMovers(prisma, { clientId: client.id, entityId: scope.value, year: period.year, month: period.month }) : null;
+    const key = scope.mode === "entity" ? { clientId: client.id, entityId: scope.value, year: period.year, month: period.month } : null;
+    const summary = key && (await managementSummary(prisma, key));
+    const [movers, explained, ai, session] = key && summary
+      ? await Promise.all([topMovers(prisma, key, summary), fluxExplanations(prisma, key, summary), resolveAiConfig(prisma), requireWorkspaceSession()])
+      : [null, null, null, null];
+    const canWrite = session ? accessView(session).canWrite : false;
+    // Flagged movers whose explanation is missing or no longer matches the books: what stands between the pack and the owner.
+    const current = (code: string) => explained?.current.get(code)?.stale === false;
+    const open = movers?.movers.filter((m) => m.flagged && !current(m.code)) ?? [];
+    const flagged = movers?.movers.some((m) => m.flagged) ?? false;
     return (
       <div className="space-y-6">
         {header}
+        {open.length > 0 && canWrite && (
+          <NextStep href={`#mover-${open[0].code}`} cta={`Jelaskan ${open[0].code}`}>
+            Jelaskan {open.length} akun yang melewati ambang sebelum laporan manajemen dikirim
+          </NextStep>
+        )}
+        {flagged && open.length === 0 && <NextStep tone="done">Semua akun yang melewati ambang sudah dijelaskan untuk laporan manajemen</NextStep>}
         <TrendCard trend={t} currency={currency} plHref={tabHref("pl")} />
         <MarginCard margins={margins(figures, figuresOf(pl.ytd), pl.months)} compared={t.compared} ratioHref={tabHref("rasio")} plHref={tabHref("pl")} />
         <Card data-testid="insight-movers">
@@ -99,9 +119,24 @@ export default async function AnalysisPage({ params, searchParams }: { params: P
               <p className="px-6 text-sm text-muted-foreground">Tidak ada mutasi akun laba rugi bulan ini.</p>
             ) : (
               <ul className="divide-y border-t">
-                {movers.movers.map((m) => (
-                  <MoverRow key={m.code} mover={m} months={movers.baseline.length} currency={movers.currency} ledgerHref={href(m.code)} />
-                ))}
+                {movers.movers.map((m) => {
+                  const x = explained?.current.get(m.code);
+                  return (
+                    <MoverRow key={m.code} mover={m} months={movers.baseline.length} currency={movers.currency} ledgerHref={href(m.code)}>
+                      <FluxExplanationCard
+                        clientId={client.id}
+                        entityId={scope.value}
+                        year={period.year}
+                        month={period.month}
+                        code={m.code}
+                        flagged={m.flagged}
+                        aiReady={Boolean(ai?.apiKey && ai.model)}
+                        approved={x ? { text: x.text, source: x.source, approved: `${x.approvedBy ?? "Akuntan"} · ${formatDateTime(x.approvedAt)}`, stale: x.stale } : null}
+                        previous={explained?.previous.get(m.code) ?? null}
+                      />
+                    </MoverRow>
+                  );
+                })}
               </ul>
             )}
           </CardContent>
