@@ -79,7 +79,9 @@ test("Wawasan: explain a flagged mover; the management pack carries it", async (
   await expect(mover).toContainText("Melewati ambang");
   await expect(mover).toContainText("17.450.000");
   await expect(mover).toContainText("11.466.666");
-  await expect(mover.getByTestId("mover-lines").locator(":scope > li")).toHaveCount(3);
+  // The month holds one line on 6170 (the freelance fee transfer), so its largest lines are that one.
+  await expect(mover.getByTestId("mover-lines").locator(":scope > li")).toHaveCount(1);
+  await expect(mover.getByTestId("mover-lines")).toContainText("HONOR FREELANCE");
   await expect(page.getByTestId("next-step")).toContainText("Jelaskan 1 akun yang melewati ambang");
 
   await mover.getByTestId("mover-account").click();

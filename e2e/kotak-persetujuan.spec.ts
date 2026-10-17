@@ -52,6 +52,7 @@ test("demo: the board's Persetujuan cell equals the client's Kotak; a sure AI li
 test("demo: a closed month shows its queue read-only", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("link", { name: "Grup Ayam Nusantara", exact: true }).first().click();
+  await page.waitForURL(/\/clients\/[^/]+/);
   const base = new URL(page.url()).pathname.match(/\/clients\/[^/]+/)![0];
   await page.goto(`${base}/approvals?period=2026-07`);
   await expect(page.getByTestId("next-step")).toContainText("Buku Juli 2026 sudah ditutup");
