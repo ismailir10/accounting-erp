@@ -5,6 +5,7 @@ import type { Direction, TaxTag } from "@/lib/generated/prisma/enums";
 import { buildOcrPrompt, OCR_MAX_TOKENS, OCR_TOKENS_PER_PAGE, parseOcrTranscript, type OcrInput, type OcrTranscript } from "@/lib/ocr/transcribe";
 import { buildCommentaryPrompt, COMMENTARY_MAX_TOKENS, parseCommentary, type CommentaryInput } from "@/lib/reports/commentary-ai";
 import { buildFluxExplanationPrompt, FLUX_EXPLANATION_MAX_CHARS, FLUX_EXPLANATION_MAX_TOKENS, parseFluxExplanation, type FluxExplanationAnswer, type FluxExplanationInput } from "@/lib/reports/flux-explanation-ai";
+import { buildInstructionPrompt, INSTRUCTION_MAX_TOKENS, type InstructionAiInput } from "@/lib/instructions/ai-prompt";
 
 /**
  * LLM provider port. Default implementation targets any OpenAI-compatible
@@ -298,6 +299,8 @@ export interface AiProvider {
   draftFluxExplanation?(input: FluxExplanationInput): Promise<FluxExplanationResult>;
   /** Scanned statement (I2a): page images in, a transcription out; Buku parses and proves every number. */
   readStatement?(input: OcrInput): Promise<OcrResult>;
+  /** *Susun dengan AI* for an Instruksi kantor (accounting-rules 20e): a sentence and the account list in, one JSON object out; the caller checks it. */
+  compileInstruction?(input: InstructionAiInput): Promise<InstructionCompileResult>;
   classify(items: AiItem[], accounts: { code: string; name: string }[], context: string): Promise<AiResult>;
   mapAccounts(items: MapItem[], accounts: { code: string; name: string; group: string }[], context: string): Promise<MapResult>;
 }
@@ -305,6 +308,8 @@ export interface AiProvider {
 export type OcrResult = { transcript: OcrTranscript; promptTokens: number; completionTokens: number; model: string };
 export type CommentaryResult = { text: string; promptTokens: number; completionTokens: number; model: string };
 export type FluxExplanationResult = FluxExplanationAnswer & { promptTokens: number; completionTokens: number; model: string };
+/** The model's text as sent; lib/instructions/ai-prompt.ts reads it against the closed schema and the sentence. */
+export type InstructionCompileResult = { text: string; promptTokens: number; completionTokens: number; model: string };
 
 /** Counterparties (or source accounts) per call: small enough that a reasoning model's thinking plus the JSON fit `maxTokensFor`. */
 export const AI_BATCH_SIZE = 15;
@@ -502,6 +507,12 @@ export class OpenAiCompatibleProvider implements AiProvider {
     }
   }
 
+  async compileInstruction(input: InstructionAiInput): Promise<InstructionCompileResult> {
+    const { system, user } = buildInstructionPrompt(input);
+    const r = await this.complete(system, user, INSTRUCTION_MAX_TOKENS, false, AI_TIMEOUT_MS);
+    return { text: r.text, promptTokens: r.promptTokens, completionTokens: r.completionTokens, model: r.model };
+  }
+
   async reviewClose(input: CloseReviewInput): Promise<CloseReviewResult> {
     const { system, user } = buildCloseReviewPrompt(input);
     const r = await this.complete(system, user, CLOSE_REVIEW_MAX_TOKENS, false, AI_LONG_TIMEOUT_MS);
@@ -603,6 +614,13 @@ export class MockProvider implements AiProvider {
     const fallback = JSON.stringify({ explanation: `Uji: ${input.control.title}`, suggestion: "Periksa baris yang dikutip.", refs: row ? [row.id] : [], note: `Dicek: ${input.control.title}`, entry });
     const answer = parseControlExplain(this.explainAnswer ?? fallback, input);
     return { ...answer, promptTokens: 40, completionTokens: 30, model: this.model };
+  }
+  /** A recorded *Susun dengan AI* answer for tests (JSON as a model sends it); null = kind NONE. */
+  instructionAnswer: string | null = null;
+  async compileInstruction(): Promise<InstructionCompileResult> {
+    this.calls++;
+    const none = JSON.stringify({ kind: "NONE", pattern: null, direction: null, accountCode: null, taxTag: null, minAmount: null, inclusive: false });
+    return { text: this.instructionAnswer ?? none, promptTokens: 30, completionTokens: 20, model: this.model };
   }
   async classify(items: AiItem[]): Promise<AiResult> {
     this.calls++;

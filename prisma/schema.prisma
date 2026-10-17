@@ -226,6 +226,7 @@ model Firm {
   members              FirmMember[]
   grants               AccessGrant[]
   supportSessions      SupportSession[]
+  instructions         Instruction[]
 }
 
 enum OrgKind {
@@ -407,6 +408,7 @@ model Client {
   uploadItems        UploadItem[]
   pdfPasswords       ClientPdfPassword[]
   checklistTasks     ChecklistTask[]
+  instructions       Instruction[]
   coaVersion         Int                  @default(1)
   /// Modules turned on in the client menu (lib/clients/modules.ts): receivables · inventory · assets · leases · benefits. Presentation only.
   modules            String[]             @default([])
@@ -606,7 +608,7 @@ model AuditEvent {
   clientId  String
   client    Client      @relation(fields: [clientId], references: [id])
   entityId  String?
-  /// CLASSIFY · UNPAIR · IMPORT_REMOVED · CONTROL_NOTE · MAPPING · FINDING_RESOLVED · REPORT_FORMAT · FISCAL_YEAR · SUBLEDGER · DOCUMENT_VOID · ADVANCE · REPORT_EXPORT · MODULES · CREDIT_LIMIT · AUTOMATION · CHECKLIST …
+  /// CLASSIFY · UNPAIR · IMPORT_REMOVED · CONTROL_NOTE · MAPPING · FINDING_RESOLVED · REPORT_FORMAT · FISCAL_YEAR · SUBLEDGER · DOCUMENT_VOID · ADVANCE · REPORT_EXPORT · MODULES · CREDIT_LIMIT · AUTOMATION · CHECKLIST · INSTRUCTION …
   kind      String
   subject   String
   summary   String
@@ -823,19 +825,79 @@ model JournalLine {
 }
 
 model Rule {
-  id          String     @id @default(cuid())
-  firmId      String
-  firm        Firm       @relation(fields: [firmId], references: [id])
-  clientId    String?
-  client      Client?    @relation(fields: [clientId], references: [id])
+  id            String       @id @default(cuid())
+  firmId        String
+  firm          Firm         @relation(fields: [firmId], references: [id])
+  clientId      String?
+  client        Client?      @relation(fields: [clientId], references: [id])
   /// Case-insensitive substring of the normalized description.
-  pattern     String
-  direction   Direction?
-  accountCode String
-  taxTag      TaxTag?
-  priority    Int        @default(100)
-  source      String     @default("SEED")
-  createdAt   DateTime   @default(now())
+  pattern       String
+  direction     Direction?
+  accountCode   String
+  taxTag        TaxTag?
+  priority      Int          @default(100)
+  /// SEED (the firm's starter rules) · USER (Review's *Selalu gunakan akun ini*) · INSTRUKSI (an approved Instruksi kantor).
+  source        String       @default("SEED")
+  /// Set for a rule an Instruksi kantor made (source INSTRUKSI); *Matikan* deletes the rule with it.
+  instructionId String?      @unique
+  instruction   Instruction? @relation(fields: [instructionId], references: [id], onDelete: Restrict)
+  createdAt     DateTime     @default(now())
+}
+
+/// Instruksi kantor (cycle 2026-10-18-instruksi-kantor): what an approved instruction compiled to.
+enum InstructionKind {
+  /// Aturan akun: an ordinary Rule (keyword, direction, account, tax tag) at priority 5.
+  ACCOUNT
+  /// Tandai: a REVIEW close control listing the month's bank lines above a minimum amount.
+  FLAG
+  /// Tahan di Review: a line the dial would post whose description holds the keyword waits in Review instead.
+  HOLD
+}
+
+enum InstructionStatus {
+  ACTIVE
+  /// Dimatikan: kept for history; its rule is deleted, its control and hold stop.
+  OFF
+}
+
+/// Who wrote the approved fields, decided by the server at *Setujui*: Buku's parser, the cached AI answer, or a person's edit.
+enum InstructionOrigin {
+  PARSER
+  AI
+  EDITED
+}
+
+/// A firm's plain-Bahasa instruction compiled into typed fields a person approved. Run time reads only the typed columns (and the Rule an
+/// ACCOUNT instruction made); the sentence is display and history. clientId null = *Semua klien*. Never edited in place: Aktif → Dimatikan.
+model Instruction {
+  id           String            @id @default(cuid())
+  firmId       String
+  firm         Firm              @relation(fields: [firmId], references: [id])
+  clientId     String?
+  client       Client?           @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  sentence     String
+  kind         InstructionKind
+  status       InstructionStatus @default(ACTIVE)
+  origin       InstructionOrigin
+  /// Upper case, 3–60 characters; a case-insensitive substring of the bank description. Required for ACCOUNT and HOLD.
+  pattern      String?
+  direction    Direction?
+  accountCode  String?
+  taxTag       TaxTag?
+  /// Whole Rupiah, > 0. Required for FLAG, optional for HOLD, never for ACCOUNT.
+  minAmount    BigInt?
+  /// With minAmount: true = at least (≥), false = strictly above (>).
+  inclusive    Boolean           @default(false)
+  approvedById String?
+  approvedBy   FirmMember?       @relation("InstructionApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt   DateTime          @default(now())
+  offById      String?
+  offBy        FirmMember?       @relation("InstructionOffBy", fields: [offById], references: [id], onDelete: SetNull)
+  offAt        DateTime?
+  rule         Rule?
+
+  @@index([firmId, status])
+  @@index([clientId])
 }
 
 model Memory {
@@ -1418,38 +1480,40 @@ model FirmMember {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
-  postedEntries    JournalEntry[]        @relation("EntryPostedBy")
-  signoffs         CloseSignoff[]        @relation("SignoffDoneBy")
-  lockedPeriods    Period[]              @relation("PeriodLockedBy")
-  periodUnlocks    PeriodUnlockLog[]     @relation("PeriodUnlockedBy")
-  acks             ControlAck[]          @relation("AckDoneBy")
-  statementImports StatementImport[]     @relation("StatementImportedBy")
-  ledgerImports    LedgerImport[]        @relation("LedgerImportedBy")
-  ledgerPostings   LedgerImport[]        @relation("LedgerPostedBy")
-  mappings         SourceAccount[]       @relation("MappingAcceptedBy")
-  schedules        AdjustmentSchedule[]  @relation("ScheduleCreatedBy")
-  fixedAssets      FixedAsset[]          @relation("AssetCreatedBy")
-  inventoryCounts  InventoryCount[]      @relation("InventoryCountedBy")
-  invoicesCreated  Invoice[]             @relation("InvoiceCreatedBy")
-  leasesCreated    Lease[]               @relation("LeaseCreatedBy")
-  settlements      InvoiceSettlement[]   @relation("SettlementCreatedBy")
-  taxCorrections   FiscalCorrection[]
-  taxCredits       TaxCredit[]
-  taxPostings      TaxPosting[]
-  taxLosses        TaxLossCarryforward[]
-  findingsOpened   Finding[]             @relation("FindingOpenedBy")
-  auditEvents      AuditEvent[]          @relation("AuditEventBy")
-  reportFormats    ReportFormat[]        @relation("ReportFormatBy")
-  subledgerImports SubledgerImport[]     @relation("SubledgerImportBy")
-  voidedInvoices   Invoice[]             @relation("InvoiceVoidedBy")
-  findingsResolved Finding[]             @relation("FindingResolvedBy")
-  proposalsDecided ProposedEntry[]       @relation("ProposalDecidedBy")
-  clientAccess     ClientAccess[]
-  supportViewedAs  SupportSession[]      @relation("SupportViewedAs")
-  checklistTasks   ChecklistTask[]       @relation("ChecklistAssignee")
-  checklistReviews ChecklistTask[]       @relation("ChecklistReviewer")
-  checklistDone    ChecklistMark[]       @relation("ChecklistDoneBy")
-  checklistChecked ChecklistMark[]       @relation("ChecklistReviewedBy")
+  postedEntries        JournalEntry[]        @relation("EntryPostedBy")
+  signoffs             CloseSignoff[]        @relation("SignoffDoneBy")
+  lockedPeriods        Period[]              @relation("PeriodLockedBy")
+  periodUnlocks        PeriodUnlockLog[]     @relation("PeriodUnlockedBy")
+  acks                 ControlAck[]          @relation("AckDoneBy")
+  statementImports     StatementImport[]     @relation("StatementImportedBy")
+  ledgerImports        LedgerImport[]        @relation("LedgerImportedBy")
+  ledgerPostings       LedgerImport[]        @relation("LedgerPostedBy")
+  mappings             SourceAccount[]       @relation("MappingAcceptedBy")
+  schedules            AdjustmentSchedule[]  @relation("ScheduleCreatedBy")
+  fixedAssets          FixedAsset[]          @relation("AssetCreatedBy")
+  inventoryCounts      InventoryCount[]      @relation("InventoryCountedBy")
+  invoicesCreated      Invoice[]             @relation("InvoiceCreatedBy")
+  leasesCreated        Lease[]               @relation("LeaseCreatedBy")
+  settlements          InvoiceSettlement[]   @relation("SettlementCreatedBy")
+  taxCorrections       FiscalCorrection[]
+  taxCredits           TaxCredit[]
+  taxPostings          TaxPosting[]
+  taxLosses            TaxLossCarryforward[]
+  findingsOpened       Finding[]             @relation("FindingOpenedBy")
+  auditEvents          AuditEvent[]          @relation("AuditEventBy")
+  reportFormats        ReportFormat[]        @relation("ReportFormatBy")
+  subledgerImports     SubledgerImport[]     @relation("SubledgerImportBy")
+  voidedInvoices       Invoice[]             @relation("InvoiceVoidedBy")
+  findingsResolved     Finding[]             @relation("FindingResolvedBy")
+  proposalsDecided     ProposedEntry[]       @relation("ProposalDecidedBy")
+  clientAccess         ClientAccess[]
+  supportViewedAs      SupportSession[]      @relation("SupportViewedAs")
+  checklistTasks       ChecklistTask[]       @relation("ChecklistAssignee")
+  checklistReviews     ChecklistTask[]       @relation("ChecklistReviewer")
+  checklistDone        ChecklistMark[]       @relation("ChecklistDoneBy")
+  checklistChecked     ChecklistMark[]       @relation("ChecklistReviewedBy")
+  instructionsApproved Instruction[]         @relation("InstructionApprovedBy")
+  instructionsOff      Instruction[]         @relation("InstructionOffBy")
 
   @@index([firmId])
 }

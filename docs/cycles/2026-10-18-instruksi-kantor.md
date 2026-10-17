@@ -367,26 +367,137 @@ always-on checks, and only exceptions reach a person. Buku's rule 4 adds: a pers
 If the hold needs to be stored on the bank line (a new column) rather than in its reason, that is a second migration: stop and ask.
 
 ## Tasks
-- [ ] T1 Schema + migration (`Instruction`, enums, CHECKs, `Rule.instructionId`). `AuditKind` INSTRUCTION + label + Riwayat filter.
+- [x] T1 Schema + migration (`Instruction`, enums, CHECKs, `Rule.instructionId`). `AuditKind` INSTRUCTION + label + Riwayat filter.
       Client deletion removes its instructions. Accept: migration applies on a fresh and a seeded DB; DB CHECK tests; client-delete
       test. (reuse: `recordEvent`)
-- [ ] T2 `lib/instructions/`: the parser, amount reader, closed-schema validator and keyword hint (pure); the preview (read-only); approve
+- [x] T2 `lib/instructions/`: the parser, amount reader, closed-schema validator and keyword hint (pure); the preview (read-only); approve
       and *Matikan* (firm row lock, `Rule` write or delete, events, origin). Accept: unit parse tests + DB `instructions.test.ts`. (deps:
       T1; reuse: `matchRule`, `sortRules`, `isGenericKey`, `isClassifiable`, `aiAccounts`, `parseMoney`, `formatRupiah`)
-- [ ] T3 Run time: the instruction rule's reason in `matchRule`; holds in the post-or-hold decision and the pipeline (`heldBy`
+- [x] T3 Run time: the instruction rule's reason in `matchRule`; holds in the post-or-hold decision and the pipeline (`heldBy`
       "instruksi kantor"); *Tandai* controls in `runControls` (open months, notes) and their rows in the AI close review; accounting-rules
       13, 14, 22c. Accept: `dial.test`, `instructions-import.test.ts`, `instruction-controls.test.ts`; existing pipeline and control
       tests unchanged. (deps: T1, T2; parallel with T4)
-- [ ] T4 *Susun dengan AI*: provider method + prompt + parse (closed schema, grounding), `MockProvider.compileInstruction`, budget +
+- [x] T4 *Susun dengan AI*: provider method + prompt + parse (closed schema, grounding), `MockProvider.compileInstruction`, budget +
       cache; accounting-rules 20e; note on ADR 0003. Accept: `instruction-ai.test.ts`. (deps: T2; parallel with T3; reuse:
       `runBudgetedAi`, `EvidenceAiCache`, `resolveProvider`)
-- [ ] T5 UI + actions: the *Instruksi* tab (editor, preview, list, read-only), `app/instruction-actions.ts`, and the origin mark on
+- [x] T5 UI + actions: the *Instruksi* tab (editor, preview, list, read-only), `app/instruction-actions.ts`, and the origin mark on
       Pengaturan klien's rule tables; README (routes, settings). Accept: `instruction-actions.test.ts`; flows 1, 3–5 on the dev server.
       (deps: T2–T4; reuse: `AccountPicker`, `NextStep`, `LinkTabs`, the `AutomationCard` layout)
 - [ ] T6 verify-local: walk flows 1–5 with screenshots at 1440 and 390 px; `e2e/instruksi-kantor.spec.ts`; the full gate (`demo:reset`,
       `verify:books` ALL PASS). (deps: T3–T5)
 
 ## Implementation
+- Plan: T1 → T2 → T3 → T4 → T5 sequential, inline in one build worker (each task reads the previous one's module: the parser and
+  validator feed the preview, the run time, the AI compile and the actions; a fan-out would cost more context than it saves). T6's e2e
+  spec is written here; the walk, screenshots and the full gate with `demo:reset` / `verify:books` / Playwright run in the driver's
+  verify-local (this worker never touches the shared `buku` database).
+- T1: `prisma/schema.prisma`, `prisma/migrations/20261018130000_instructions/`, `lib/audit.ts`, `lib/clients/delete.ts`,
+  `.agents/skills/accounting-rules/SKILL.md` (rule 25), `tests/db/instructions.test.ts`, `tests/db/delete-client.test.ts` — the
+  `Instruction` table (three enums, typed compiled columns, approved/turned-off by and at), `Rule.instructionId` (unique, Restrict) and
+  CHECKs per kind, keyword (upper case, 3–60), amount > 0, sentence 1–300 and not blank, OFF ⇔ `offAt`. `Instruction.clientId` is
+  Restrict (never Set Null: a deleted client's instruction must not turn firm-wide); client deletion removes its rules, then its
+  instructions, and keeps *Semua klien* ones. `INSTRUCTION` ("Instruksi kantor") joins the Riwayat label map, so the filter chip follows.
+- T2: `lib/instructions/compile.ts` (pure), `lib/instructions/match.ts`, `lib/instructions/preview.ts`, `lib/instructions/store.ts`,
+  `lib/classify/rules.ts`, `tests/unit/instruction-parse.test.ts`, `tests/db/instructions.test.ts` — the reader (refusals first, on the
+  text outside a quoted keyword; then *Tandai* / *Tahan* / *Aturan akun* by their verbs), the bigint amount reader (units jt/juta,
+  rb/ribu, M/miliar; thousands dots; a decimal comma, or a dot only with a unit; a fraction of a Rupiah refused), and `validateDraft`, the
+  one closed schema for the reader, the AI and the accountant's edits (exact keys, per-kind fields, keyword 3–60 and not generic, a
+  classifiable non-transfer account in a chart in scope, an amount 1…10¹⁵−1). `winningRule` is `matchRule`'s decision returning the
+  rule itself, so the preview runs the import's own matcher with the proposed rule added; `matchRule` keeps its result and words a rule
+  from an instruction "Instruksi kantor: keterangan memuat …". The preview reads each client's latest three months with bank lines and
+  writes nothing; keyword hints come from the scope's rule patterns and merchant keys, ranked by typed words covered, then lines.
+  Approve and *Matikan* run under the firm's row lock (as `saveAutomation`), refuse a duplicate (an *Aturan akun* on the same keyword,
+  direction and scope with any account counts as one), write the Rule (priority 5, `INSTRUKSI`) or delete it, and one event per client
+  (before/after snapshots, amounts as strings). Origin is decided on the server: the reader's own result, else a cached AI draft for the
+  same sentence (`EvidenceAiCache`, scope `instruksi:<firm>`), else *Disunting*.
+- T3: `lib/classify/dial.ts`, `lib/instructions/match.ts`, `lib/import/pipeline.ts`, `lib/instructions/controls.ts`,
+  `lib/controls/index.ts`, `lib/controls/ai-review.ts`, `.agents/skills/accounting-rules/SKILL.md` (13, 14, 22d),
+  `tests/unit/dial.test.ts`, `tests/db/instructions-import.test.ts`, `tests/db/instruction-controls.test.ts` — the import reads the
+  client's active *Tahan* instructions' typed fields into the dial; `decidePosting` checks them after the switches and the cap (stricter
+  only; held kind `instruction`, "instruksi kantor" in the import result) against the lines a decision covers: the line, and for a
+  transfer pair its other half, so both halves get one decision and a held pair follows the dial's existing pair rules. `runControls`
+  adds one *Tandai* control per entity and active FLAG instruction unless the month is locked (`matchesLine` over the month's bank
+  lines, five shown then "+N lainnya", PASS "Tidak ada …"); notes and stale notes work as for every REVIEW control. The AI close review
+  (and so *Jelaskan* and *Lihat alasan*) sends a *Tandai* control's listed lines through the existing `bankRow`/caps.
+  - Decision: the control key is `instr:<entity>:<instruction>`, not the spec's `instr:<instruction>:<entity>`: every entity-scoped
+    control key in Buku is `kind:<entityId>…`, and the close review, *Jelaskan* (draft only for an entity's control) and *Lihat alasan*
+    find the entity from the second segment. Nothing else reads the order.
+  - Decision: the new close rule is numbered 22d: 22c already exists (source validation).
+- T4: `lib/instructions/ai-prompt.ts`, `lib/instructions/ai.ts`, `lib/ai/provider.ts`, `.agents/skills/accounting-rules/SKILL.md`
+  (20e), `docs/adrs/0003-hybrid-ai.md` (note), `tests/db/instruction-ai.test.ts` — `compileInstruction` on the provider port (the
+  OpenAI-compatible provider returns the model's text; `MockProvider.instructionAnswer` records one for tests, else NONE). `compileWithAi`
+  asks only for a sentence the reader did not understand, sends the sentence and the targetable accounts (code and name, 1190/1199 out),
+  and reads the answer with `readInstructionAnswer`: one object with exactly the draft's keys (else, or NONE: "AI juga tidak dapat …"),
+  the keyword in the sentence (case and spaces ignored), the amount among `amountsIn(sentence)`, the account in the list, then
+  `validateDraft`. One `runBudgetedAi` call (scope `instruksi:<firm>`, note "Instruksi kantor"), no retry; the answer, kept or refused,
+  is cached by sentence, accounts, model and prompt version (the cache row also holds the sentence, which the origin check reads).
+- T5: `app/instruction-actions.ts`, `app/(app)/settings/page.tsx`, `components/app/instruction-editor.tsx`,
+  `components/app/instruction-list.tsx`, `lib/instructions/labels.ts`, `app/(app)/clients/[id]/settings/page.tsx`, `README.md`,
+  `tests/db/instruction-actions.test.ts` — five actions, each behind the scope's guard (`org.settings` for *Semua klien*,
+  `books.write` on the client otherwise; *Matikan* reads the instruction in the firm first, then guards by its own scope). *Susun* and
+  the preview validate and read only; `Setujui` is the one write. The *Instruksi* tab (between *Umum* and *Tim*, every role) holds the
+  NextStep, the editor for members who may approve in some scope (*Semua klien* for admins, then the clients they may open), and the
+  list: divided rows with the sentence, the compiled sentence, kind and scope, "Disetujui … oleh … · origin", *Matikan* with a confirm
+  naming what stops, and "N dimatikan" folded. The editor's preview is the approval screen: every field editable (keyword, direction,
+  account via `AccountPicker`, tax tag, amount and operator); an edit marks it stale ("Perbarui contoh") and *Setujui* stays off until
+  the preview is current or while a duplicate blocks it; hints are outline buttons that re-preview; matched lines show per client and
+  month, then up to 20 rows (client and current account hidden below `md`). The words and shapes the client component needs live in
+  `lib/instructions/labels.ts` (no server-only imports). Pengaturan klien's rule tables mark an instruction rule "Instruksi kantor",
+  linked to its row on the list.
+- T6 (part): `e2e/instruksi-kantor.spec.ts` — three tests. (1) Demo firm, demo admin: flow 1's preview (no literal match, the
+  *BIAYA ADM* hint, "sekarang di akun lain (7100", Grup Ayam Nusantara and CV Sinar Retail counts, 390 px), *Setujui* (Aktif,
+  *Disunting*, Riwayat of Grup Ayam), flow 3's Akuntan (tab visible, no *Tim*, no *Semua klien* scope, the firm row without *Matikan*,
+  writes, approves and turns off its own instruction on PT Jasa Kreatif Digital) and Peninjau (`asPeninjau`: list only, no editor, no
+  *Matikan*, 390 px); every instruction it made is turned off in `finally`, and a leftover from an interrupted run is turned off first.
+  (2) Flow 4's refusals verbatim with the pattern line, and no *Susun dengan AI* (precondition asserted: "Usulan AI belum aktif").
+  (3) "KAP Uji Lain" on a client of its own: flow 2 (four client instructions; the import's "1 ditahan Otomasi kantor (instruksi
+  kantor)"; BIAYA ADM on 6190 with the instruction reason in the ledger drawer; PT MAJU JAYA in Review and Kotak, no bulk accept;
+  Tutup Buku lists the Rp 25 jt line and not the Rp 10 jt one; a note clears it; the rule marked "Instruksi kantor" with its link;
+  four Riwayat events) and flow 5 (the duplicate blocked before *Setujui*; an edit makes the preview stale; a 2-letter keyword's field
+  message). Clients and options are picked by exact name; every action is awaited through its toast or the refreshed row. Not run
+  here: the walk, screenshots, `demo:reset`, `verify:books` and Playwright are the driver's verify-local (this worker never touches the
+  shared `buku` database).
+  - Decision: flow 2's PT MAJU JAYA rule is an approved *Aturan akun* (`"PT MAJU JAYA" selalu 6120`) rather than one made in Review: it
+    holds a line a rule would post the same way, and the Review-made (USER) rule is covered by `instructions-import.test.ts`.
+  - Decision: flow 5's "account not in the chart" cannot be typed in the UI (the *Akun* picker offers only the scope's chart); the field
+    message is asserted at the action (`instruction-actions.test.ts`, `instructions.test.ts`), and the e2e asserts the keyword's.
+- **Criteria → tests** (owner's ask: every criterion asserted at least once):
+  - No instruction = today → `instructions-import.test.ts` ("no instruction = today …": hardcoded per-line outcome, no `instr:`
+    control, and instructions approved then turned off import identically, controls included); `instructions.test.ts` (preview writes
+    nothing); existing pipeline / dial / golden / demo tests unchanged in the full run; `verify:books` and the investor walk at verify-local.
+  - Parser shapes, amounts, operators, refusals, "Buku belum memahami" → `tests/unit/instruction-parse.test.ts`.
+  - One closed schema (unknown keys, generic keyword, 3–60, non-classifiable / transfer account, charts, duplicates) →
+    `instruction-parse.test.ts` ("the closed schema"), `instructions.test.ts` ("refuses what the closed schema refuses …", duplicate in
+    "an Aturan akun for Semua klien …"), `instruction-ai.test.ts` (the AI's answer through the same validator).
+  - Preview for "biaya admin bank selalu 6190" (nothing literal, the *BIAYA ADM* hint, counts per month equal to a direct query, all
+    on 7100, skipped charts named, nothing written) → `instructions.test.ts` "preview (read-only)"; e2e test 1.
+  - *Setujui* makes one INSTRUKSI Rule (priority 5, `instructionId`, scope); the next import posts to 6190 RULE 97 % with the reason;
+    lines before unchanged; a client rule still wins → `instructions.test.ts`, `instructions-import.test.ts` ("an approved Aturan akun
+    …", "a client rule on the same text …"), `tests/unit/import.test.ts` (matchRule unchanged for other rules); e2e test 3.
+  - Dial *Aturan* off holds an instruction rule's line → `instructions-import.test.ts` ("with the dial's Aturan off …").
+  - *Tandai* (one REVIEW control per entity, exactly Rp 10.000.000 excluded and included under *minimal*, PASS, note and stale note,
+    no control in a locked month) → `tests/db/instruction-controls.test.ts`; e2e test 3.
+  - *Tahan di Review* (1999 with its suggestion and "Ditahan instruksi kantor …", Kotak not bulk, "N ditahan … (instruksi kantor)",
+    the pair stays linked) → `tests/unit/dial.test.ts` ("hold by instruction"), `instructions-import.test.ts`; e2e test 3.
+  - *Matikan* (rule deleted, control and hold dropped, nothing posted or noted changes, *Dimatikan*) → `instructions.test.ts`
+    ("Matikan deletes the rule …"), `instructions-import.test.ts` (turned off = never approved), `instruction-controls.test.ts` (control
+    gone, old note kept); e2e test 1.
+  - Zero provider calls at run time → `instructions-import.test.ts` ("no free text at run time": import, `runControls` and three
+    previews with every kind active; `MockProvider.calls === 0`, no `fetch`, no `AiUsage`), `instruction-controls.test.ts` (no `fetch`).
+  - *Susun dengan AI* (draft, refusals, cache hit without call or budget, budget message, no key) → `instruction-ai.test.ts`,
+    `instruction-actions.test.ts` (no model); e2e test 2 (no button without a key).
+  - Origin decided on the server → `instructions.test.ts` ("origin: …"), `instruction-ai.test.ts` (*Disusun AI*, *Disunting*); e2e test 1.
+  - Permissions (Pemilik/Admin, assigned Akuntan and its refusal for *Semua klien*, unassigned client, Peninjau, read-only, support
+    session) → `tests/db/instruction-actions.test.ts`; e2e test 1 (Akuntan, Peninjau).
+  - One "Instruksi kantor" event per approval and *Matikan*, per client in scope → `instructions.test.ts`; e2e tests 1 and 3.
+  - Pengaturan klien marks the rule → e2e test 3.
+  - 390 px (list, editor, preview) → e2e tests 1, 2 and 3, unconditional.
+  - Deck claims → ship (deck review), no test.
+- Build worker's gate (on `e32cdcd`, isolated database `buku_test_a`): `npm run lint` and `npm run typecheck` exit 0; full `npm test`
+  "Test Files 1 failed | 315 passed (316) · Tests 2858 passed (2858)", the one file being `tests/db/db-drift.test.ts`'s afterAll hook
+  timing out on its fixed-name database `buku_drift_check` while another worker used it; re-run alone once that database was free:
+  "Test Files 1 passed (1) · Tests 3 passed (3)". `npm run build` exit 0. Not run here (shared `buku` database): `demo:reset`,
+  `verify:books`, Playwright and the walk.
 
 ## Verification
 

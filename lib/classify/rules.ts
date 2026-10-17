@@ -9,6 +9,8 @@ export type RuleLike = {
   taxTag: TaxTag | null;
   priority: number;
   clientId?: string | null;
+  /** SEED · USER · INSTRUKSI (lib/instructions): only the reason's wording depends on it. */
+  source?: string;
 };
 
 /** Client rules beat firm rules (unless a matching firm rule is strictly more specific, see matchRule); then lower priority number wins; then longer pattern. */
@@ -22,26 +24,32 @@ export function sortRules<T extends RuleLike>(rules: T[]): T[] {
 }
 
 /**
- * The first rule that matches. With `codes` (the client's chart), a rule whose account the client doesn't have is skipped — an older
- * chart may lack a template account added later — so the line goes on to memory / AI / the guess instead of failing the import.
+ * The rule that decides a line (accounting-rules 13), or null; `rules` in `sortRules` order. With `codes` (the client's chart), a rule
+ * whose account the client doesn't have is skipped — an older chart may lack a template account added later — so the line goes on to
+ * memory / AI / the guess instead of failing the import.
  */
-export function matchRule(rules: RuleLike[], description: string, direction: Direction, codes?: ReadonlySet<string>): Classification | null {
+export function winningRule<T extends RuleLike>(rules: T[], description: string, direction: Direction, codes?: ReadonlySet<string>): T | null {
   const text = description.toUpperCase();
   const hits = rules.filter((r) => (!r.direction || r.direction === direction) && (!codes || codes.has(r.accountCode)) && text.includes(r.pattern.toUpperCase()));
-  let r = hits[0];
+  const r = hits[0];
   if (!r) return null;
+  if (!r.clientId) return r;
   // A client rule beats firm rules, except a firm rule that says strictly more about the same text: a client's "PAJAK" (tax payments)
   // must not swallow the firm's "PAJAK BUNGA" (final tax on interest, 8200).
-  if (r.clientId) {
-    const pattern = r.pattern.toUpperCase();
-    r = hits.find((f) => !f.clientId && f.pattern.length > pattern.length && f.pattern.toUpperCase().includes(pattern)) ?? r;
-  }
+  const pattern = r.pattern.toUpperCase();
+  return hits.find((f) => !f.clientId && f.pattern.length > pattern.length && f.pattern.toUpperCase().includes(pattern)) ?? r;
+}
+
+/** The first rule that matches, as a classification. A rule an Instruksi kantor made says so in its reason. */
+export function matchRule(rules: RuleLike[], description: string, direction: Direction, codes?: ReadonlySet<string>): Classification | null {
+  const r = winningRule(rules, description, direction, codes);
+  if (!r) return null;
   return {
     method: "RULE",
     accountCode: r.accountCode,
     taxTag: r.taxTag,
     confidence: 0.97,
-    reason: `Aturan: keterangan mengandung "${r.pattern}"`,
+    reason: r.source === "INSTRUKSI" ? `Instruksi kantor: keterangan memuat "${r.pattern}"` : `Aturan: keterangan mengandung "${r.pattern}"`,
   };
 }
 
