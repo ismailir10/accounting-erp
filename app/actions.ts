@@ -874,10 +874,11 @@ export async function postInstallmentAction(clientId: string, scheduleId: string
   }
 }
 
-export async function postAllDueAction(clientId: string, year: number, month: number): Promise<Result<{ posted: number }>> {
+/** `entityId`: one company's instalments only (Kotak persetujuan scoped to a company); a foreign id matches no schedule of the client. */
+export async function postAllDueAction(clientId: string, year: number, month: number, entityId?: string): Promise<Result<{ posted: number }>> {
   try {
     const client = await writeClient(clientId);
-    const posted = await postAllDue(prisma, { clientId: client.id, year, month, actorId: (await getCurrentMember()).id });
+    const posted = await postAllDue(prisma, { clientId: client.id, year, month, entityId, actorId: (await getCurrentMember()).id });
     revalidatePath(`/clients/${client.id}`, "layout");
     return { ok: true, posted };
   } catch (e) {

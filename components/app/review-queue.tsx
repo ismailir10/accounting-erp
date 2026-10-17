@@ -18,7 +18,7 @@ import { DEFAULT_RATE, grossUpWithholding, WITHHOLDING_LABEL } from "@/lib/tax/w
 import type { WithholdingKind } from "@/lib/generated/prisma/enums";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { accountantHints } from "@/lib/classify/hints";
+import { accountantHints, bulkAcceptable, isSureSuggestion } from "@/lib/classify/hints";
 import type { AiRunView } from "@/lib/ai/run";
 import { AiRunStatus, useAiRun } from "@/components/app/ai-run-status";
 
@@ -122,6 +122,7 @@ export function ReviewQueue({
   aiReady = true,
   canSetUpAi = false,
   aiRun = null,
+  focusId = null,
 }: {
   items: ReviewItem[];
   accounts: AccountOption[];
@@ -135,13 +136,15 @@ export function ReviewQueue({
   canSetUpAi?: boolean;
   /** The client's background AI run: while it runs, its progress replaces *Minta saran AI* (a second click would only join it). */
   aiRun?: AiRunView | null;
+  /** The line to start on (`?tx=`, Kotak persetujuan's *Ubah*): active and scrolled into view. */
+  focusId?: string | null;
 }) {
   const router = useRouter();
   const ai = useAiRun(clientId, aiRun);
   const aiRunning = ai.run?.status === "RUNNING";
   const [done, setDone] = useState<Set<string>>(new Set());
   // The active card is tracked by id, so refreshes and accepts elsewhere in the list never move it to another transaction.
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(() => (focusId && items.some((i) => i.id === focusId) ? focusId : null));
   const draftsJson = useSyncExternalStore(subscribe, snapshot, () => "{}");
   const choice = useMemo<Record<string, Choice>>(() => JSON.parse(draftsJson), [draftsJson]);
   // Only the bulk "serupa" action blocks the queue; single accepts are optimistic (the card leaves at once, saves run in order).
@@ -267,8 +270,8 @@ export function ReviewQueue({
   // Confident suggestions the reviewer hasn't touched: accepted in one click, in order, through the same saves as Enter.
   // A line with an open accountant hint (capex, a down payment, missing withholding) is never accepted in bulk: it needs a look.
   const hintsFor = (i: ReviewItem, c = get(i)) => accountantHints({ description: i.description, amount: BigInt(i.amount), account: accounts.find((o) => o.code === c.code) ?? null, wht: c.wht ?? "none", entityKind: i.entityKind ?? "PT" });
-  const sure = visible.filter((i) => i.method === "AI" && i.confidence >= 0.8 && !unsaved(i) && i.suggestedCode);
-  const confident = sure.filter((i) => hintsFor(i).length === 0);
+  const sure = visible.filter((i) => !unsaved(i) && isSureSuggestion(i));
+  const confident = sure.filter((i) => bulkAcceptable({ ...i, amount: BigInt(i.amount), entityKind: i.entityKind ?? "PT" }, accounts.find((o) => o.code === i.suggestedCode) ?? null));
   const hinted = sure.length - confident.length;
   const acceptConfident = () => {
     for (const i of confident) accept(i);

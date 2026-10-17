@@ -26,7 +26,9 @@ describe("change log writers", () => {
     await reviewTransaction(db, { bankTxId: rent.id, accountCode: "6120", taxTag: null });
     await reviewTransaction(db, { bankTxId: rent.id, accountCode: "6120", taxTag: null });
     const own = await listEvents(db, g.client.id, { subject: `bankTx:${rent.id}` });
-    expect(own.map((e) => [e.kind, e.before, e.after])).toEqual([["CLASSIFY", { accountCode: "1999", taxTag: null, whtKind: null, whtAmount: "0" }, { accountCode: "6120", taxTag: null, whtKind: null, whtAmount: "0" }]]);
+    // The decision also keeps the suggestion it was taken on and the RECLASS it posted (entry origin, Kotak persetujuan).
+    const reclass = await db.journalEntry.findFirstOrThrow({ where: { bankTransactionId: rent.id, kind: "RECLASS" } });
+    expect(own.map((e) => [e.kind, e.before, e.after])).toEqual([["CLASSIFY", { accountCode: "1999", taxTag: null, whtKind: null, whtAmount: "0" }, { accountCode: "6120", taxTag: null, whtKind: null, whtAmount: "0", suggestion: { accountCode: rent.suggestedCode, taxTag: null, method: rent.method, confidence: rent.confidence }, entryId: reclass.id }]]);
     expect(own[0].summary).toBe("TRSF E-BANKING DB HJ MARYAM SEWA GUDANG · Rp 2.500.000: 1999 → 6120");
 
     const out = await db.bankTransaction.findFirstOrThrow({ where: { bankAccountId: bca.id, description: { contains: "PINDAH" } } });

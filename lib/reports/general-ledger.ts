@@ -4,6 +4,7 @@ import type { AccountType, EntryKind, NormalBalance } from "@/lib/generated/pris
 import { isMixed, scopeEntities } from "@/lib/reports/fx";
 import type { Scope } from "@/lib/reports/ledger";
 import { ENTRY_SOURCE_SELECT, lineSource } from "@/lib/reports/entry-source";
+import { entryOrigins } from "@/lib/reports/entry-origin";
 
 /** A month, or the client's financial year to date through that month (Jurnal Umum, Buku Besar and Neraca Saldo exports). */
 export type LedgerRange = "month" | "ytd";
@@ -62,11 +63,14 @@ export async function generalLedger(db: Db, scope: Scope, start: Date, end: Date
         debit: true,
         credit: true,
         sourceRef: true,
+        entryId: true,
         entry: { select: { memo: true, entity: { select: { shortName: true } }, ...ENTRY_SOURCE_SELECT } },
       },
       orderBy: [{ date: "asc" }, { entry: { createdAt: "asc" } }, { id: "asc" }],
     }),
   ]);
+  // The proposal behind an entry joins its source (the Excel's one source column).
+  const origins = await entryOrigins(db, lines.map((l) => l.entryId));
   const openNet = new Map(before.map((r) => [r.accountId, (r._sum.debit ?? 0n) - (r._sum.credit ?? 0n)]));
   const priorNet = (priorPl._sum.debit ?? 0n) - (priorPl._sum.credit ?? 0n);
   const byAccount = new Map<string, typeof lines>();
@@ -86,7 +90,7 @@ export async function generalLedger(db: Db, scope: Scope, start: Date, end: Date
       balance += (l.debit - l.credit) * sign;
       debit += l.debit;
       credit += l.credit;
-      const source = lineSource(l);
+      const source = [lineSource(l), origins.get(l.entryId)].filter(Boolean).join(" · ") || null;
       return { date: l.date, entity: l.entry.entity.shortName, kind: l.entry.kind, memo: l.entry.memo, source, debit: l.debit, credit: l.credit, balance };
     });
     out.push({ account: { id: a.id, code: a.code, name: a.name, type: a.type, normalBalance: a.normalBalance }, opening, priorYearProfit: fold * sign, lines: glLines, debit, credit, closing: balance });

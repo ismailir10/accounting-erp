@@ -193,6 +193,22 @@ export async function fakturRecon(db: Db, input: { clientId: string; entityId: s
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 
+/** The account a booked faktur is prefilled with (Pajak Masa, Kotak persetujuan): sales revenue and cost of sales. */
+export const FAKTUR_PREFERRED: Record<FakturDirection, string> = { KELUARAN: "4100", MASUKAN: "5100" };
+
+type CounterAccount = { code: string; name: string; type: string; fsLine: string | null; taxTag: string | null; isBank: boolean; isSuspense: boolean; isClearing: boolean; isIntercompany: boolean };
+/**
+ * What a faktur not in the books may be booked against (`bookFaktur`'s counter account): the same choices as a sales invoice or a purchase
+ * bill in Piutang & Utang — revenue for keluaran, an expense or asset (not a receivable, not a tax account) for masukan.
+ */
+export function fakturCounterAccounts(accounts: CounterAccount[]): Record<FakturDirection, { code: string; name: string }[]> {
+  const usable = accounts.filter((a) => !a.isBank && !a.isSuspense && !a.isClearing && !a.isIntercompany);
+  return {
+    KELUARAN: usable.filter((a) => a.type === "PENDAPATAN").map(({ code, name }) => ({ code, name })),
+    MASUKAN: usable.filter((a) => (a.type === "BEBAN" || a.type === "ASET") && a.fsLine !== "PIUTANG_USAHA" && a.taxTag === null).map(({ code, name }) => ({ code, name })),
+  };
+}
+
 /**
  * A counted faktur that isn't in the books, recorded by the accountant's click (I5e) as a sales invoice (keluaran: Dr receivable / Cr
  * the chosen revenue + 2130) or a purchase bill (masukan: Dr the chosen expense or asset + 1150 / Cr payable) through the invoice writer

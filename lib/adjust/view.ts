@@ -7,7 +7,7 @@ import type { ScheduleKind } from "@/lib/generated/prisma/enums";
 
 /** Plain JSON for the schedule components (bigint as strings, rule 6). */
 
-export type ProposalView = { scheduleId: string; k: number; memo: string; entity: string; currency: string; debit: string; credit: string; amount: string; date: string };
+export type ProposalView = { scheduleId: string; k: number; memo: string; entityId: string; entity: string; currency: string; debit: string; credit: string; amount: string; date: string };
 export type CandidateView = { key: string; kind: ScheduleKind; kindLabel: string; entityId: string; entity: string; currency: string; reason: string; memo: string; debitCode: string | null; creditCode: string; amount: string; amountMinor: string; months: number; start: string; sourceEntryId: string | null };
 export type ScheduleView = {
   id: string; kind: ScheduleKind; kindLabel: string; memo: string; entity: string; currency: string; debit: string; credit: string;
@@ -21,6 +21,7 @@ export async function proposalViews(db: Db, clientId: string, year: number, mont
     scheduleId: p.schedule.id,
     k: p.installment.k,
     memo: p.memo,
+    entityId: p.schedule.entity.id,
     entity: p.schedule.entity.shortName,
     currency: p.schedule.entity.functionalCurrency,
     debit: `${p.installment.reversal ? p.schedule.creditAccount.code : p.schedule.debitAccount.code}`,

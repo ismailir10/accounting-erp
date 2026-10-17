@@ -17,7 +17,7 @@ import { BUPOT_KIND_LABEL } from "@/lib/tax/bupot-read";
 import { withholdingAccountCode } from "@/lib/tax/withholding";
 import { PTKP_LABEL } from "@/lib/tax/ter";
 import type { WithholdingKind } from "@/lib/generated/prisma/enums";
-import { DIRECTION_LABEL, fakturNotes, fakturRecon } from "@/lib/tax/faktur";
+import { DIRECTION_LABEL, fakturCounterAccounts, fakturNotes, fakturRecon } from "@/lib/tax/faktur";
 import { fakturKeluaranDraft, fakturKeluaranFiles } from "@/lib/tax/coretax-faktur";
 import { CoretaxFaktur } from "@/components/app/coretax-faktur";
 import { ScopeBar } from "@/components/app/scope-bar";
@@ -70,7 +70,7 @@ export default async function TaxMasaPage({ params, searchParams }: { params: Pr
   const pending = await prisma.bankTransaction.count({ where: { entityId: entity.id, status: "NEEDS_REVIEW", date: { gte: start, lte: end } } });
   const faktur = await fakturRecon(prisma, { clientId: client.id, entityId: entity.id, year: period.year, month: period.month });
   const fakturGap = fakturNotes(faktur)[0];
-  const counterAccounts = (await prisma.account.findMany({ where: { clientId: client.id }, orderBy: { code: "asc" } })).filter((a) => !a.isBank && !a.isSuspense && !a.isClearing && !a.isIntercompany);
+  const counterAccounts = fakturCounterAccounts(await prisma.account.findMany({ where: { clientId: client.id }, orderBy: { code: "asc" } }));
   const coretax = await fakturKeluaranDraft(prisma, { clientId: client.id, entityId: entity.id, year: period.year, month: period.month });
   const coretaxParts = fakturKeluaranFiles(coretax).map((f, i) => ({ href: withParams(`${base}/tax/masa/coretax`, { period: period.key, entity: entity.id, part: i ? String(i + 1) : undefined }), rows: f.rows }));
   const uploadBy = period.month === 12 ? dateOnly(period.year + 1, 1, 15) : dateOnly(period.year, period.month + 1, 15);
@@ -173,11 +173,7 @@ export default async function TaxMasaPage({ params, searchParams }: { params: Pr
             month={period.month}
             label={label}
             ledgerHref={{ KELUARAN: ledger("2130"), MASUKAN: ledger("1150") }}
-            accounts={{
-              // The same choices as a sales invoice or a purchase bill in Piutang & Utang.
-              KELUARAN: counterAccounts.filter((a) => a.type === "PENDAPATAN").map(({ code, name }) => ({ code, name })),
-              MASUKAN: counterAccounts.filter((a) => (a.type === "BEBAN" || a.type === "ASET") && a.fsLine !== "PIUTANG_USAHA" && a.taxTag === null).map(({ code, name }) => ({ code, name })),
-            }}
+            accounts={counterAccounts}
             directions={faktur.directions.map((d) => ({
               direction: d.direction,
               label: DIRECTION_LABEL[d.direction],
