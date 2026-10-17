@@ -444,6 +444,55 @@ If the hold needs to be stored on the bank line (a new column) rather than in it
   month, then up to 20 rows (client and current account hidden below `md`). The words and shapes the client component needs live in
   `lib/instructions/labels.ts` (no server-only imports). Pengaturan klien's rule tables mark an instruction rule "Instruksi kantor",
   linked to its row on the list.
+- T6 (part): `e2e/instruksi-kantor.spec.ts` — three tests. (1) Demo firm, demo admin: flow 1's preview (no literal match, the
+  *BIAYA ADM* hint, "sekarang di akun lain (7100", Grup Ayam Nusantara and CV Sinar Retail counts, 390 px), *Setujui* (Aktif,
+  *Disunting*, Riwayat of Grup Ayam), flow 3's Akuntan (tab visible, no *Tim*, no *Semua klien* scope, the firm row without *Matikan*,
+  writes, approves and turns off its own instruction on PT Jasa Kreatif Digital) and Peninjau (`asPeninjau`: list only, no editor, no
+  *Matikan*, 390 px); every instruction it made is turned off in `finally`, and a leftover from an interrupted run is turned off first.
+  (2) Flow 4's refusals verbatim with the pattern line, and no *Susun dengan AI* (precondition asserted: "Usulan AI belum aktif").
+  (3) "KAP Uji Lain" on a client of its own: flow 2 (four client instructions; the import's "1 ditahan Otomasi kantor (instruksi
+  kantor)"; BIAYA ADM on 6190 with the instruction reason in the ledger drawer; PT MAJU JAYA in Review and Kotak, no bulk accept;
+  Tutup Buku lists the Rp 25 jt line and not the Rp 10 jt one; a note clears it; the rule marked "Instruksi kantor" with its link;
+  four Riwayat events) and flow 5 (the duplicate blocked before *Setujui*; an edit makes the preview stale; a 2-letter keyword's field
+  message). Clients and options are picked by exact name; every action is awaited through its toast or the refreshed row. Not run
+  here: the walk, screenshots, `demo:reset`, `verify:books` and Playwright are the driver's verify-local (this worker never touches the
+  shared `buku` database).
+  - Decision: flow 2's PT MAJU JAYA rule is an approved *Aturan akun* (`"PT MAJU JAYA" selalu 6120`) rather than one made in Review: it
+    holds a line a rule would post the same way, and the Review-made (USER) rule is covered by `instructions-import.test.ts`.
+  - Decision: flow 5's "account not in the chart" cannot be typed in the UI (the *Akun* picker offers only the scope's chart); the field
+    message is asserted at the action (`instruction-actions.test.ts`, `instructions.test.ts`), and the e2e asserts the keyword's.
+- **Criteria → tests** (owner's ask: every criterion asserted at least once):
+  - No instruction = today → `instructions-import.test.ts` ("no instruction = today …": hardcoded per-line outcome, no `instr:`
+    control, and instructions approved then turned off import identically, controls included); `instructions.test.ts` (preview writes
+    nothing); existing pipeline / dial / golden / demo tests unchanged in the full run; `verify:books` and the investor walk at verify-local.
+  - Parser shapes, amounts, operators, refusals, "Buku belum memahami" → `tests/unit/instruction-parse.test.ts`.
+  - One closed schema (unknown keys, generic keyword, 3–60, non-classifiable / transfer account, charts, duplicates) →
+    `instruction-parse.test.ts` ("the closed schema"), `instructions.test.ts` ("refuses what the closed schema refuses …", duplicate in
+    "an Aturan akun for Semua klien …"), `instruction-ai.test.ts` (the AI's answer through the same validator).
+  - Preview for "biaya admin bank selalu 6190" (nothing literal, the *BIAYA ADM* hint, counts per month equal to a direct query, all
+    on 7100, skipped charts named, nothing written) → `instructions.test.ts` "preview (read-only)"; e2e test 1.
+  - *Setujui* makes one INSTRUKSI Rule (priority 5, `instructionId`, scope); the next import posts to 6190 RULE 97 % with the reason;
+    lines before unchanged; a client rule still wins → `instructions.test.ts`, `instructions-import.test.ts` ("an approved Aturan akun
+    …", "a client rule on the same text …"), `tests/unit/import.test.ts` (matchRule unchanged for other rules); e2e test 3.
+  - Dial *Aturan* off holds an instruction rule's line → `instructions-import.test.ts` ("with the dial's Aturan off …").
+  - *Tandai* (one REVIEW control per entity, exactly Rp 10.000.000 excluded and included under *minimal*, PASS, note and stale note,
+    no control in a locked month) → `tests/db/instruction-controls.test.ts`; e2e test 3.
+  - *Tahan di Review* (1999 with its suggestion and "Ditahan instruksi kantor …", Kotak not bulk, "N ditahan … (instruksi kantor)",
+    the pair stays linked) → `tests/unit/dial.test.ts` ("hold by instruction"), `instructions-import.test.ts`; e2e test 3.
+  - *Matikan* (rule deleted, control and hold dropped, nothing posted or noted changes, *Dimatikan*) → `instructions.test.ts`
+    ("Matikan deletes the rule …"), `instructions-import.test.ts` (turned off = never approved), `instruction-controls.test.ts` (control
+    gone, old note kept); e2e test 1.
+  - Zero provider calls at run time → `instructions-import.test.ts` ("no free text at run time": import, `runControls` and three
+    previews with every kind active; `MockProvider.calls === 0`, no `fetch`, no `AiUsage`), `instruction-controls.test.ts` (no `fetch`).
+  - *Susun dengan AI* (draft, refusals, cache hit without call or budget, budget message, no key) → `instruction-ai.test.ts`,
+    `instruction-actions.test.ts` (no model); e2e test 2 (no button without a key).
+  - Origin decided on the server → `instructions.test.ts` ("origin: …"), `instruction-ai.test.ts` (*Disusun AI*, *Disunting*); e2e test 1.
+  - Permissions (Pemilik/Admin, assigned Akuntan and its refusal for *Semua klien*, unassigned client, Peninjau, read-only, support
+    session) → `tests/db/instruction-actions.test.ts`; e2e test 1 (Akuntan, Peninjau).
+  - One "Instruksi kantor" event per approval and *Matikan*, per client in scope → `instructions.test.ts`; e2e tests 1 and 3.
+  - Pengaturan klien marks the rule → e2e test 3.
+  - 390 px (list, editor, preview) → e2e tests 1, 2 and 3, unconditional.
+  - Deck claims → ship (deck review), no test.
 
 ## Verification
 

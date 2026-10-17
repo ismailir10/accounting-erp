@@ -278,6 +278,7 @@ function Matched({ preview, kind }: { preview: Ok["preview"]; kind: DraftJson["k
           <li key={c.id} className="flex flex-wrap gap-x-3" data-testid="instruction-client-count">
             <span className="font-medium">{c.name}</span>
             {c.months.map((m) => <span key={m.label} className="text-muted-foreground">{m.label} <span className="num text-foreground">{m.count}</span></span>)}
+            <span className="text-muted-foreground">jumlah <span className="num text-foreground">{c.total}</span></span>
           </li>
         ))}
       </ul>
