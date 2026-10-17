@@ -65,7 +65,8 @@ export async function deleteClient(db: Db, input: { firmId: string; clientId: st
       await tx.sourceAccount.deleteMany({ where: { clientId } });
       await tx.ledgerImport.deleteMany({ where: { clientId } }); // checks cascade
       await tx.memory.deleteMany({ where: { clientId } });
-      await tx.rule.deleteMany({ where: { clientId } });
+      await tx.rule.deleteMany({ where: { clientId } }); // its instruction rules too, before the instructions they point at
+      await tx.instruction.deleteMany({ where: { clientId } }); // Instruksi kantor for this client; *Semua klien* ones stay
       await tx.uploadLink.deleteMany({ where: { clientId } });
       await tx.evidenceSelection.deleteMany({ where: { intakeId: { in: intakeIds } } });
       await tx.evidenceUpload.deleteMany({ where: { intakeId: { in: intakeIds } } });

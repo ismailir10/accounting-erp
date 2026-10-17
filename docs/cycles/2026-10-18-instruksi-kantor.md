@@ -367,7 +367,7 @@ always-on checks, and only exceptions reach a person. Buku's rule 4 adds: a pers
 If the hold needs to be stored on the bank line (a new column) rather than in its reason, that is a second migration: stop and ask.
 
 ## Tasks
-- [ ] T1 Schema + migration (`Instruction`, enums, CHECKs, `Rule.instructionId`). `AuditKind` INSTRUCTION + label + Riwayat filter.
+- [x] T1 Schema + migration (`Instruction`, enums, CHECKs, `Rule.instructionId`). `AuditKind` INSTRUCTION + label + Riwayat filter.
       Client deletion removes its instructions. Accept: migration applies on a fresh and a seeded DB; DB CHECK tests; client-delete
       test. (reuse: `recordEvent`)
 - [ ] T2 `lib/instructions/`: the parser, amount reader, closed-schema validator and keyword hint (pure); the preview (read-only); approve
@@ -387,6 +387,16 @@ If the hold needs to be stored on the bank line (a new column) rather than in it
       `verify:books` ALL PASS). (deps: T3–T5)
 
 ## Implementation
+- Plan: T1 → T2 → T3 → T4 → T5 sequential, inline in one build worker (each task reads the previous one's module: the parser and
+  validator feed the preview, the run time, the AI compile and the actions; a fan-out would cost more context than it saves). T6's e2e
+  spec is written here; the walk, screenshots and the full gate with `demo:reset` / `verify:books` / Playwright run in the driver's
+  verify-local (this worker never touches the shared `buku` database).
+- T1: `prisma/schema.prisma`, `prisma/migrations/20261018130000_instructions/`, `lib/audit.ts`, `lib/clients/delete.ts`,
+  `.agents/skills/accounting-rules/SKILL.md` (rule 25), `tests/db/instructions.test.ts`, `tests/db/delete-client.test.ts` — the
+  `Instruction` table (three enums, typed compiled columns, approved/turned-off by and at), `Rule.instructionId` (unique, Restrict) and
+  CHECKs per kind, keyword (upper case, 3–60), amount > 0, sentence 1–300 and not blank, OFF ⇔ `offAt`. `Instruction.clientId` is
+  Restrict (never Set Null: a deleted client's instruction must not turn firm-wide); client deletion removes its rules, then its
+  instructions, and keeps *Semua klien* ones. `INSTRUCTION` ("Instruksi kantor") joins the Riwayat label map, so the filter chip follows.
 
 ## Verification
 
