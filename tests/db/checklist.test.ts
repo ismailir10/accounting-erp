@@ -379,6 +379,8 @@ describe("Riwayat perubahan: one CHECKLIST event per write, with before → afte
     expect(log[2]).toMatchObject({ before: { title: "Draf CALK", assignee: "Rina", reviewer: "Budi", dueDay: 10 }, after: { title: "Draf CALK final", assignee: "Sari", reviewer: "Budi", dueDay: 12 } });
     expect(log[3]).toMatchObject({ before: { status: "Belum" }, after: { status: "Selesai" } });
     expect(new Set(log.map((e) => e.kind))).toEqual(new Set(["CHECKLIST"]));
+    // The checklist reads the books and writes no journal: no number on a report moves.
+    expect([await db.journalEntry.count(), await db.journalLine.count()]).toEqual([0, 0]);
   });
 });
 

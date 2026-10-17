@@ -257,14 +257,14 @@ export function ChecklistPanel(props: {
           <Field>
             <FieldLabel htmlFor="accept-assignee">Pelaksana</FieldLabel>
             <Select value={acceptWho.assigneeId} onValueChange={(v) => setAcceptWho({ assigneeId: String(v), reviewerId: NONE })}>
-              <SelectTrigger id="accept-assignee" className="w-full"><SelectValue>{props.people.find((p) => p.id === acceptWho.assigneeId)?.label}</SelectValue></SelectTrigger>
+              <SelectTrigger id="accept-assignee" aria-label="Pelaksana" className="w-full"><SelectValue>{props.people.find((p) => p.id === acceptWho.assigneeId)?.label}</SelectValue></SelectTrigger>
               <SelectContent>{props.people.map((p) => <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>)}</SelectContent>
             </Select>
           </Field>
           <Field>
             <FieldLabel htmlFor="accept-reviewer">Pereviu</FieldLabel>
             <Select value={acceptWho.reviewerId} onValueChange={(v) => setAcceptWho((w) => ({ ...w, reviewerId: String(v) }))}>
-              <SelectTrigger id="accept-reviewer" className="w-full"><SelectValue>{props.people.find((p) => p.id === acceptWho.reviewerId)?.label ?? "Tanpa Pereviu"}</SelectValue></SelectTrigger>
+              <SelectTrigger id="accept-reviewer" aria-label="Pereviu" className="w-full"><SelectValue>{props.people.find((p) => p.id === acceptWho.reviewerId)?.label ?? "Tanpa Pereviu"}</SelectValue></SelectTrigger>
               <SelectContent>
                 <SelectItem value={NONE}>Tanpa Pereviu</SelectItem>
                 {reviewers(acceptWho.assigneeId).map((p) => <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>)}
@@ -295,7 +295,7 @@ export function ChecklistPanel(props: {
                 <Field>
                   <FieldLabel htmlFor="task-auto-kind">Jenis</FieldLabel>
                   <Select value={draft.key} onValueChange={(v) => setDraft({ ...draft, key: String(v), dueDay: String(props.autoKinds.find((k) => k.key === v)?.dueDay ?? 10) })}>
-                    <SelectTrigger id="task-auto-kind" className="w-full"><SelectValue>{props.autoKinds.find((k) => k.key === draft.key)?.label}</SelectValue></SelectTrigger>
+                    <SelectTrigger id="task-auto-kind" aria-label="Jenis" className="w-full"><SelectValue>{props.autoKinds.find((k) => k.key === draft.key)?.label}</SelectValue></SelectTrigger>
                     <SelectContent>{props.autoKinds.map((k) => <SelectItem key={k.key} value={k.key}>{k.label}</SelectItem>)}</SelectContent>
                   </Select>
                 </Field>
@@ -308,7 +308,7 @@ export function ChecklistPanel(props: {
               <Field>
                 <FieldLabel htmlFor="task-assignee">Pelaksana</FieldLabel>
                 <Select value={draft.assigneeId} onValueChange={(v) => setDraft({ ...draft, assigneeId: String(v), reviewerId: draft.reviewerId && reviewers(String(v)).some((p) => p.id === draft.reviewerId) ? draft.reviewerId : null })} disabled={!props.manage}>
-                  <SelectTrigger id="task-assignee" className="w-full"><SelectValue>{props.people.find((p) => p.id === draft.assigneeId)?.label ?? "Pilih"}</SelectValue></SelectTrigger>
+                  <SelectTrigger id="task-assignee" aria-label="Pelaksana" className="w-full"><SelectValue>{props.people.find((p) => p.id === draft.assigneeId)?.label ?? "Pilih"}</SelectValue></SelectTrigger>
                   <SelectContent>{assigneeChoices.map((p) => <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>)}</SelectContent>
                 </Select>
                 {!props.manage && <FieldDescription>Tugas yang Anda tambahkan dikerjakan oleh Anda sendiri.</FieldDescription>}
@@ -317,7 +317,7 @@ export function ChecklistPanel(props: {
                 <Field>
                   <FieldLabel htmlFor="task-reviewer">Pereviu</FieldLabel>
                   <Select value={draft.reviewerId ?? NONE} onValueChange={(v) => setDraft({ ...draft, reviewerId: v === NONE ? null : String(v) })}>
-                    <SelectTrigger id="task-reviewer" className="w-full"><SelectValue>{props.people.find((p) => p.id === draft.reviewerId)?.label ?? "Tanpa Pereviu"}</SelectValue></SelectTrigger>
+                    <SelectTrigger id="task-reviewer" aria-label="Pereviu" className="w-full"><SelectValue>{props.people.find((p) => p.id === draft.reviewerId)?.label ?? "Tanpa Pereviu"}</SelectValue></SelectTrigger>
                     <SelectContent>
                       <SelectItem value={NONE}>Tanpa Pereviu</SelectItem>
                       {reviewers(draft.assigneeId).map((p) => <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>)}
