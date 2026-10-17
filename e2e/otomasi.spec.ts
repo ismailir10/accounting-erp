@@ -142,6 +142,9 @@ test("Otomasi: an admin holds rule lines and large amounts; held lines wait in R
     await admin.setViewportSize({ width: 1440, height: 900 });
     await bank.filter({ hasText: "BIAYA ADM" }).getByRole("button", { name: "Setujui" }).click();
     await expect(bank.filter({ hasText: "BIAYA ADM" })).toHaveCount(0);
+    // The card leaves at once (optimistic); the RECLASS is written when the action returns: its toast, then the refreshed count.
+    await expect(admin.locator("[data-sonner-toast]")).toContainText("7100");
+    await expect(admin.getByTestId("next-step")).toContainText("4 usulan");
     await admin.goto(`/clients/${id}/journals?period=2026-08`);
     await expect(admin.getByTestId("entry-origin").filter({ hasText: "Aturan 7100 disetujui" })).toHaveCount(1);
 
