@@ -138,7 +138,7 @@ and *Kirim lewat WhatsApp*, and Buku never sends anything itself. This cycle use
       kind `CREDIT_LIMIT` "Batas kredit" in `lib/audit.ts`. Add `setCreditLimitAction` in `app/actions.ts` through `writeClient`. In
       `receivablesView`, aging rows gain `contactId`, `limit` and `over` (IDR companies only, `net > limit`). Accept: `prisma migrate diff`
       empty and DB tests green. (deps: none)
-- [ ] T2 Reminder and statement. Add `lib/receivables/reminder.ts`: a pure `paymentReminder()` text builder, plus `reminderItems(db,
+- [x] T2 Reminder and statement. Add `lib/receivables/reminder.ts`: a pure `paymentReminder()` text builder, plus `reminderItems(db,
       clientId, entityId, contactId, asOf)` over `invoicesAt` and `unmatchedLines` (advance), with reminder date = min(month end, today).
       Add `lib/receivables/statement-pdf.ts` `customerStatementPdf`, reusing `winAnsi` and the palette and margins from
       `lib/reports/pdf.ts`, and `BUCKETS` / `BUCKET_LABEL` / `bucketOf` from `aging.ts`. Add the route
@@ -160,6 +160,20 @@ and *Kirim lewat WhatsApp*, and Buku never sends anything itself. This cycle use
   `setCreditLimit` parses whole Rupiah, refuses zero and negatives in Bahasa (text gets `parseMoney`'s own message), and records a
   *Batas kredit* event with the amounts before and after (none when the value is unchanged); `setCreditLimitAction` through
   `writeClient`; aging rows carry `contactId`, `limit` and `over` (Piutang of IDR companies only, net > limit).
+- T2: `lib/receivables/reminder.ts`, `lib/receivables/statement-pdf.ts`, `lib/reports/pdf.ts` (exports the page, margins, palette and
+  `amountIn`), `app/(app)/clients/[id]/receivables/statement/route.ts`, `tests/unit/payment-reminder.test.ts`,
+  `tests/db/payment-reminder.test.ts`, `tests/db/session-revocation.test.ts` — `reminderDate` (min of the month end and today in WIB),
+  `customerReminders` (every company × customer of the scope in one pass, for the page) and `reminderItems` (one, for the statement; null
+  for a contact not the client's, an empty statement for one with nothing open), the pure `paymentReminder` text, `customerStatementPdf`,
+  and the GET route (404 for another client, an unknown company or customer; no `recordExport`).
+  - Decision: `reminderItems` takes the page's month end and computes the reminder date itself (with `now` injectable for tests), so the
+    route and the page cannot disagree on the date.
+  - Decision: the reminder asks for each overdue invoice's open amount **less the tax the customer still withholds** (`whtExpected`), and
+    drops an invoice whose only rest is that tax: the decisions leave withheld tax to *Minta data* (bukti potong). Without expected tax
+    the sum equals the aging row's overdue part at the month end (tested); with it, it is that part less the tax. The statement stays gross
+    (total, paid, remaining), so its total equals the row's open amount.
+  - Decision: the statement prints the advance as its own line and then *Sisa setelah uang muka* (open − advance, the row's *Jumlah*); the
+    footer names the company and the page, never the firm.
 
 ## Verification
 
