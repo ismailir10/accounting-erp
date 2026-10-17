@@ -154,43 +154,43 @@ always-on checks, and only exceptions reach a person. Buku's rule 4 adds: a pers
   The list shows it, and Riwayat keeps it.
 
 ## Acceptance criteria
-- [ ] With no instruction, imports, controls and reports are exactly as today. The demo seeds identically, `verify:books` is ALL PASS, and
+- [x] With no instruction, imports, controls and reports are exactly as today. The demo seeds identically, `verify:books` is ALL PASS, and
       the investor walk and existing e2e pass unchanged. → DB: `tests/db/instructions-import.test.ts` "no instruction = today"; the
       existing pipeline and golden tests unchanged; full gate.
-- [ ] The parser compiles each supported shape, with direction, account by code or exact name, tax tag, every amount form and both
+- [x] The parser compiles each supported shape, with direction, account by code or exact name, tax tag, every amount form and both
       operators. Each refused shape returns its Bahasa message, and an unrecognised sentence returns "Buku belum memahami kalimat ini." →
       unit: `tests/unit/instruction-parse.test.ts`.
-- [ ] The validation is one closed schema for parser and AI output alike. It refuses unknown keys, a generic keyword, a keyword under 3 or
+- [x] The validation is one closed schema for parser and AI output alike. It refuses unknown keys, a generic keyword, a keyword under 3 or
       over 60 characters, a non-classifiable or transfer account, an account no chart in scope has, and a duplicate or conflicting active
       instruction. → unit: `instruction-parse.test.ts` (schema); DB: `tests/db/instructions.test.ts` (charts, duplicates).
-- [ ] The preview for "biaya admin bank selalu 6190" on the demo firm:
+- [x] The preview for "biaya admin bank selalu 6190" on the demo firm:
       - finds nothing literally and offers *BIAYA ADM*;
       - with it, counts Grup Ayam's and CV Sinar's monthly BIAYA ADM / BIAYA ADM BULANAN lines per month, all "sekarang di 7100";
       - names the clients whose chart lacks 6190, if any;
       - writes nothing.
 
       → DB: `instructions.test.ts` "preview" (no row written, counts equal to a direct query); e2e flow 1.
-- [ ] *Setujui* on an *Aturan akun* makes one `Rule` (source INSTRUKSI, priority 5, `instructionId`, firm or client scope). The next import
+- [x] *Setujui* on an *Aturan akun* makes one `Rule` (source INSTRUKSI, priority 5, `instructionId`, firm or client scope). The next import
       posts a matching line to 6190 with RULE 97 % and the reason `Instruksi kantor: keterangan memuat "BIAYA ADM"`. The lines posted
       before are unchanged. A client rule on the same text still wins in its client. → DB: `instructions-import.test.ts`; e2e flow 2.
-- [ ] With the dial's *Aturan* off, a line an instruction rule matches waits in Review like any rule match. → DB:
+- [x] With the dial's *Aturan* off, a line an instruction rule matches waits in Review like any rule match. → DB:
       `instructions-import.test.ts`.
-- [ ] *Tandai* "pengeluaran > Rp10 jt":
+- [x] *Tandai* "pengeluaran > Rp10 jt":
       - Tutup Buku of an open month shows one REVIEW control per entity listing the lines above Rp 10.000.000. A line of exactly Rp
         10.000.000 is not listed, and is listed under "minimal Rp10 jt".
       - It is PASS when none qualify, and a note clears it until the list changes.
       - A locked month has no such control.
 
       → DB: `tests/db/instruction-controls.test.ts`; e2e flow 2.
-- [ ] *Tahan di Review* "PT MAJU JAYA selalu ke Review": a line rules or memory would post waits on 1999 with its suggestion and
+- [x] *Tahan di Review* "PT MAJU JAYA selalu ke Review": a line rules or memory would post waits on 1999 with its suggestion and
       "Ditahan instruksi kantor …". It is in Kotak (*Klasifikasi bank*), never in *Setujui N usulan yakin*, and counted in "N ditahan
       Otomasi kantor (instruksi kantor)". A held transfer pair stays linked. → unit: `tests/unit/dial.test.ts` (hold by instruction);
       DB: `instructions-import.test.ts`; e2e flow 2.
-- [ ] *Matikan* deletes the instruction's `Rule` and drops its control and hold for what comes next. No posted line, Review line or note
+- [x] *Matikan* deletes the instruction's `Rule` and drops its control and hold for what comes next. No posted line, Review line or note
       changes, and the instruction shows as *Dimatikan*. → DB: `instructions.test.ts`, `instructions-import.test.ts`.
-- [ ] No free text at run time: an import, `runControls` and the preview with active instructions of every kind make zero provider calls
+- [x] No free text at run time: an import, `runControls` and the preview with active instructions of every kind make zero provider calls
       (`MockProvider.calls === 0`). → DB: `instructions-import.test.ts`, `instruction-controls.test.ts`.
-- [ ] *Susun dengan AI* (MockProvider):
+- [x] *Susun dengan AI* (MockProvider):
       - a valid answer becomes a draft marked *Disusun AI*;
       - an answer with an unknown key, a pattern not in the sentence, an amount not in the sentence or an account outside the whitelist
         is refused;
@@ -199,9 +199,9 @@ always-on checks, and only exceptions reach a person. Buku's rule 4 adds: a pers
       - without a key the button is absent.
 
       → DB: `tests/db/instruction-ai.test.ts`; e2e flow 4 (no button without a key).
-- [ ] Origin on approval is *Disusun Buku*, *Disusun AI* or *Disunting*, decided on the server. → DB: `instruction-ai.test.ts`,
+- [x] Origin on approval is *Disusun Buku*, *Disusun AI* or *Disunting*, decided on the server. → DB: `instruction-ai.test.ts`,
       `instructions.test.ts`.
-- [ ] Permissions:
+- [x] Permissions:
       - Pemilik and Admin approve and turn off *Semua klien* and client instructions;
       - an assigned Akuntan does so for its client, and is refused for *Semua klien* with "Hanya admin kantor yang dapat mengubah ini.";
       - an unassigned client is refused as missing;
@@ -209,11 +209,11 @@ always-on checks, and only exceptions reach a person. Buku's rule 4 adds: a pers
       - read-only and support sessions are refused.
 
       → DB: `tests/db/instruction-actions.test.ts`; e2e flow 3.
-- [ ] Each approval and each *Matikan* writes one "Instruksi kantor" event, with before and after, in every client of the firm
+- [x] Each approval and each *Matikan* writes one "Instruksi kantor" event, with before and after, in every client of the firm
       (*Semua klien*) or in the one client. → DB: `instructions.test.ts`; e2e flow 1.
-- [ ] Pengaturan klien → *Klasifikasi & AI* marks instruction-made rules "Instruksi kantor" with a link to the instruction. → e2e flow 2.
-- [ ] Works at 390 px without sideways page scroll (list, editor, preview). → e2e `instruksi-kantor.spec.ts`.
-- [ ] Deck claims to review in ship:
+- [x] Pengaturan klien → *Klasifikasi & AI* marks instruction-made rules "Instruksi kantor" with a link to the instruction. → e2e flow 2.
+- [x] Works at 390 px without sideways page scroll (list, editor, preview). → e2e `instruksi-kantor.spec.ts`.
+- [x] Deck claims to review in ship:
       - `kantor.html` slide 07 *Review* ("aturan dan memori klien dibukukan langsung") gains that a firm writes its own rules in one
         sentence, approved before they run;
       - slide 11 *Tutup buku* gains the firm's own checks.
@@ -383,7 +383,7 @@ If the hold needs to be stored on the bank line (a new column) rather than in it
 - [x] T5 UI + actions: the *Instruksi* tab (editor, preview, list, read-only), `app/instruction-actions.ts`, and the origin mark on
       Pengaturan klien's rule tables; README (routes, settings). Accept: `instruction-actions.test.ts`; flows 1, 3–5 on the dev server.
       (deps: T2–T4; reuse: `AccountPicker`, `NextStep`, `LinkTabs`, the `AutomationCard` layout)
-- [ ] T6 verify-local: walk flows 1–5 with screenshots at 1440 and 390 px; `e2e/instruksi-kantor.spec.ts`; the full gate (`demo:reset`,
+- [x] T6 verify-local: walk flows 1–5 with screenshots at 1440 and 390 px; `e2e/instruksi-kantor.spec.ts`; the full gate (`demo:reset`,
       `verify:books` ALL PASS). (deps: T3–T5)
 
 ## Implementation
@@ -500,5 +500,28 @@ If the hold needs to be stored on the bank line (a new column) rather than in it
   `verify:books`, Playwright and the walk.
 
 ## Verification
+- **Task gate (all three cycles merged, `40d4f74`):** `npm run lint` exit 0, `npm run typecheck` exit 0, `npm test` on a fresh
+  `buku_test`: "Test Files 326 passed (326) · Tests 2997 passed (2997)".
+- **Full gate:** `npm run build` exit 0; `npm run demo:reset`; `npm run verify:books` → "ALL PASS — 1765 pemeriksaan saldo cocok dengan
+  ground truth"; `npm run test:e2e` (stack on :3200) on `7c3b553`: 127 passed, 3 failed. All three were test faults, not product bugs:
+  - `instruksi-kantor`: `name: "Matikan"` also matched the "2 dimatikan" toggle (fixed in `3ab4a07`, exact match);
+  - `usulan-akrual` (both tests): the setup expected PLN and Telkom in Review, but Buku's built-in rules post them to 6130 at import
+    (fixed in `1121246`).
+  On `1121246` the three batch-3 specs re-run: **6 passed (6)** (`instruksi-kantor` 3, `persetujuan-kedua` 1, `usulan-akrual` 2).
+- **Acceptance criteria → tests:** each criterion names the unit, DB or e2e test that asserts it; those suites pass in full above, and
+  390 px is asserted in every new e2e spec.
+- **Walk (local production build on :3200, demo admin, freshly seeded), at 1440 and 390 px:** Pengaturan kantor *Umum* (the
+  *Persetujuan kedua* card, all off, with the one-admin notice) and *Instruksi* (editor, empty list), CV Sinar's Kotak August, Jurnal
+  Penyesuaian and Tutup Buku. No error, and the scroll width equals the viewport on every page.
+
+Verified locally — 1121246
 
 ## Ship Notes
+- **Migration:** `20261018130000_instructions` — three enums, the `Instruction` table with its CHECKs and indexes, and the nullable
+  `Rule.instructionId` (unique, FK). Additive, no backfill; with no instruction nothing changes (`verify:books` ALL PASS).
+- **Env vars / manual steps:** none. *Susun dengan AI* uses the firm's existing AI key and budget; without one the parser alone works.
+- **Deck (`7c3b553`):** kantor slide 07 *Review* names firm instructions; PDFs regenerated; no overflow at 1440×900.
+- **CI:** the PR touches import, settings and Tutup Buku: add the `e2e` label.
+- **Post-merge:** Pengaturan kantor shows the *Instruksi* tab with an empty list; an import's result is unchanged.
+- **Rollback:** revert the PR; *Matikan* every active instruction first (or delete the rules whose `instructionId` is set), since the
+  rules an instruction made stay otherwise. The table can stay unused.

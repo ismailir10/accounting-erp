@@ -167,39 +167,39 @@ Who feels it:
   - A journal posted directly under the threshold writes no event, as today.
 
 ## Acceptance criteria
-- [ ] With default settings, *Simpan jurnal*, *Balik jurnal*, a draft's *Catat jurnal* and *Buka kembali periode* behave exactly as
+- [x] With default settings, *Simpan jurnal*, *Balik jurnal*, a draft's *Catat jurnal* and *Buka kembali periode* behave exactly as
       today, and no `JournalApproval` or `ReopenRequest` row is written. The demo seeds identically, `verify:books` is ALL PASS, and the
       investor walk and every existing e2e pass unchanged. *(DB: `tests/db/second-approval.test.ts` "defaults change nothing"; the
       existing `adjustment`, `reverse-entry`, `proposals`, `period-lock` tests green unchanged; full gate.)*
-- [ ] With *Jurnal manual* above Rp 100.000.000:
+- [x] With *Jurnal manual* above Rp 100.000.000:
       - a Rp 150.000.000 journal is saved as *Menunggu persetujuan*, with no journal entry; the trial balance and Jurnal Umum are
         unchanged;
       - a Rp 100.000.000 journal posts at once.
       *(Unit: `tests/unit/second-approval.test.ts` routing boundary; DB: `second-approval` submit.)*
-- [ ] Approving it, as another eligible member, posts exactly the stored lines and notes through the adjustment writer.
+- [x] Approving it, as another eligible member, posts exactly the stored lines and notes through the adjustment writer.
       - With *Balik otomatis*, it posts the reversal too.
       - The entry's `postedById` is the approver, and the approval row reads `APPROVED` with the entry.
       *(DB: `second-approval` approve, deep-equal lines.)*
-- [ ] Self-approval is refused, for an admin too. An Akuntan can't approve an Admin's or Pemilik's journal. An Admin can approve a
+- [x] Self-approval is refused, for an admin too. An Akuntan can't approve an Admin's or Pemilik's journal. An Admin can approve a
       Pemilik's. Peninjau is refused. Each refusal is a Bahasa sentence and nothing is written. *(Unit: approver rule matrix; DB:
       `second-approval` refusals through the actions.)*
-- [ ] *Tolak* needs a note (≥ 5 characters) and leaves no entry. *Tarik kembali* is the maker's only. A double approve, or an approve
+- [x] *Tolak* needs a note (≥ 5 characters) and leaves no entry. *Tarik kembali* is the maker's only. A double approve, or an approve
       racing a reject, decides once. *(DB: `second-approval` reject, withdraw, concurrency.)*
-- [ ] An approval the writer refuses (the *Balik otomatis* month closed meanwhile; a stale AI draft) leaves the row pending with the
+- [x] An approval the writer refuses (the *Balik otomatis* month closed meanwhile; a stale AI draft) leaves the row pending with the
       reason. *(DB: `second-approval` refused approvals.)*
-- [ ] *Balik jurnal* above the threshold waits. A second reversal request of the same entry is refused while one is pending.
+- [x] *Balik jurnal* above the threshold waits. A second reversal request of the same entry is refused while one is pending.
       *(DB: `second-approval` reversal.)*
-- [ ] With *Draf AI* above Rp 50.000.000, *Catat jurnal* on a larger draft waits:
+- [x] With *Draf AI* above Rp 50.000.000, *Catat jurnal* on a larger draft waits:
       - the draft leaves *Draf jurnal* and is refused for a direct post or dismiss;
       - approval posts it through `postProposal` (`POSTED`, decided by the approver);
       - a rejection returns it to *Draf jurnal* with the note.
       *(DB: `second-approval` AI draft, MockProvider only.)*
-- [ ] Kotak persetujuan shows *Persetujuan kedua* first, with source, company, lines, total, maker and why it waits, and buttons only
+- [x] Kotak persetujuan shows *Persetujuan kedua* first, with source, company, lines, total, maker and why it waits, and buttons only
       for eligible members. The firm board's *Persetujuan* count equals the page. The checklist proof counts pending journals but not
       reopen requests. *(DB: `tests/db/approvals.test.ts` queue = counts; e2e.)*
-- [ ] Locking a month with a pending journal dated in it, or its reversal, is refused with the count. After approval or rejection it
+- [x] Locking a month with a pending journal dated in it, or its reversal, is refused with the count. After approval or rejection it
       locks. *(DB: `tests/db/period-lock.test.ts`.)*
-- [ ] With *Buka kembali bulan* on and two admins:
+- [x] With *Buka kembali bulan* on and two admins:
       - a request leaves the month locked;
       - another admin's confirmation opens it, deletes its sign-offs, and writes `PeriodUnlockLog` with requester, confirmer and
         reason;
@@ -209,15 +209,15 @@ Who feels it:
       - reject and cancel work.
       With one admin, the request opens at once and says so. With the setting off, reopening is today's, and a direct unlock cancels a
       pending request. *(DB: `period-lock` reopen cases.)*
-- [ ] Pemilik and Admin save the card. Akuntan and Peninjau see it read-only, and the action refuses them with "Hanya admin kantor yang
+- [x] Pemilik and Admin save the card. Akuntan and Peninjau see it read-only, and the action refuses them with "Hanya admin kantor yang
       dapat mengubah ini.". Invalid amounts are refused with a field message and nothing is saved. *(DB:
       `tests/db/settings-actions.test.ts`; `firm-automation`-style save test.)*
-- [ ] Every request, approval, rejection, withdrawal, reopen step, fallback and card change writes one "Persetujuan kedua" event to the
+- [x] Every request, approval, rejection, withdrawal, reopen step, fallback and card change writes one "Persetujuan kedua" event to the
       right client's Riwayat. *(DB: `second-approval`, `period-lock`, save test.)*
-- [ ] Every new exported action calls `requireCapability`. *(Unit: `tests/unit/action-guards.test.ts`, unchanged, covers them.)*
-- [ ] Deleting a client removes its approval and reopen rows. *(DB: `tests/db/delete-client.test.ts`.)*
-- [ ] Works at 390 px without sideways page scroll. *(e2e.)*
-- [ ] Deck claims to review in ship:
+- [x] Every new exported action calls `requireCapability`. *(Unit: `tests/unit/action-guards.test.ts`, unchanged, covers them.)*
+- [x] Deleting a client removes its approval and reopen rows. *(DB: `tests/db/delete-client.test.ts`.)*
+- [x] Works at 390 px without sideways page scroll. *(e2e.)*
+- [x] Deck claims to review in ship:
       - `kantor.html`: "Membuka kembali hanya admin, dengan alasan tercatat." gains "dan, bila kantor memilih, dikonfirmasi admin
         kedua". The Beranda slide's "usulan yang menunggu persetujuan" stays true.
       - `perusahaan.html`: "Membuka kembali tercatat. Hanya admin, dengan alasan yang disimpan." is checked the same way.
@@ -400,7 +400,7 @@ migration: stop and ask.
       the *Balik jurnal* dialog, the draft card, the Tutup Buku panel, the Jurnal Umum drawer line, and the card on Pengaturan kantor
       with its actions; README (settings, actions). Accept: `approvals` DB test; flows 1–5 on the dev server. (deps: T3, T4; reuse:
       the `AutomationCard` layout, `StatusPill`, `NextStep`, the approval-queue rows)
-- [ ] T6 verify-local:
+- [x] T6 verify-local:
       - `scripts/e2e-setup.ts` members and `e2e/persetujuan-kedua.spec.ts`;
       - walk flows 1–5 with screenshots at 1440 and 390 px;
       - the full gate (`demo:reset`, `verify:books` ALL PASS, the investor walk unchanged).
@@ -482,5 +482,30 @@ migration: stop and ask.
   alone (3/3); `npm run build` exit 0. Deck claims (`kantor.html`, `perusahaan.html`) and `docs/roadmap.md` §3 are left to ship's deck review.
 
 ## Verification
+- **Task gate (all three cycles merged, `40d4f74`):** `npm run lint` exit 0, `npm run typecheck` exit 0, `npm test` on a fresh
+  `buku_test`: "Test Files 326 passed (326) · Tests 2997 passed (2997)".
+- **Full gate:** `npm run build` exit 0; `npm run demo:reset`; `npm run verify:books` → "ALL PASS — 1765 pemeriksaan saldo cocok dengan
+  ground truth"; `npm run test:e2e` (stack on :3200) on `7c3b553`: 127 passed, 3 failed. All three were test faults, not product bugs:
+  - `instruksi-kantor`: `name: "Matikan"` also matched the "2 dimatikan" toggle (fixed in `3ab4a07`, exact match);
+  - `usulan-akrual` (both tests): the setup expected PLN and Telkom in Review, but Buku's built-in rules post them to 6130 at import
+    (fixed in `1121246`).
+  On `1121246` the three batch-3 specs re-run: **6 passed (6)** (`instruksi-kantor` 3, `persetujuan-kedua` 1, `usulan-akrual` 2).
+- **Acceptance criteria → tests:** each criterion names the unit, DB or e2e test that asserts it; those suites pass in full above, and
+  390 px is asserted in every new e2e spec.
+- **Walk (local production build on :3200, demo admin, freshly seeded), at 1440 and 390 px:** Pengaturan kantor *Umum* (the
+  *Persetujuan kedua* card, all off, with the one-admin notice) and *Instruksi* (editor, empty list), CV Sinar's Kotak August, Jurnal
+  Penyesuaian and Tutup Buku. No error, and the scroll width equals the viewport on every page.
+
+Verified locally — 1121246
 
 ## Ship Notes
+- **Migration:** `20261018150000_second_approver` — five `Firm` columns whose defaults route nothing, two enums, the `JournalApproval`
+  and `ReopenRequest` tables with CHECKs and partial unique indexes, and the nullable `PeriodUnlockLog.requestedById`. Additive, no
+  backfill. Usulan akrual's `20261018160000_accrual_second_approval` follows it.
+- **Env vars / manual steps:** none. Every firm keeps today's behaviour until an admin turns a switch on.
+- **Deck (`7c3b553`):** kantor slide 11 *Tutup buku* and perusahaan slide 11 name the optional second approver for reopening (and
+  large journals on kantor); the roadmap's Journal approval row reads Par; PDFs regenerated; no overflow at 1440×900.
+- **CI:** the PR touches journals, Kotak and Tutup Buku: add the `e2e` label.
+- **Post-merge:** Pengaturan kantor shows the *Persetujuan kedua* card with every switch off; *Simpan jurnal* posts as before.
+- **Rollback:** revert the PR after deciding or withdrawing every pending request (a pending journal has no entry, so nothing is lost
+  in the ledger). The tables and columns can stay unused.

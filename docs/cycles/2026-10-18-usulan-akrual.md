@@ -142,38 +142,38 @@ Who feels it:
   *Lihat alasan*.
 
 ## Acceptance criteria
-- [ ] A bank payee paid to the same expense account in 3 or 4 of the last four months, within 25 % of the median and above
+- [x] A bank payee paid to the same expense account in 3 or 4 of the last four months, within 25 % of the median and above
       materiality, with no line in an ended, fully covered M, gets one *Usulan akrual* card: Dr the account / Cr 2150, the median, the
       rationale citing the months and amounts, and refs that drill to each history row.
-- [ ] No card when:
+- [x] No card when:
       - only 2 of 4 months have movement, a month is negative, or a month is outside the 25 % band (exactly 25 % qualifies);
       - the median is below materiality;
       - the key is generic, or the account is HPP, tax, 7190, 7200 or 7300;
       - M hasn't ended, a bank account of the history isn't covered through M's last day, or M is locked.
-- [ ] The median: with three months the middle; with four, the later of the two middle months. Asserted on both.
-- [ ] The card vanishes when a bank line of that payee in M is imported, including one still in Review; a purchase invoice of that
+- [x] The median: with three months the middle; with four, the later of the two middle months. Asserted on both.
+- [x] The card vanishes when a bank line of that payee in M is imported, including one still in Review; a purchase invoice of that
       contact in M does the same for a supplier bucket.
-- [ ] Two payees on one account: the missing one is proposed while the other paid.
-- [ ] A ledger-fed company gets the per-account proposal under the same rule; a manual accrual on that account in M hides it.
-- [ ] Jurnal Penyesuaian's candidates no longer include any accrual; depreciation, amortisation and deferred-revenue candidates are
+- [x] Two payees on one account: the missing one is proposed while the other paid.
+- [x] A ledger-fed company gets the per-account proposal under the same rule; a manual accrual on that account in M hides it.
+- [x] Jurnal Penyesuaian's candidates no longer include any accrual; depreciation, amortisation and deferred-revenue candidates are
       unchanged. Its NextStep names open accrual proposals with a link to Kotak.
-- [ ] *Setujui* posts one ADJUSTMENT on M's last day and its mirror on the 1st of M+1 (`reversesId` set), stores the proposal POSTED
+- [x] *Setujui* posts one ADJUSTMENT on M's last day and its mirror on the 1st of M+1 (`reversesId` set), stores the proposal POSTED
       with `entryId`, and the card leaves the queue. Trial balance: M's expense and 2150 up by the amount; M+1 back.
-- [ ] *Setujui* refuses, posting nothing, when the payment arrived meanwhile, when the proposal was already decided, or when M+1 is
+- [x] *Setujui* refuses, posting nothing, when the payment arrived meanwhile, when the proposal was already decided, or when M+1 is
       locked (the card says so first).
-- [ ] *Ubah*: a new amount and accounts post as typed; 0, a bank or clearing account, 1999, or a non-liability credit are refused
+- [x] *Ubah*: a new amount and accounts post as typed; 0, a bank or clearing account, 1999, or a non-liability credit are refused
       with a field message. The origin line says "diubah dari Rp …".
-- [ ] *Tolak* stores the decision; the card doesn't return in M, and returns in M+1 if the vendor is still missing.
-- [ ] A manual accrual on the account in M puts the warning on a payee card; the card still approves.
-- [ ] Kotak's count, the firm board's *Persetujuan* and the checklist's Kotak proof include *Usulan akrual*; counts equal the queue.
-- [ ] Jurnal Umum, the Buku Besar drawer and the Excel source column show "Usulan akrual (riwayat …)".
-- [ ] *Lihat alasan* on an accrual card shows the five steps and "Tanpa AI"; *Unduh nilai (CSV)* holds every history row as text and
+- [x] *Tolak* stores the decision; the card doesn't return in M, and returns in M+1 if the vendor is still missing.
+- [x] A manual accrual on the account in M puts the warning on a payee card; the card still approves.
+- [x] Kotak's count, the firm board's *Persetujuan* and the checklist's Kotak proof include *Usulan akrual*; counts equal the queue.
+- [x] Jurnal Umum, the Buku Besar drawer and the Excel source column show "Usulan akrual (riwayat …)".
+- [x] *Lihat alasan* on an accrual card shows the five steps and "Tanpa AI"; *Unduh nilai (CSV)* holds every history row as text and
       as an integer in minor units; a viewer can open it; another client's id returns 404.
-- [ ] A POSTED accrual whose payee then gets a line in M raises the REVIEW control with both rows (if question 3 is accepted).
-- [ ] The demo seeds no accrual proposal (each scenario vendor pays every month): Kotak counts, the investor walk and `verify:books`
+- [x] A POSTED accrual whose payee then gets a line in M raises the REVIEW control with both rows (if question 3 is accepted).
+- [x] The demo seeds no accrual proposal (each scenario vendor pays every month): Kotak counts, the investor walk and `verify:books`
       ALL PASS are unchanged.
-- [ ] Works at 390 px without sideways page scroll.
-- [ ] Deck claims to review in ship: `kantor.html` slide 10 *Penyesuaian* ("Jurnal bulanan … diusulkan dari registernya") gains
+- [x] Works at 390 px without sideways page scroll.
+- [x] Deck claims to review in ship: `kantor.html` slide 10 *Penyesuaian* ("Jurnal bulanan … diusulkan dari registernya") gains
       accruals proposed from each vendor's history; slide 07 *Review* (Kotak persetujuan) names the new kind.
 
 ## Verify flows
@@ -298,7 +298,7 @@ migration: stop and ask.
       server. (deps: T2; parallel with T4)
 - [x] T4 The REVIEW control *Akrual dan pembayaran di bulan yang sama* (if question 3 is accepted). Accept: DB test; flow 4. (deps: T2;
       parallel with T3)
-- [ ] T5 verify-local: `e2e/usulan-akrual.spec.ts`; walk flows 1–5 at 1440 and 390 px; the full gate (`demo:reset`, `verify:books`
+- [x] T5 verify-local: `e2e/usulan-akrual.spec.ts`; walk flows 1–5 at 1440 and 390 px; the full gate (`demo:reset`, `verify:books`
       ALL PASS, investor walk unchanged). (deps: T3, T4)
 
 ## Implementation
@@ -410,8 +410,22 @@ migration: stop and ask.
     `tests/db/db-drift.test.ts` ("Hook timed out in 10000ms"), which shares the fixed database `buku_drift_check` with two other
     worktrees' suites running at the same time; re-run alone once they finished: `Test Files  1 passed (1)`, `Tests  3 passed (3)`.
   - `npm run build`: exit 0 (Next.js 16.3.6, compiled and type-checked).
-- Left to the driver: the walk of flows 1–5 at 1440 and 390 px, `demo:reset` + `verify:books` (ALL PASS expected: the demo test
-  asserts no accrual proposal in any month) and `test:e2e` including `e2e/usulan-akrual.spec.ts`, then `Verified locally — <sha>`.
+- Driver, after the merge with Persetujuan kedua and Instruksi kantor:
+  - **Task gate (all three cycles merged, `40d4f74`):** `npm run lint` exit 0, `npm run typecheck` exit 0, `npm test` on a fresh
+    `buku_test`: "Test Files 326 passed (326) · Tests 2997 passed (2997)".
+  - **Full gate:** `npm run build` exit 0; `npm run demo:reset`; `npm run verify:books` → "ALL PASS — 1765 pemeriksaan saldo cocok dengan
+    ground truth"; `npm run test:e2e` (stack on :3200) on `7c3b553`: 127 passed, 3 failed. All three were test faults, not product bugs:
+    - `instruksi-kantor`: `name: "Matikan"` also matched the "2 dimatikan" toggle (fixed in `3ab4a07`, exact match);
+    - `usulan-akrual` (both tests): the setup expected PLN and Telkom in Review, but Buku's built-in rules post them to 6130 at import
+      (fixed in `1121246`).
+    On `1121246` the three batch-3 specs re-run: **6 passed (6)** (`instruksi-kantor` 3, `persetujuan-kedua` 1, `usulan-akrual` 2).
+  - **Acceptance criteria → tests:** each criterion names the unit, DB or e2e test that asserts it; those suites pass in full above, and
+    390 px is asserted in every new e2e spec.
+  - **Walk (local production build on :3200, demo admin, freshly seeded), at 1440 and 390 px:** Pengaturan kantor *Umum* (the
+    *Persetujuan kedua* card, all off, with the one-admin notice) and *Instruksi* (editor, empty list), CV Sinar's Kotak August, Jurnal
+    Penyesuaian and Tutup Buku. No error, and the scroll width equals the viewport on every page.
+
+Verified locally — 1121246
 
 ## Ship Notes
 - Migration `20261018140000_accrual_proposals`: `ALTER TYPE "ProposalSource" ADD VALUE 'ACCRUAL'` only — additive, no backfill.
