@@ -222,7 +222,7 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
       reasons) — accept: DB tests for every inclusion and block rule. (Deps: T1; reuse `fakturRecon`, `npwpDigits`, `packApplies`.)
 - [x] T4 Download route `tax/masa/coretax` (`?entity&period&part`), audit event, server actions — accept: route DB tests (member 200,
       stranger and revoked 404, no `REPORT_EXPORT`). (Deps: T2, T3.)
-- [ ] T5 Card *Faktur keluaran untuk Coretax* on Pajak Masa, with the identity sheet and the bulk item form — accept: Playwright flows
+- [x] T5 Card *Faktur keluaran untuk Coretax* on Pajak Masa, with the identity sheet and the bulk item form — accept: Playwright flows
       1 and 3. (Deps: T4.)
 - [ ] T6 verify-local: walk flows 1–4, open the XML, screenshots at 1440 and 390 px, full gate.
 
@@ -259,6 +259,16 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
   audited by `recordFakturDownload` (`FAKTUR`, subject `coretax:<entity>:YYYY-MM`; a support session goes to the support log, as
   `recordExport` does, sharing one `logDownload`); `setContactTaxIdentityAction` and `setInvoiceFakturItemAction` through
   `writeClient` (`books.write`, as recording an invoice); `renameEntityAction` passes the seller NITKU.
+- T5: `components/app/coretax-faktur.tsx`, `app/(app)/clients/[id]/tax/masa/page.tsx`, `components/app/entities-card.tsx`,
+  `app/(app)/clients/[id]/settings/page.tsx`, `e2e/coretax-faktur.spec.ts`, `README.md` — the card after *Ekualisasi PPN*: the three
+  counts and one primary *Unduh XML (n faktur)* (disabled at 0 or while the company blocks; with more than 1,000 rows one link per
+  part, the first primary), *Atur barang/jasa untuk semua*, rows *Diblokir* first with each reason and its fix in place (*Lengkapi
+  pembeli* sheet, *Atur barang/jasa* sheet, *Buka Piutang & Utang* for the PPN), *Siap* and *Sudah ada di Coretax* folded, bank-line
+  PPN listed apart, the format footnote and the upload-by hint; the empty month points to Piutang & Utang. *Ubah* on a PT/CV in
+  Pengaturan klien takes the seller NITKU. The e2e spec walks flows 1 and 3 (written, not run here: the driver runs Playwright).
+  - Decision: the company-level block (no NPWP) is one alert above the counts with *Lengkapi data perusahaan* (Pengaturan klien →
+    Perusahaan & rekening); rows keep their own reasons so the rest can be fixed meanwhile.
+  - Decision: the upload deadline shows as a hint ("paling lambat 15 <bulan berikutnya>; belum dicek dengan PER-11/PJ/2025"), never a block.
 
 ## Verification
 
