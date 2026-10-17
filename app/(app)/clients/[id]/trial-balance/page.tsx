@@ -12,6 +12,7 @@ import { FxMissingError } from "@/lib/reports/fx";
 import { sourceTrialBalance } from "@/lib/reports/source";
 import { AccountViewTabs } from "@/components/app/account-view-tabs";
 import { TbTable, type TbTableRow } from "@/components/app/tb-table";
+import { LedgerDownloads } from "@/components/app/ledger-downloads";
 
 export const metadata = { title: "Neraca Saldo" };
 
@@ -25,7 +26,7 @@ export default async function TrialBalancePage({ params, searchParams }: { param
       <PageHeader
         title="Neraca Saldo"
         description={`${scopeLabel} · ${formatPeriod(period.year, period.month)}${note ? ` · ${note}` : ""}`}
-        actions={<ScopeBar entities={entityOptions} periods={periodOptions} entity={scope.value} period={period.key} />}
+        actions={<><ScopeBar entities={entityOptions} periods={periodOptions} entity={scope.value} period={period.key} />{!view.active && currency === "IDR" && <LedgerDownloads href={`${base}/trial-balance/export`} query={q} testId="tb-download" />}</>}
       />
       {view.available && <AccountViewTabs clientView={view.active} href={(v) => withParams(`${base}/trial-balance`, { ...q, view: v })} />}
     </>

@@ -27,11 +27,15 @@ import { GET as credit } from "@/app/(app)/clients/[id]/reports/export/credit/ro
 import { GET as tax } from "@/app/(app)/clients/[id]/tax/export/route";
 import { GET as masa } from "@/app/(app)/clients/[id]/tax/masa/export/route";
 import { GET as review } from "@/app/(app)/clients/[id]/review/export/route";
+import { GET as journals } from "@/app/(app)/clients/[id]/journals/export/route";
+import { GET as ledger } from "@/app/(app)/clients/[id]/ledger/export/route";
+import { GET as trialBalance } from "@/app/(app)/clients/[id]/trial-balance/export/route";
 
 const downloads = [
   ["reports/export", statements], ["reports/export/pdf", pdf],
   ["reports/export/management", management], ["reports/export/credit", credit],
   ["tax/export", tax], ["tax/masa/export", masa], ["review/export", review],
+  ["journals/export", journals], ["ledger/export", ledger], ["trial-balance/export", trialBalance],
 ] as const;
 
 async function openSession(role: "ADMIN" | "AKUNTAN" = "AKUNTAN") {
