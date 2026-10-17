@@ -3,6 +3,7 @@ import type { UploadItem, UploadStatus } from "@/lib/generated/prisma/client";
 import type { AiProvider } from "@/lib/ai/provider";
 import { importStatement, type ImportSummary } from "@/lib/import/pipeline";
 import { ParseError } from "@/lib/import/types";
+import { heldLine } from "@/lib/classify/dial";
 import { LedgerError } from "@/lib/ledger/post";
 import { LedgerImportError, stageImport } from "@/lib/ledger-import/post";
 import { readSheets } from "@/lib/ledger-import/read";
@@ -44,7 +45,8 @@ function bookedLine(display: string, s: ImportSummary) {
   const months = s.months.length > 1 ? `${s.months[0]}–${s.months.at(-1)}` : (s.months[0] ?? "");
   if (s.rows > 0 && s.duplicates === s.rows) return `${ALREADY_BOOKED} ke ${display} · ${months} (${s.rows} baris sama, dilewati)`;
   const dupes = s.duplicates ? ` (${s.duplicates} sudah ada, dilewati)` : "";
-  return `Dibukukan ke ${display} · ${months} · ${s.rows} baris${dupes}${s.continuityOk ? "" : " · ada celah saldo"}`;
+  const held = heldLine(s.heldBy);
+  return `Dibukukan ke ${display} · ${months} · ${s.rows} baris${dupes}${s.continuityOk ? "" : " · ada celah saldo"}${held ? ` · ${held}` : ""}`;
 }
 
 type Result = { status: UploadStatus; message: string; statementImportIds?: string[]; ledgerImportId?: string };

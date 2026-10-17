@@ -311,8 +311,15 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
 13a. **Tax remittances file to the liability they clear** (firm rules, `lib/classify/rules.ts`, by words or by the KAP-KJS code on the state receipt — 411121, 411124, 411128, 411125-100/-200, 411211): PPh 21 → 2140, PPh 23 → 2141, PPh 4(2) / final → 2145, PPh 29 → 2146, PPN → 2130, PPh 25 → 1180
     (prepaid, rule 5d), Bea Meterai → 7100. A payment that reads as a state tax payment without naming the tax (MPN, DJP, SSP, KPP, kode billing; regional taxes excluded) gets a HEURISTIC suggestion 2145 for review (`taxPaymentSuggestion`), never an expense and no AI call. A remittance without the withholding booked leaves that liability **debit**, which the sanity control *Saldo berlawanan dengan sifat akun* raises
     — book the withholding (payroll, or rule 5h) rather than moving the remittance. A rule whose account the client's chart lacks is skipped (`matchRule(…, codes)`), never a failed import.
-14. **Only deterministic methods (TRANSFER/RULE/MEMORY, confidence ≥ 0.9) auto-post.** AI and heuristic results
+14. **Only deterministic methods (TRANSFER/RULE/MEMORY, confidence ≥ 0.9) auto-post, and only when the firm's dial allows it, at or
+    below its cap** (*Otomasi kantor*, `Firm.autoPost*`, `decidePosting` in `lib/classify/dial.ts`). AI and heuristic results
     post to **1999** with `NEEDS_REVIEW` and a prefilled suggestion. Reviewer accept → reclass + Memory upsert.
+    The dial can only send more to Review: a source switched off, or a line whose absolute amount is above the cap, waits on 1999 with
+    its method, confidence and suggestion kept and a reason saying why ("Otomasi aturan dimatikan …", "Di atas batas otomasi (Rp …)");
+    it is never in the AI-only bulk accept. A held transfer pair is still linked; a held line never moves or re-posts a half imported
+    earlier (in Review it is linked and takes the transfer suggestion; on the transfer account it is linked; posted elsewhere it stays
+    unlinked and untouched, named in the new line's reason). Changing the dial affects new imports only. Defaults (all on, no cap) = the
+    behaviour before the dial.
     An AI suggestion of a trade receivable for money in (or a trade payable for money out) while the entity's books hold none to settle
     **by the row's date** is replaced by the simple guess's account (4100 / 6190; 4910 / 3300 for a person, `lib/classify/fallback.ts`) at 0.55, still
     method AI, with a reason naming the original account and why (`lib/ai/unbacked.ts`, import and *Minta saran AI*); it never posts, is never
