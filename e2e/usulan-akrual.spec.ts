@@ -40,14 +40,18 @@ async function upload(page: Page, id: string, name: string, csv: string) {
   await expect(page.getByTestId("import-result")).toContainText("Nyambung");
 }
 
-/** Review files each payee once for all its lines (*serupa*): Bersih keeps the suggested 6190, the others move. */
+/**
+ * Review files each payee once for all its lines (*serupa*): Bersih keeps the suggested 6190, Andalas moves to 6170. PLN and Telkom never
+ * reach Review: Buku's built-in rules post them to 6130 at import (the firm's *Otomasi* posts rule matches directly).
+ */
 async function fileExpenses(page: Page, id: string) {
   await page.goto(`/clients/${id}/review?period=2026-08`);
   await expect(page.getByRole("heading", { name: "Review transaksi" })).toBeVisible();
   const item = (text: string) => page.getByTestId("review-item").filter({ hasText: text }).first();
   await item(BERSIH).getByRole("button", { name: "Terima 4 serupa", exact: true }).click();
   await expect(page.getByText(/^4 transaksi serupa dicatat ke 6190/)).toBeVisible();
-  for (const [text, code, n] of [[PLN, "6130", 5], [TELKOM, "6130", 4], [ANDALAS, "6170", 3]] as const) {
+  for (const text of [PLN, TELKOM]) await expect(page.getByTestId("review-item").filter({ hasText: text })).toHaveCount(0);
+  for (const [text, code, n] of [[ANDALAS, "6170", 3]] as const) {
     await item(text).getByRole("combobox", { name: "Akun", exact: true }).click();
     await page.getByRole("combobox", { name: "Cari akun", expanded: true }).fill(code);
     await page.keyboard.press("Enter");
