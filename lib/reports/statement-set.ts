@@ -6,13 +6,13 @@ import { balanceSheet, incomeStatement, type FsItem, type Scope } from "@/lib/re
 import { balanceItems, incomeItems, loadReportFormat, renderFormat, type FormatSection, type ReportFormat } from "@/lib/reports/format";
 import { cashFlow, equityChanges, otherComprehensiveIncome, EQUITY_ROWS, EQUITY_ROW_LABEL } from "@/lib/reports/statements";
 import { financialNotes, type Notes } from "@/lib/reports/notes";
-import { isMixed, scopeEntities } from "@/lib/reports/fx";
+import { isMixed, scopeCurrency, scopeEntities } from "@/lib/reports/fx";
 import { frameworkLabel, scopeFramework, signatoryOf, statementNames, type Framework, type Signatory } from "@/lib/reports/framework";
 
 /**
  * The financial statements as rows (accounting-rules 1): Neraca and Laba Rugi in the client's format (lib/reports/format.ts), Perubahan
  * Ekuitas, Arus Kas, CALK and the directors' statement. The Excel workbook and the PDF both draw this one set, so they never disagree
- * with each other or with the page: every figure comes from the statement functions, exact, in Rupiah.
+ * with each other or with the page: every figure comes from the statement functions, exact, in the scope's currency (`currency`).
  *
  * Mixed-currency scopes get Neraca and Laba Rugi only, as on the page.
  */
@@ -30,6 +30,8 @@ export type SetRow = {
 export type SetStatement = { name: string; title: string; subtitle: string; columns: string[]; widths: number[]; rows: SetRow[] };
 export type StatementSet = {
   unit: ReportFormat["unit"];
+  /** The amounts' currency: the scope's one functional currency, or IDR for a mixed group (translated). */
+  currency: string;
   framework: Framework;
   signatory: Signatory;
   statements: SetStatement[];
@@ -87,7 +89,9 @@ export async function statementSet(db: Db, scope: Scope, year: number, month: nu
   // reported from their Saldo Awal.
   const per = await reportPeriods(db, scope, year, month, endMonth);
   const from = periodFrom(per.ytdFrom, asOf, true);
-  const mixed = isMixed(await scopeEntities(db, scope.entityIds));
+  const scoped = await scopeEntities(db, scope.entityIds);
+  const mixed = isMixed(scoped);
+  const currency = scopeCurrency(scoped);
   // Names and the signatory follow the entities' reporting framework (reports/framework.ts); no figure does.
   const entities = await db.entity.findMany({ where: { id: { in: scope.entityIds } }, select: { kind: true, reportingFramework: true } });
   const framework = scopeFramework(entities);
@@ -141,7 +145,7 @@ export async function statementSet(db: Db, scope: Scope, year: number, month: nu
     rows: lr,
   });
   const signatory = signatoryOf(entities);
-  if (mixed) return { unit: format.unit, framework, signatory, statements, notes: null };
+  if (mixed) return { unit: format.unit, currency, framework, signatory, statements, notes: null };
 
   // Perubahan Ekuitas
   const eq = await equityChanges(db, scope, asOf);
@@ -185,5 +189,5 @@ export async function statementSet(db: Db, scope: Scope, year: number, month: nu
   });
 
   const notes = await financialNotes(db, scope, year, month);
-  return { unit: format.unit, framework, signatory, statements, notes };
+  return { unit: format.unit, currency, framework, signatory, statements, notes };
 }

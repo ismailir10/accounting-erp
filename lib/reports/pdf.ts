@@ -1,7 +1,8 @@
 import PDFDocument from "pdfkit";
 import type { Db } from "@/lib/db";
 import { formatDateLong, formatDateTime, periodBounds } from "@/lib/format";
-import { formatRupiah } from "@/lib/money";
+import { formatMoney } from "@/lib/money";
+import { currencyName, exponentOf } from "@/lib/fx/currency";
 import type { Scope } from "@/lib/reports/ledger";
 import { toUnit } from "@/lib/reports/format";
 import type { NoteCell } from "@/lib/reports/notes";
@@ -44,15 +45,16 @@ function clean<T>(v: T): T {
   return v;
 }
 
-const amount = (v: bigint | null) => (v === null ? "" : v === 0n ? "–" : formatRupiah(v, { bare: true, accounting: true }));
+/** An amount as printed: the set's currency, accounting brackets, a dash for zero. */
+const amountIn = (currency: string) => (v: bigint | null) => (v === null ? "" : v === 0n ? "–" : formatMoney(v, currency, { bare: true, accounting: true }));
 
 /** The values a statement prints: per line in its unit, a format total as the sum of the printed lines it names. */
-export function printedValues(rows: SetRow[], unit: StatementSet["unit"]): (bigint | null)[][] {
+export function printedValues(rows: SetRow[], unit: StatementSet["unit"], currency = "IDR"): (bigint | null)[][] {
   const byKey = new Map<string, (bigint | null)[]>();
   return rows.map((row) => {
     const values = row.terms
       ? row.values.map((_, c) => row.terms!.reduce((s, t) => s + BigInt(t.sign) * (byKey.get(t.key)?.[c] ?? 0n), 0n))
-      : row.values.map((v) => (v === null ? null : toUnit(v, unit)));
+      : row.values.map((v) => (v === null ? null : toUnit(v, unit, exponentOf(currency))));
     if (row.key) byKey.set(row.key, values);
     return values;
   });
@@ -108,14 +110,15 @@ export async function financialStatementsPdf(db: Db, scope: Scope, year: number,
     if (doc.y + h > bottom) doc.addPage();
   };
 
-  const unitLine = `Dinyatakan dalam ${set.unit === "RIBUAN" ? "ribuan " : ""}Rupiah`;
+  const amount = amountIn(set.currency);
+  const unitLine = `Dinyatakan dalam ${set.unit === "RIBUAN" ? "ribuan " : ""}${currencyName(set.currency)}`;
   // The statement of responsibility opens the set, as in an Indonesian report; its own heading is its title.
   if (set.notes) directors(set.notes.directors);
   for (const st of set.statements) statement(st);
 
   function statement(st: SetStatement) {
     const n = Math.max(1, st.columns.length, ...st.rows.map((r) => r.values.length));
-    const values = printedValues(st.rows, set.unit);
+    const values = printedValues(st.rows, set.unit, set.currency);
     // Columns as wide as the widest printed amount (bold, at 9 pt); when they'd squeeze the labels below 30% of the line, the type shrinks.
     doc.font("Helvetica-Bold").fontSize(9);
     const amounts = Math.max(0, ...values.flatMap((vs, i) => (st.rows[i].detail ? [] : vs.map((v) => doc.widthOfString(amount(v))))));
@@ -154,8 +157,8 @@ export async function financialStatementsPdf(db: Db, scope: Scope, year: number,
 
   const notes = set.notes;
   if (notes) {
-    // CALK (in Rupiah: its tables are the registers and schedules behind the statements)
-    startPart({ title: "Catatan atas Laporan Keuangan", subtitle: `Per ${asOf} dan untuk periode yang berakhir pada tanggal tersebut`, unit: "Dinyatakan dalam Rupiah" });
+    // CALK (in the set's currency: its tables are the registers and schedules behind the statements)
+    startPart({ title: "Catatan atas Laporan Keuangan", subtitle: `Per ${asOf} dan untuk periode yang berakhir pada tanggal tersebut`, unit: `Dinyatakan dalam ${currencyName(set.currency)}` });
     const cell = (c: NoteCell) => (typeof c === "bigint" ? amount(c) : (c ?? ""));
     for (const note of notes.notes) {
       // The heading stays with what follows it: a short note whole; else its paragraphs (up to two) and its table's header and two rows.

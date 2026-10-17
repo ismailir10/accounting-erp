@@ -1,13 +1,14 @@
 import type { Db } from "@/lib/db";
 import { formatPeriod } from "@/lib/format";
-import { newWorkbook, n, type WorkbookMeta } from "@/lib/reports/workbook";
+import { excelAmount, newWorkbook, type WorkbookMeta } from "@/lib/reports/workbook";
 import { managementSummary, percentOf } from "@/lib/reports/management";
 import { noteForReport } from "@/lib/reports/report-comment";
 
 /** Laporan manajemen bulanan (I4b): Ringkasan with the commentary, and Perubahan Akun. One company, its own currency; read-only. */
 export async function managementWorkbook(db: Db, input: { clientId: string; entityId: string; year: number; month: number; meta: WorkbookMeta }): Promise<Buffer> {
   const s = await managementSummary(db, input);
-  const book = newWorkbook(input.meta);
+  const book = newWorkbook({ ...input.meta, currency: s.currency });
+  const n = (v: bigint) => excelAmount(v, s.currency);
   const { sheet, head } = book;
   const month = formatPeriod(s.period.year, s.period.month);
   const last = formatPeriod(s.previous.year, s.previous.month);
