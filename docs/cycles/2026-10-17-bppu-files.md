@@ -257,7 +257,7 @@ construction) every month before the SPT Masa PPh Unifikasi. Also the partner, w
 - [x] T1 Migration + `lib/tax/bppu-codes.ts` (the short KOP list with DJP REF rates, document types, rate parse/format in hundredths) +
       `setWithholdingSlip` (recipient pick or new name, KOP, rate, DPP, document; audited `BUKTI_POTONG`) — accept: DB
       tests for validation, scoping, locked month allowed, cascade with the bank line. (Reuse: `kindOf`, `upsert` of invoices' contacts.)
-- [ ] T2 `lib/tax/coretax-bppu-xml.ts`, a pure builder (company + rows → `BpuBulk` XML) with the rate formatting and the bigint tax check;
+- [x] T2 `lib/tax/coretax-bppu-xml.ts`, a pure builder (company + rows → `BpuBulk` XML) with the rate formatting and the bigint tax check;
       golden fixture + DJP shape tag-order test — accept: unit tests green. (Parallel with T1; reuse the faktur builder's escaping.)
 - [ ] T3 `lib/tax/coretax-bppu.ts` `bppuDraft` (candidates, *Sudah ada* via `bupotRecon` DIBUAT matches, prefill from settled invoice /
       exact division / last slip, every block reason; the company identity check shared with `coretax-faktur.ts`) — accept: DB tests for
@@ -283,6 +283,13 @@ construction) every month before the SPT Masa PPh Unifikasi. Also the partner, w
     reader calls it, so the reader and the export read a code the same way.
   - Decision: a line already tied to a contact keeps it as the recipient; naming another on the slip is refused (change it in Piutang &
     Utang), and the slip stores no contact then.
+- T2: `lib/tax/coretax-bppu-xml.ts`, `lib/tax/coretax-faktur-xml.ts`, `tests/unit/coretax-bppu-xml.test.ts`, `tests/fixtures/coretax/` —
+  the pure builder (`BpuBulk`, DJP's `bppu.xml` element order and header, tab-indented, `SP2DNumber` as `xsi:nil`), constants `N/A` /
+  `N/A` / nil, masa without a leading zero, dot-decimal rate without trailing zeros, whole-Rupiah DPP, and a refusal of any row whose
+  DPP × rate is Rp 1 or more off the withheld amount (bigint). The faktur builder's escaping writer is shared (`writeXml`, which now writes
+  a null value as `xsi:nil="true"`); the faktur golden file is unchanged. The golden file was checked by hand.
+  - Decision: `djp-bppu-shape.xml` is our transcription of DJP's sample (element names and order, placeholder values), checked
+    tag-for-tag against DJP's `bppu.xml` on 2026-10-17; DJP's file itself is not committed (as in the faktur cycle).
 
 ## Verification
 
