@@ -45,6 +45,8 @@ export type BppuRow = {
   gross: bigint;
   withheld: bigint;
   inReview: boolean;
+  /** The line's PPN was split (an estimate): its DPP is never computed from the withholding. */
+  ppnSplit: boolean;
   /** The line's own contact (`fromLine`), else the one named on the slip. */
   recipient: (BppuRecipient & { fromLine: boolean }) | null;
   /** The slip as it would be written: what was saved, else the prefill. */
@@ -164,10 +166,11 @@ export async function bppuDraft(db: Db, input: { clientId: string; entityId: str
     const invoice = invoices.length === 1 ? invoices[0] : null;
     // DPP: the invoice's when it holds at the rate; else withheld ÷ rate when exact, never on a line whose PPN was split (its DPP is the
     // accountant's to state: a whole-Rupiah division at 2 % always succeeds and would hide it); else empty.
+    const ppnSplit = l.taxTag === "PPN_MASUKAN" || l.taxTag === "PPN_KELUARAN";
     let dpp = s?.dpp ?? null;
     let dppFrom: BppuRow["prefill"]["dpp"] = null;
     if (dpp === null && invoice && (rate === null || taxTies(invoice.dpp, rate, l.whtAmount))) [dpp, dppFrom] = [invoice.dpp, "INVOICE"];
-    else if (dpp === null && rate !== null && l.taxTag !== "PPN_MASUKAN" && l.taxTag !== "PPN_KELUARAN") {
+    else if (dpp === null && rate !== null && !ppnSplit) {
       dpp = exactDpp(l.whtAmount, rate);
       dppFrom = dpp === null ? null : "DIVISION";
     }
@@ -182,6 +185,7 @@ export async function bppuDraft(db: Db, input: { clientId: string; entityId: str
       gross: -l.amount + l.whtAmount,
       withheld: l.whtAmount,
       inReview: l.status === "NEEDS_REVIEW",
+      ppnSplit,
       recipient,
       kop,
       rate,

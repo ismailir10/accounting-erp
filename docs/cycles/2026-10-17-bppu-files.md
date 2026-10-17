@@ -264,7 +264,7 @@ construction) every month before the SPT Masa PPh Unifikasi. Also the partner, w
       every inclusion, prefill and block rule. (Deps: T1, T2.)
 - [x] T4 Download route `tax/masa/coretax-bppu` (`?entity&period`), `recordBupotDownload`, server action, identity sheet's holder label
       — accept: route DB tests (member 200, stranger and revoked 404, no `REPORT_EXPORT`). (Deps: T3.)
-- [ ] T5 The *Dipotong oleh perusahaan* list in *Bukti potong (Unifikasi)* with counts, the slip sheet, the identity sheet, the download,
+- [x] T5 The *Dipotong oleh perusahaan* list in *Bukti potong (Unifikasi)* with counts, the slip sheet, the identity sheet, the download,
       footnote and hint; README Pajak Masa line — accept: Playwright flows 1 and 3, `qa-tax-split` green. (Deps: T4.)
 - [ ] T6 verify-local: walk flows 1–4, open the XML against DJP's sample, screenshots at 1440 and 390 px, full gate.
 
@@ -309,6 +309,51 @@ construction) every month before the SPT Masa PPh Unifikasi. Also the partner, w
   (`BUKTI_POTONG`, subject `coretax-bppu:<entity>:YYYY-MM`, a support session to the support log through the shared `logDownload`);
   `setWithholdingSlipAction` through `writeClient` (`books.write`); `setContactTaxIdentityAction` takes `holder` (*pembeli* /
   *penerima*) so the identity sheet's messages name the recipient.
+- T5: `components/app/coretax-bppu.tsx`, `components/app/coretax-faktur.tsx`, `app/(app)/clients/[id]/tax/masa/page.tsx`,
+  `lib/tax/coretax-bppu.ts`, `e2e/coretax-bppu.spec.ts`, `README.md` — the list replaces the *Dipotong oleh perusahaan* table inside
+  *Bukti potong (Unifikasi)*: the three counts and one primary *Unduh XML BPPU (n bukti potong)* (disabled at 0 or while the company
+  blocks, with the company alert and *Lengkapi data perusahaan*), what was left out, rows *Diblokir* first with every reason and its fix
+  (*Atur bukti potong* sheet, *Lengkapi identitas* = the faktur cycle's identity sheet labelled *penerima penghasilan*, *Buka di Review*
+  for a line in Review, a tax difference or a kind mismatch), *Siap* and *Sudah ada di Coretax* folded; each row shows date, description,
+  kind, recipient, KOP, gross, withheld and DPP (phones: under the description). The footnote names the format as untested, the upload
+  path, that journal-only withholding is typed in Coretax, and the SPT hint (20th of the next month, a hint, never a block). A viewer (or a
+  support session) sees the list and the download, no edit buttons. The e2e spec walks flows 1–3 (written, not run here: the driver runs
+  Playwright).
+  - Decision: the identity sheet became `IdentityForm` (exported from `coretax-faktur.tsx`) with a `holder` prop; for a recipient it asks
+    NPWP / NITKU / NIK only (no address or email: a slip needs none). The faktur e2e labels are unchanged.
+  - Decision: the slip form fills an empty DPP with the exact withheld ÷ rate when a listed KOP is picked (not on a PPN-split line), the
+    same rule the pre-flight applies, so flow 1's rent shows its DPP as soon as 28-403-02 is chosen.
+  - Decision: the Excel kertas kerja's *Bukti Potong* sheet is unchanged (as the spec says).
+- `npm run build` could not run in this worktree (Turbopack refuses the symlinked `node_modules`); lint and typecheck are green, and the
+  build is part of the driver's full gate.
+- **Acceptance criteria → tests:**
+  - Counts and the one primary download, disabled at 0 → `e2e/coretax-bppu.spec.ts` (counts 3/0/0, *Unduh XML BPPU (0 bukti potong)*
+    disabled, then 3 and 2), `tests/db/coretax-bppu.test.ts` *candidates* (counts).
+  - Every block reason → `tests/db/coretax-bppu.test.ts`: in Review (*candidates*), no recipient (*candidates*), no NPWP/NIK, bad NPWP,
+    NITKU, NIK, KOP of another kind, DPP × rate off with both amounts, faktur number not 16/17 digits (*block reasons*), no KOP / DPP /
+    document (*candidates*), the company's NPWP and NITKU (*block reasons*; `tests/db/coretax-bppu-route.test.ts` 400 with the reason).
+    Fixed in place without reloading → e2e (each row's `data-status` turns READY after the sheet saves; flow 3's Rp 5 difference shows
+    both amounts, then clears).
+  - Prefill (settled bill's DPP and document, exact withheld ÷ rate only, never on a PPN split, KOP and document type from the last slip,
+    never its DPP; a listed KOP's rate not editable) → `tests/db/coretax-bppu.test.ts` *prefill*, `tests/unit/bppu-codes.test.ts`
+    (`exactDpp` refuses to round), e2e (DPP 10.000.000 and B-77 from the bill, *Tarif 2% sesuai referensi DJP.* with no rate input, the
+    rent's DPP on picking 28-403-02, the PPN-split DPP left empty).
+  - The XML (Siap rows only, DJP order, 16-digit TIN, NITKU per slip, masa = bank month, WithholdingDate = bank date, yyyy-mm-dd, N/A /
+    N/A / nil, dot-decimal rate, whole-Rupiah DPP, escaped document number; DPP × rate ties within Rp 1) →
+    `tests/unit/coretax-bppu-xml.test.ts` (golden file, DJP shape, constants, rates, the tie refusal at edges), `tests/unit/bppu-codes.test.ts`
+    (`taxTies` at 1, 999.999, 10^12), `tests/db/coretax-bppu.test.ts` (*writes the Siap rows only*), e2e (the downloaded file).
+  - *Sudah ada di Coretax*; incoming lines and PPh 21 never in the file → `tests/db/coretax-bppu.test.ts` (*candidates*: both tests),
+    e2e flow 2 (import a *dibuat* slip, the row reads *Sudah ada di Coretax: bukti potong 2600000123.*, the next file has 2 slips).
+  - NPWP recipient as NPWP16 + NITKU (default + 000000), NIK recipient as NIK + 000000 → `tests/db/coretax-bppu.test.ts`, the golden
+    file, e2e.
+  - Download audited, *Terkirim* untouched, a viewer without access 404, slip saving in Riwayat → `tests/db/coretax-bppu-route.test.ts`
+    (BUKTI_POTONG events, no REPORT_EXPORT, no NIK in any event, unassigned Akuntan and another firm 404, a Peninjau downloads and is
+    refused the write), `tests/db/session-revocation.test.ts` (the route in every revocation case), `tests/db/withholding-slip.test.ts`
+    (the slip's event), e2e (Riwayat shows both; an unassigned member gets 404; a Peninjau downloads, sees no edit button).
+  - Format version and the untested upload on the list → e2e (footnote), `tests/unit/coretax-bppu-xml.test.ts` (the file's comment).
+  - 390 px without sideways scroll → e2e, on every run: the list, the slip sheet open, the Peninjau's view and the empty masa.
+    `qa-tax-split`'s assertions on the card (description, gross) are untouched and hold: the rows show both.
+  - Deck claims → reviewed in `ship` (not a test).
 
 ## Verification
 
