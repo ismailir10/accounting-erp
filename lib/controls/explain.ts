@@ -21,6 +21,12 @@ export class ExplainError extends Error {}
 
 const scopeOf = (clientId: string, year: number, month: number) => `close:${clientId}:${year}-${String(month).padStart(2, "0")}`;
 
+/** The dropped-citation count a cached *Jelaskan* answer stored, or null for an answer cached before it was counted. */
+export function storedDropped(payload: unknown): number | null {
+  const v = (payload as { dropped?: unknown } | null)?.dropped;
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null;
+}
+
 export async function explainControl(db: Db, firmId: string, clientId: string, year: number, month: number, controlKey: string, provider: AiProvider): Promise<ControlExplanation> {
   if (!provider.explainControl) throw new ExplainError("Model AI ini belum mendukung penjelasan kontrol.");
   const control = (await runControls(db, clientId, year, month)).find((c) => c.key === controlKey);
@@ -41,18 +47,21 @@ export async function explainControl(db: Db, firmId: string, clientId: string, y
   const scope = scopeOf(clientId, year, month);
   let answer: ControlExplainAnswer;
   const hit = await db.evidenceAiCache.findFirst({ where: { key, firmId, scope } });
-  if (hit) answer = parseControlExplain(JSON.stringify(hit.payload), input);
+  // A stored answer's refs are already filtered, so re-reading it can't recount its dropped citations: the stored count stands.
+  if (hit) answer = { ...parseControlExplain(JSON.stringify(hit.payload), input), dropped: storedDropped(hit.payload) ?? 0 };
   else {
     const result = await runBudgetedAi(
       db,
       { firmId, scope, prompt: buildControlExplainPrompt(input), maxCompletionTokens: CONTROL_EXPLAIN_MAX_TOKENS, scopeTokenLimit: CLOSE_REVIEW_TOKEN_LIMIT, model: provider.model, keysRequested: 1, note: "Jelaskan kontrol" },
       async () => {
         const r = await provider.explainControl!(input);
-        try { return { ...r, ...parseControlExplain(JSON.stringify(r), input) }; }
-        catch { throw new AiAnswerError("Penjelasan AI tidak valid; periksa kontrol secara manual.", r.promptTokens, r.completionTokens, r.model); }
+        try {
+          const checked = parseControlExplain(JSON.stringify(r), input);
+          return { ...r, ...checked, dropped: (r.dropped ?? 0) + checked.dropped };
+        } catch { throw new AiAnswerError("Penjelasan AI tidak valid; periksa kontrol secara manual.", r.promptTokens, r.completionTokens, r.model); }
       },
     );
-    answer = { explanation: result.explanation, suggestion: result.suggestion, refs: result.refs, note: result.note, entry: result.entry };
+    answer = { explanation: result.explanation, suggestion: result.suggestion, refs: result.refs, note: result.note, entry: result.entry, dropped: result.dropped };
     await db.evidenceAiCache.upsert({ where: { key }, create: { key, firmId, scope, payload: answer }, update: {} });
   }
 

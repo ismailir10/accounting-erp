@@ -420,6 +420,9 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     A draft that moves a bank line is not created, shown as blocked and refused on post when an `ADJUSTMENT` of that entity, dated from
     the line's date to the period end, already moves exactly its amount off its account (`priorCorrection`): never correct twice.
     Drafts for a PT or foreign company never see the Prive line (3300); a CV's or an individual's may.
+    The parse counts the citations it discards (outside the rows sent, or not an id) and the cached answer stores that **count only**
+    (`dropped` in the `EvidenceAiCache` JSON, same key; never the discarded strings, which are untrusted model text). *Lihat alasan* shows it;
+    an answer cached before the count existed reads "tidak tercatat" (`lib/approvals/reasoning.ts`, read-only, no call).
 20c. **Catatan manajemen** (`lib/reports/report-comment.ts`, I5b): the model gets only the computed commentary sentences (never ledger
     rows) and may reword them. Every number token of a draft must appear in those sentences (`foreignNumbers`); an AI draft with any other
     number is never saved. Only the accountant's click saves a note (their own wording may hold other numbers, with a warning). A note

@@ -49,3 +49,9 @@ mover of Analisis keuangan → *Wawasan* drafts why one flagged P&L account move
 sends for that account (its movement per baseline month and this month, and up to ten of the month's largest lines on it) and may only
 cite those rows (decision 3); every number in the draft must appear in them, and only the accountant's approval stores it
 (accounting-rules 20d). Same budget, cache and no-retry rules (decision 5).
+
+**Note (17 Oct 2026, cycle lihat-alasan).** Decision 3's discards are now counted: the *Jelaskan* parse returns how many citations it
+dropped, and the cached answer keeps that number (JSON in the same cache row, same key, no column). Only the count is stored, never the
+discarded strings, since they are untrusted model text. *Lihat alasan* on an AI draft shows the rows sent (rebuilt and proved by the
+draft's snapshot, as *Setujui* does), which of them the answer cites and the count dropped; answers cached earlier say "tidak tercatat".
+The panel reads only: no call, no budget, nothing stored.

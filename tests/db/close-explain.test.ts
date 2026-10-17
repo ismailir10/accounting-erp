@@ -265,5 +265,21 @@ describe("close copilot — Jelaskan", () => {
     await explainControl(db, g.firm.id, g.client.id, 2026, 8, key, new Spy());
     expect(seen[1]).toContain("3300");
   });
+
+  it("stores how many citations were outside the rows sent (never the strings) and keeps the count on a cache hit", async () => {
+    const { g, tx, key } = await loanInRevenue();
+    const provider = new MockProvider();
+    const entry = { memo: "Reklasifikasi pencairan KMK", lines: [{ accountCode: "4100", side: "D", amount: "Rp 100.000.000" }, { accountCode: "2210", side: "K", amount: "Rp 100.000.000" }] };
+    provider.explainAnswer = JSON.stringify({ explanation: "Pinjaman di pendapatan.", suggestion: "Reklasifikasi.", refs: [tx.id, "baris-karangan"], note: "", entry });
+    const r = await explainControl(db, g.firm.id, g.client.id, 2026, 8, key, provider);
+    const [cached] = await db.evidenceAiCache.findMany();
+    expect((cached.payload as { dropped: number; refs: string[] }).dropped).toBe(1);
+    expect((cached.payload as { refs: string[] }).refs).toEqual([tx.id]);
+    expect(JSON.stringify(cached.payload)).not.toContain("baris-karangan");
+    expect(r.proposal).not.toBeNull(); // the draft stands on the cited row it kept
+    // Asked again: the cached answer, no call, the same count.
+    await explainControl(db, g.firm.id, g.client.id, 2026, 8, key, provider);
+    expect([provider.calls, await db.evidenceAiCache.count(), (await db.evidenceAiCache.findFirstOrThrow()).payload]).toEqual([1, 1, cached.payload]);
+  });
 });
 

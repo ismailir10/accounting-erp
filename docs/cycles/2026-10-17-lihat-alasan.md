@@ -271,7 +271,7 @@ and ask.
       - Accept: the bank seams pass, and every demo AI review line matches.
       - Reuse: `aiCacheKey`, `aiScope`, `aiAccounts`, `isClassifiable`, `demoteUnbacked`'s reason, `bulkAcceptable` / `isSureSuggestion`,
         `accountantHints`, `entrySource`; `draftCsv`'s cell rules as a model.
-- [ ] T2 Count dropped *Jelaskan* citations.
+- [x] T2 Count dropped *Jelaskan* citations.
       - `parseControlExplain` returns `dropped`. The provider passes it through. `explainControl` stores it in the cached answer and
         keeps it on a cache hit.
       - `MockProvider` gets a recorded explain answer (as `fluxAnswer`).
@@ -302,6 +302,10 @@ and ask.
   replaced or capped by `demoteUnbacked`), so an equal answer under another description doesn't stand in. Every demo AI line in Review
   matches (`demo.test.ts`, the live upload's line included): no schema column needed. The CSV writer: semicolon, BOM, CRLF, quoting,
   formula cells (`= + - @`, tab, CR) neutralised with an apostrophe, plain integers kept as numbers.
+- T2: `lib/ai/provider.ts`, `lib/controls/explain.ts`, `tests/unit/close-explain.test.ts`, `tests/db/close-explain.test.ts`,
+  accounting-rules 20b, ADR 0009 note — `parseControlExplain` returns `dropped` (distinct citations outside the rows sent, or not an
+  id); `explainControl` adds the provider's count to its own re-check's, stores it in the cached answer's JSON and keeps the stored
+  count on a cache hit (re-reading filtered refs can't recount it). `MockProvider.explainAnswer` replays a recorded answer.
 
 ## Verification
 
