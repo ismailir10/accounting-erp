@@ -74,23 +74,23 @@ the explanation of a movement is the accountant's, approved and kept, with AI on
 - **Who:** members who can write the books draft, approve and remove; viewers see approved explanations only.
 
 ## Acceptance criteria
-- [ ] *Wawasan* shows Tren, Margin and Penggerak bulan ini for the selected month; every Tren figure equals the matching cell of
+- [x] *Wawasan* shows Tren, Margin and Penggerak bulan ini for the selected month; every Tren figure equals the matching cell of
       *Laba Rugi per bulan* and every margin equals *Rasio keuangan*.
-- [ ] The run, the highest and the lowest month are right in both directions (rising and falling test data); a month with no earlier
+- [x] The run, the highest and the lowest month are right in both directions (rising and falling test data); a month with no earlier
       month in the year says there is nothing to compare yet instead of showing dashes.
-- [ ] Penggerak lists the five largest movements in the order of the pack's *Perubahan Akun*; *Melewati ambang* marks exactly the
+- [x] Penggerak lists the five largest movements in the order of the pack's *Perubahan Akun*; *Melewati ambang* marks exactly the
       accounts in Tutup Buku's flux control; each shows its three largest lines with their source.
-- [ ] Every account opens its Buku Besar for the same month and company; every trend or margin figure opens its tab.
-- [ ] A group scope shows Tren and Margin and asks for one company for Penggerak.
-- [ ] *Susun dengan AI* on a flagged mover returns a draft that cites only rows it was sent; a draft citing nothing is not shown; an AI
+- [x] Every account opens its Buku Besar for the same month and company; every trend or margin figure opens its tab.
+- [x] A group scope shows Tren and Margin and asks for one company for Penggerak.
+- [x] *Susun dengan AI* on a flagged mover returns a draft that cites only rows it was sent; a draft citing nothing is not shown; an AI
       draft with a number that was not sent cannot be approved unedited.
-- [ ] *Setujui* saves the explanation with who and when; the pack's *Perubahan Akun* carries it; a change to the account's movement
+- [x] *Setujui* saves the explanation with who and when; the pack's *Perubahan Akun* carries it; a change to the account's movement
       marks it *Perlu ditinjau ulang* and the pack leaves it out with a line saying so.
-- [ ] Next month, the same account offers last month's approved text with *Pakai lagi*; nothing is approved until the click.
-- [ ] A viewer sees approved explanations and no draft, approve or remove buttons; the actions refuse a viewer.
-- [ ] No real model is called by tests or the seed; with no AI key the tab, typed explanations and the pack work fully.
-- [ ] Works at 390 px without page scroll sideways.
-- [ ] Deck: `kantor.html` slide 12 (*Satu buku besar. Paket untuk setiap pembaca.*, "laporan manajemen dengan catatan yang Anda
+- [x] Next month, the same account offers last month's approved text with *Pakai lagi*; nothing is approved until the click.
+- [x] A viewer sees approved explanations and no draft, approve or remove buttons; the actions refuse a viewer.
+- [x] No real model is called by tests or the seed; with no AI key the tab, typed explanations and the pack work fully.
+- [x] Works at 390 px without page scroll sideways.
+- [x] Deck: `kantor.html` slide 12 (*Satu buku besar. Paket untuk setiap pembaca.*, "laporan manajemen dengan catatan yang Anda
       setujui") and the *AI mengusulkan. Anda memutuskan.* slide are reviewed in ship.
 
 ## Verify flows
@@ -226,6 +226,13 @@ the explanation of a movement is the accountant's, approved and kept, with AI on
 - **While walking:** two new e2e expectations were wrong against the demo (the July 6170 mover holds one line, not three; the closed-month
   Kotak test read the URL before navigation) and were fixed; Wawasan counted the group's opening-only February as the year's lowest month
   and in the average, fixed in `d096678` (the trend starts at the first month with a Laba Rugi figure, unit-tested).
+
+- **Acceptance criteria → tests** (checked assertion by assertion after the walk; `40aa478` and the payable-faktur DB test closed the
+  gaps): every criterion is asserted by a unit, DB or e2e test, except where noted. 390 px: the receivables, Coretax, Wawasan and Kotak
+  walks assert no sideways scroll on every run (and that the reminder dialog fits), not only when screenshots are taken. Viewer checks run
+  as a Peninjau in e2e (Kotak, Wawasan, Piutang). Proven below the UI only: Kotak's draft account edit and Tolak (the proposal writers'
+  DB tests; the 1999 card's missing *Tolak* is read in code), the bulk *Setujui N usulan yakin* rule (unit, the same action as Review's),
+  and the five-mover cap (code, `MOVERS_SHOWN`).
 
 Verified locally — ff2dbee
 

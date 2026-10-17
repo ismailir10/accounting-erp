@@ -92,26 +92,26 @@ Traceability today, read from the schema:
   - Decisions made before this release show what they show today: audit events are never rewritten.
 
 ## Acceptance criteria
-- [ ] *Kotak persetujuan* lists, for the month and scope: the bank lines in review, the open AI drafts and 1999 corrections, the due
+- [x] *Kotak persetujuan* lists, for the month and scope: the bank lines in review, the open AI drafts and 1999 corrections, the due
       instalments and the counted Coretax faktur not in the books. A count per kind is shown, and the total equals the sum of the kinds.
-- [ ] *Setujui* on a bank line posts it to its suggested account and tax tag exactly as Review's accept does, and the card leaves.
+- [x] *Setujui* on a bank line posts it to its suggested account and tax tag exactly as Review's accept does, and the card leaves.
       *Ubah* opens Review with that line active.
-- [ ] *Setujui N usulan yakin* accepts only AI lines ≥ 80 % with a suggestion and no accountant hint; a hinted, heuristic, simple-guess
+- [x] *Setujui N usulan yakin* accepts only AI lines ≥ 80 % with a suggestion and no accountant hint; a hinted, heuristic, simple-guess
       or < 80 % line stays.
-- [ ] A draft's accounts can be changed (not its amounts) before *Setujui*. *Tolak* dismisses an AI draft. A 1999 correction offers no
+- [x] A draft's accounts can be changed (not its amounts) before *Setujui*. *Tolak* dismisses an AI draft. A 1999 correction offers no
       *Tolak*. A stale or twice-correcting draft is refused with the existing message.
-- [ ] *Setujui* on an instalment posts it; *Catat semua* posts every due one; *Ubah* opens Jurnal Penyesuaian.
-- [ ] *Setujui* on a faktur books it as a receivable or payable against the chosen account, and the faktur control moves accordingly.
-- [ ] An empty queue says so ("Tidak ada usulan menunggu persetujuan …") with *Tutup buku* as the next step. A locked month shows the
+- [x] *Setujui* on an instalment posts it; *Catat semua* posts every due one; *Ubah* opens Jurnal Penyesuaian.
+- [x] *Setujui* on a faktur books it as a receivable or payable against the chosen account, and the faktur control moves accordingly.
+- [x] An empty queue says so ("Tidak ada usulan menunggu persetujuan …") with *Tutup buku* as the next step. A locked month shows the
       queue read-only. A viewer (*Peninjau*) sees the queue without action buttons.
-- [ ] The firm board's *Persetujuan* column shows each client's count for the month, equal to that client's Kotak (all companies), and
+- [x] The firm board's *Persetujuan* column shows each client's count for the month, equal to that client's Kotak (all companies), and
       links there.
-- [ ] Jurnal Umum and the Buku Besar drawer name the proposal behind an entry posted from a draft, an instalment, a Coretax faktur or a
+- [x] Jurnal Umum and the Buku Besar drawer name the proposal behind an entry posted from a draft, an instalment, a Coretax faktur or a
       review decision taken after this release (accepted unchanged vs changed, with the suggested account and confidence). The Excel
       source column says the same.
-- [ ] No number on any report changes (`verify:books` ALL PASS).
-- [ ] Works at 390 px without sideways page scroll.
-- [ ] Deck claims to review in ship: `kantor.html` slide 04 *Papan kantor* ("transaksi yang menunggu review") and slide 07 *Review*
+- [x] No number on any report changes (`verify:books` ALL PASS).
+- [x] Works at 390 px without sideways page scroll.
+- [x] Deck claims to review in ship: `kantor.html` slide 04 *Papan kantor* ("transaksi yang menunggu review") and slide 07 *Review*
       ("menunggu di antrean review"); `docs/demo/investor-demo.md` (the board's *Review* column).
 
 ## Verify flows
@@ -281,6 +281,13 @@ If traceability turns out to need a column after all, that is a migration: stop 
 - **While walking:** two new e2e expectations were wrong against the demo (the July 6170 mover holds one line, not three; the closed-month
   Kotak test read the URL before navigation) and were fixed; Wawasan counted the group's opening-only February as the year's lowest month
   and in the average, fixed in `d096678` (the trend starts at the first month with a Laba Rugi figure, unit-tested).
+
+- **Acceptance criteria → tests** (checked assertion by assertion after the walk; `40aa478` and the payable-faktur DB test closed the
+  gaps): every criterion is asserted by a unit, DB or e2e test, except where noted. 390 px: the receivables, Coretax, Wawasan and Kotak
+  walks assert no sideways scroll on every run (and that the reminder dialog fits), not only when screenshots are taken. Viewer checks run
+  as a Peninjau in e2e (Kotak, Wawasan, Piutang). Proven below the UI only: Kotak's draft account edit and Tolak (the proposal writers'
+  DB tests; the 1999 card's missing *Tolak* is read in code), the bulk *Setujui N usulan yakin* rule (unit, the same action as Review's),
+  and the five-mover cap (code, `MOVERS_SHOWN`).
 
 Verified locally — ff2dbee
 

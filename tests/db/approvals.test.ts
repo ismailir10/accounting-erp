@@ -7,7 +7,7 @@ import { reviewTransaction } from "@/lib/review";
 import { dismissProposal, saveProposal } from "@/lib/adjust/proposals";
 import { createSchedule, postAllDue, postInstallment } from "@/lib/adjust/schedules";
 import { postSuspenseCorrection } from "@/lib/adjust/suspense";
-import { bookFaktur, importFaktur } from "@/lib/tax/faktur";
+import { bookFaktur, fakturRecon, importFaktur } from "@/lib/tax/faktur";
 import { acceptCheck, importSourceAccounts, postImport, stageImport } from "@/lib/ledger-import/post";
 import { acceptMappings, suggestMappings } from "@/lib/ledger-import/mapping";
 import { dateOnly } from "@/lib/format";
@@ -120,6 +120,26 @@ describe("approval queue", () => {
 
     expect(await postAllDue(db, { clientId: g.client.id, year: 2026, month: 8 })).toBe(1);
     expect((await approvalCounts(db, august(g))).scheduled).toBe(0);
+  });
+
+  it("a faktur masukan approved from the queue becomes a payable on the chosen account and leaves the missing-faktur list", async () => {
+    const { g } = await fixture();
+    const MASUKAN = ["NPWP Penjual;Nama Penjual;Nomor Faktur Pajak;Tanggal Faktur Pajak;Masa Pajak;Tahun;Status Faktur;Harga Jual/Penggantian/DPP;PPN", "0777;CV Kemasan Prima;07002600000000019;18/08/2026;8;2026;CREDITED;30000000;3300000", ""].join("\n");
+    await importFaktur(db, { clientId: g.client.id, entityId: g.pt.entity.id, fileName: "masukan.csv", data: Buffer.from(MASUKAN) });
+    const masukan = () => fakturRecon(db, { clientId: g.client.id, entityId: g.pt.entity.id, year: 2026, month: 8 }).then((r) => r.directions.find((d) => d.direction === "MASUKAN")!);
+    // Nothing in the books carries this faktur's PPN: the reconciliation lists it as missing and Kotak offers it.
+    expect((await masukan()).unmatchedFaktur.map((f) => f.number)).toEqual(["07002600000000019"]);
+    const q = await approvalQueue(db, august(g));
+    const [faktur] = q.faktur;
+    expect([faktur.number, faktur.direction]).toEqual(["07002600000000019", "MASUKAN"]);
+    const account = q.fakturAccounts!.MASUKAN.find((a) => a.code !== faktur.preferred) ?? q.fakturAccounts!.MASUKAN[0];
+
+    const inv = await bookFaktur(db, { clientId: g.client.id, fakturId: faktur.id, counterCode: account.code });
+    expect(inv.direction).toBe("PURCHASE");
+    const lines = await db.journalLine.findMany({ where: { entryId: inv.entryId! }, include: { account: { select: { code: true } } } });
+    expect(lines.find((l) => l.account.code === account.code)?.debit).toBe(30_000_000n);
+    expect((await approvalQueue(db, august(g))).faktur).toEqual([]);
+    expect((await masukan()).unmatchedFaktur).toEqual([]);
   });
 
   it("leaves out instalments of a locked month and marks a locked month read-only", async () => {

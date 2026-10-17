@@ -59,22 +59,22 @@ and *Kirim lewat WhatsApp*, and Buku never sends anything itself. This cycle use
 - **Utang gets neither feature.** Supplier credit limits and supplier reminders are not part of this.
 
 ## Acceptance criteria
-- [ ] On *Piutang*, an Akuntan sets a customer's *Batas kredit* from their aging row. The row then shows the limit. Clearing the field
+- [x] On *Piutang*, an Akuntan sets a customer's *Batas kredit* from their aging row. The row then shows the limit. Clearing the field
       removes the limit. Zero, a negative amount and text are refused with a Bahasa message. A Peninjau sees the limit but has no pencil
       button.
-- [ ] A customer whose net receivable (open − advance) in a Rupiah company is above their limit shows *Lewat batas kredit*. A customer
+- [x] A customer whose net receivable (open − advance) in a Rupiah company is above their limit shows *Lewat batas kredit*. A customer
       exactly at the limit, or with no limit set, does not. A company in another currency shows no limit for the same contact.
-- [ ] Riwayat lists each change as *Batas kredit* with the customer and the before and after amounts.
-- [ ] Every aging row with an overdue invoice on the reminder date has *Pengingat*. Rows with nothing overdue do not, and neither do
+- [x] Riwayat lists each change as *Batas kredit* with the customer and the before and after amounts.
+- [x] Every aging row with an overdue invoice on the reminder date has *Pengingat*. Rows with nothing overdue do not, and neither do
       rows on the *Utang* tab.
-- [ ] The reminder lists only that company's overdue invoices for that customer, with remaining amount and days late. Their sum equals
+- [x] The reminder lists only that company's overdue invoices for that customer, with remaining amount and days late. Their sum equals
       the overdue part of the aging row when the reminder date is the month end. The message is signed with the company's name and can be
       edited before copying. *Kirim lewat WhatsApp* opens `wa.me` with the edited text.
-- [ ] For the current month, the reminder date is today and an invoice due later this month is not listed.
-- [ ] *Unduh surat tagihan (PDF)* downloads a PDF that lists every open invoice for that company and customer, and its total equals the
+- [x] For the current month, the reminder date is today and an invoice due later this month is not listed.
+- [x] *Unduh surat tagihan (PDF)* downloads a PDF that lists every open invoice for that company and customer, and its total equals the
       row's open amount. A member who no longer has access to the client gets 404, and so does an unknown customer.
-- [ ] Downloading the statement leaves the firm board's *Terkirim* unchanged.
-- [ ] Works at 390 px without the page scrolling sideways, and the dialog fits.
+- [x] Downloading the statement leaves the firm board's *Terkirim* unchanged.
+- [x] Works at 390 px without the page scrolling sideways, and the dialog fits.
 
 ## Verify flows
 1. Accountant, a client with a sales invoice (the receivables e2e path: import a statement, *Faktur baru* INV-100 due 30 days before the
@@ -206,6 +206,13 @@ and *Kirim lewat WhatsApp*, and Buku never sends anything itself. This cycle use
 - **While walking:** two new e2e expectations were wrong against the demo (the July 6170 mover holds one line, not three; the closed-month
   Kotak test read the URL before navigation) and were fixed; Wawasan counted the group's opening-only February as the year's lowest month
   and in the average, fixed in `d096678` (the trend starts at the first month with a Laba Rugi figure, unit-tested).
+
+- **Acceptance criteria → tests** (checked assertion by assertion after the walk; `40aa478` and the payable-faktur DB test closed the
+  gaps): every criterion is asserted by a unit, DB or e2e test, except where noted. 390 px: the receivables, Coretax, Wawasan and Kotak
+  walks assert no sideways scroll on every run (and that the reminder dialog fits), not only when screenshots are taken. Viewer checks run
+  as a Peninjau in e2e (Kotak, Wawasan, Piutang). Proven below the UI only: Kotak's draft account edit and Tolak (the proposal writers'
+  DB tests; the 1999 card's missing *Tolak* is read in code), the bulk *Setujui N usulan yakin* rule (unit, the same action as Review's),
+  and the five-mover cap (code, `MOVERS_SHOWN`).
 
 Verified locally — ff2dbee
 

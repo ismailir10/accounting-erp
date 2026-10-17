@@ -114,9 +114,9 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
   that records invoices. The file and the identity fields hold personal data (NIK, address), so no AI ever sees them.
 
 ## Acceptance criteria
-- [ ] Pajak Masa for a Rupiah PT with sales invoices in the masa shows a card *Faktur keluaran untuk Coretax*. It shows counts: siap,
+- [x] Pajak Masa for a Rupiah PT with sales invoices in the masa shows a card *Faktur keluaran untuk Coretax*. It shows counts: siap,
       diblokir, sudah ada di Coretax.
-- [ ] Each blocked row names every reason:
+- [x] Each blocked row names every reason:
   - NPWP and NIK both empty, or an NPWP that is not 15/16 digits;
   - NIK without an address;
   - NITKU not 22 digits;
@@ -124,17 +124,17 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
   - PPN ≠ 12 % × 11/12 × DPP;
   - a company without an NPWP, which blocks the whole file.
   Fixing the reason in place turns the row *Siap* without a reload of the masa.
-- [ ] *Unduh XML* downloads one XML with only the *Siap* invoices, in the DJP element order. Seller TIN is 16 digits and every date is
+- [x] *Unduh XML* downloads one XML with only the *Siap* invoices, in the DJP element order. Seller TIN is 16 digits and every date is
       yyyy-mm-dd. TrxCode is 04, `RefDesc` = the invoice number, and Indonesia is `IDN`. Name and address are XML-escaped. Each row's
       DPP, DPP Nilai Lain, VAT 12 and PPN tie to the invoice.
-- [ ] An invoice matched to a counted Coretax faktur in the masa's ekualisasi is not in the file and reads *Sudah ada di Coretax*.
-- [ ] A NIK buyer is written as `National ID` with `0000000000000000` and `000000`. An NPWP buyer is written as `TIN` with its NITKU.
-- [ ] More than 1,000 *Siap* rows → the file comes in parts of at most 1,000.
-- [ ] The download is audited and leaves the firm board's *Terkirim* untouched. A viewer without access gets 404.
-- [ ] The card says the format version and that it still needs a real Coretax upload. Bank-line PPN with no invoice is listed apart
+- [x] An invoice matched to a counted Coretax faktur in the masa's ekualisasi is not in the file and reads *Sudah ada di Coretax*.
+- [x] A NIK buyer is written as `National ID` with `0000000000000000` and `000000`. An NPWP buyer is written as `TIN` with its NITKU.
+- [x] More than 1,000 *Siap* rows → the file comes in parts of at most 1,000.
+- [x] The download is audited and leaves the firm board's *Terkirim* untouched. A viewer without access gets 404.
+- [x] The card says the format version and that it still needs a real Coretax upload. Bank-line PPN with no invoice is listed apart
       and never exported.
-- [ ] Works at 390 px without page scroll sideways.
-- [ ] Deck claims reviewed in `ship`:
+- [x] Works at 390 px without page scroll sideways.
+- [x] Deck claims reviewed in `ship`:
   - `kantor.html` *Pajak* bullet ("Kertas kerja Pajak Masa untuk Coretax");
   - the *Faktur Coretax dicocokkan* bullet;
   - the "Kasir, faktur, dan penggajian tetap dipakai" line (Buku now prepares the faktur file but issues no customer invoice).
@@ -283,6 +283,13 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
 - **While walking:** two new e2e expectations were wrong against the demo (the July 6170 mover holds one line, not three; the closed-month
   Kotak test read the URL before navigation) and were fixed; Wawasan counted the group's opening-only February as the year's lowest month
   and in the average, fixed in `d096678` (the trend starts at the first month with a Laba Rugi figure, unit-tested).
+
+- **Acceptance criteria → tests** (checked assertion by assertion after the walk; `40aa478` and the payable-faktur DB test closed the
+  gaps): every criterion is asserted by a unit, DB or e2e test, except where noted. 390 px: the receivables, Coretax, Wawasan and Kotak
+  walks assert no sideways scroll on every run (and that the reminder dialog fits), not only when screenshots are taken. Viewer checks run
+  as a Peninjau in e2e (Kotak, Wawasan, Piutang). Proven below the UI only: Kotak's draft account edit and Tolak (the proposal writers'
+  DB tests; the 1999 card's missing *Tolak* is read in code), the bulk *Setujui N usulan yakin* rule (unit, the same action as Review's),
+  and the five-mover cap (code, `MOVERS_SHOWN`).
 
 Verified locally — ff2dbee
 
