@@ -4,6 +4,7 @@ import { postJournal } from "@/lib/ledger/post";
 import { budgetGrid, budgetVsActual, favourable, saveBudget, yearMonths } from "@/lib/budget";
 import { clientUsage } from "@/lib/clients/entities";
 import { deleteClient } from "@/lib/clients/delete";
+import { removeAccount } from "@/lib/coa/manage";
 import { dateOnly } from "@/lib/format";
 
 const J = 1_000_000n;
@@ -79,10 +80,12 @@ describe("Anggaran", () => {
     expect([sales.actual[1], sales.actual[2], sales.lastYear[2], sales.budget[2]]).toEqual([90n * J, 120n * J, 80n * J, null]);
   });
 
-  it("a company with a budget can't be removed; deleting the client removes its budgets", async () => {
+  it("a company or account with a budget can't be removed; deleting the client removes its budgets", async () => {
     const { g } = await books();
-    await save(g, [{ accountCode: "4100", key: "2026-03", amount: "1" }]);
-    expect((await clientUsage(db, g.client.id)).entities.get(g.pt.entity.id)).toContainEqual({ label: "anggaran", n: 1 });
+    await save(g, [{ accountCode: "4100", key: "2026-03", amount: "1" }, { accountCode: "6170", key: "2026-03", amount: "1" }]);
+    const fees = await db.account.findUniqueOrThrow({ where: { clientId_code: { clientId: g.client.id, code: "6170" } } });
+    await expect(removeAccount(db, { clientId: g.client.id, accountId: fees.id })).rejects.toThrow("Akun 6170 Beban Jasa Profesional masih dipakai: 1 sel anggaran.");
+    expect((await clientUsage(db, g.client.id)).entities.get(g.pt.entity.id)).toContainEqual({ label: "anggaran", n: 2 });
     await deleteClient(db, { firmId: g.firm.id, clientId: g.client.id, confirmName: "Grup Uji" });
     expect(await db.budget.count()).toBe(0);
   });
