@@ -1,9 +1,13 @@
 import type { Db } from "@/lib/db";
 import { runControls } from "@/lib/controls";
+import { parseAccrualKey } from "@/lib/adjust/accruals";
+import { readLines } from "@/lib/adjust/proposals";
+import { formatMoney } from "@/lib/money";
 
 /**
  * The proposal a posted entry came from (Kotak persetujuan): one line under its source on Jurnal Umum, in the Buku Besar drawer and in
- * the Excel source column. Read from what each writer already keeps, never stored: the draft's `ProposedEntry.entryId`, the booked
+ * the Excel source column. Read from what each writer already keeps, never stored: the draft's or approved accrual's
+ * `ProposedEntry.entryId` (an accrual's counterparty from its key, "diubah dari" when the posted amount isn't Buku's), the booked
  * invoice whose number is a Coretax faktur's (written by `bookFaktur`), and the reviewer's `CLASSIFY` event (the suggestion it decided
  * on and the RECLASS it posted). An instalment already names its schedule in the source line. Decisions taken before the review
  * writer kept the suggestion show nothing: audit events are never rewritten.
@@ -11,6 +15,7 @@ import { runControls } from "@/lib/controls";
 
 export type OriginFacts =
   | { kind: "draft"; source: "AI_CONTROL" | "SUSPENSE"; control: string | null }
+  | { kind: "accrual"; counterparty: string; /** The amount Buku proposed, when another one was posted. */ changedFrom: string | null }
   | { kind: "faktur"; fileName: string; sourceRef: string }
   | { kind: "review"; suggestion: { accountCode: string; taxTag: string | null; method: string; confidence: number }; accountCode: string; taxTag: string | null };
 
@@ -20,6 +25,7 @@ const target = (code: string, tax: string | null) => `${code}${tax ? ` ${TAX_LAB
 
 export function originText(f: OriginFacts): string {
   if (f.kind === "draft") return f.source === "SUSPENSE" ? "Koreksi selisih 1999" : `Usulan AI (Jelaskan${f.control ? ` · ${f.control}` : ""})`;
+  if (f.kind === "accrual") return `Usulan akrual (riwayat ${f.counterparty})${f.changedFrom ? ` diubah dari ${f.changedFrom}` : ""}`;
   if (f.kind === "faktur") return `Faktur Coretax ${f.fileName} ${f.sourceRef}`;
   const s = f.suggestion;
   const what = `${METHOD_LABEL[s.method] ?? "Usulan"} ${target(s.accountCode, s.taxTag)}${s.method === "AI" ? ` (${Math.round(s.confidence * 100)} %)` : ""}`;
@@ -44,7 +50,7 @@ export async function entryOrigins(db: Db, entryIds: string[]): Promise<Map<stri
   if (!entryIds.length) return out;
   const ids = [...new Set(entryIds)];
   const [drafts, invoices, reclasses] = await Promise.all([
-    db.proposedEntry.findMany({ where: { entryId: { in: ids } }, select: { entryId: true, source: true, controlKey: true, clientId: true, year: true, month: true } }),
+    db.proposedEntry.findMany({ where: { entryId: { in: ids } }, select: { entryId: true, source: true, controlKey: true, clientId: true, year: true, month: true, key: true, lines: true, entity: { select: { functionalCurrency: true } } } }),
     db.invoice.findMany({ where: { entryId: { in: ids } }, select: { entryId: true, entityId: true, direction: true, number: true, description: true } }),
     db.journalEntry.findMany({ where: { id: { in: ids }, kind: "RECLASS", bankTransactionId: { not: null } }, select: { id: true, bankTransactionId: true } }),
   ]);
@@ -80,8 +86,37 @@ export async function entryOrigins(db: Db, entryIds: string[]): Promise<Map<stri
   }
   for (const d of drafts) {
     if (!d.entryId) continue;
+    if (d.source === "ACCRUAL") continue;
     const control = d.controlKey ? (titles.get(`${d.clientId}|${d.year}|${d.month}`)?.get(d.controlKey) ?? null) : null;
     out.set(d.entryId, originText({ kind: "draft", source: d.source, control }));
+  }
+  for (const [entryId, text] of await accrualOrigins(db, drafts.filter((d) => d.source === "ACCRUAL"))) out.set(entryId, text);
+  return out;
+}
+
+/**
+ * An approved *Usulan akrual*: its counterparty, read back from the stored key (a payee's words, a supplier's name, a ledger bucket's
+ * account), and the amount Buku proposed when the accountant posted another one (*Ubah*).
+ */
+async function accrualOrigins(db: Db, rows: { entryId: string | null; clientId: string; key: string; lines: unknown; entity: { functionalCurrency: string } }[]) {
+  const out = new Map<string, string>();
+  const parsed = rows.flatMap((r) => {
+    const k = parseAccrualKey(r.key);
+    return r.entryId && k ? [{ ...r, entryId: r.entryId, k }] : [];
+  });
+  if (!parsed.length) return out;
+  const [contacts, accounts, posted] = await Promise.all([
+    db.contact.findMany({ where: { id: { in: parsed.flatMap((p) => (p.k.bucket.kind === "contact" ? [p.k.bucket.contactId] : [])) } }, select: { id: true, name: true } }),
+    db.account.findMany({ where: { OR: parsed.map((p) => ({ clientId: p.clientId, code: p.k.code })) }, select: { clientId: true, code: true, name: true } }),
+    db.journalLine.groupBy({ by: ["entryId"], where: { entryId: { in: parsed.map((p) => p.entryId) } }, _sum: { debit: true } }),
+  ]);
+  for (const p of parsed) {
+    const b = p.k.bucket;
+    const counterparty =
+      b.kind === "bank" ? b.merchantKey : b.kind === "contact" ? (contacts.find((c) => c.id === b.contactId)?.name ?? "") : `${p.k.code} ${accounts.find((a) => a.clientId === p.clientId && a.code === p.k.code)?.name ?? ""}`.trim();
+    const proposed = BigInt(readLines(p.lines)[0]?.debit ?? "0");
+    const amount = posted.find((x) => x.entryId === p.entryId)?._sum.debit ?? proposed;
+    out.set(p.entryId, originText({ kind: "accrual", counterparty, changedFrom: amount !== proposed ? formatMoney(proposed, p.entity.functionalCurrency) : null }));
   }
   return out;
 }

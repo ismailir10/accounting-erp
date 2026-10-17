@@ -101,8 +101,29 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     account, total in minor units, months, start). Installments are exact (⌊total/n⌋, remainder on the last); an accrual is one month
     and reverses on the 1st of the next. Each month's installment is **proposed at read time and posted only by the accountant's click**
     through `postJournal()` (kind `ADJUSTMENT`), carrying `scheduleId` + `installment` (unique: posts once). Never edited after posting —
-    stop and create a new one (a stop is checked under a row lock when posting; installments due through the month of the stop stay owed and proposed until posted, later ones are dropped; a stopped accrual still reverses what it posted). An installment stays proposed from its month until posted, in every later month too, unless its month is locked; a schedule with any installment (or reversal) in an already locked month is refused at creation (under a per-client close lock that closing a month also takes; a close refuses if a schedule due by that month, overdue ones included, appeared while its controls ran). Candidates (fixed-asset purchase, prepayment, deferred revenue, recurring cost missing this month) are
+    stop and create a new one (a stop is checked under a row lock when posting; installments due through the month of the stop stay owed and proposed until posted, later ones are dropped; a stopped accrual still reverses what it posted). An installment stays proposed from its month until posted, in every later month too, unless its month is locked; a schedule with any installment (or reversal) in an already locked month is refused at creation (under a per-client close lock that closing a month also takes; a close refuses if a schedule due by that month, overdue ones included, appeared while its controls ran). Candidates (fixed-asset purchase, prepayment, deferred revenue; never an accrual — see *Usulan akrual* below) are
     deterministic suggestions only; a schedule made from an entry stores that line (`sourceEntryId` + `sourceAccountId`, which it must release: an asset by depreciation — an expense debited, accumulated depreciation or that asset credited — a prepayment or deferred revenue by amortisation, the prepayment on credit, the deferred revenue on debit) and covers only it; schedules made before the line was stored are matched one to one by memo, then amount. A due, unposted installment is a REVIEW control `sched:`.
+    **Usulan akrual** (`lib/adjust/accruals.ts`, cycle 2026-10-18-usulan-akrual): a cost that recurs per counterparty and is missing
+    from a month is proposed as an accrual — deterministic, no AI, computed at read time, nothing stored until decided.
+    - **Bucket** = company, expense account (BEBAN on *Beban umum & administrasi*, *Beban penjualan*, *Beban lain-lain*, except 7190,
+      7200, 7300; never HPP or tax) and counterparty: a bank line's `merchantKey` (BANK/RECLASS, never a generic key, rule 14), a
+      purchase invoice's contact (INVOICE, not voided), or — for imported ledger lines (IMPORTED) — the account itself. Adjustments,
+      schedules, reversals and Saldo Awal are never spend.
+    - **Rule** on M−4…M−1, each month the bucket's net natural movement in functional minor units: ≥ 3 months with movement, none
+      negative, every one within 25 % of the median (4 × |amount − median| ≤ median, bigint), the median ≥ the ledger scan's
+      materiality (rule 22b). The median is the middle month, of four the later of the two middle months: always one month's own amount.
+    - **Proposed only when** M has ended (Asia/Jakarta), M isn't locked, nothing from the counterparty is dated in M (a payee's out
+      line in any status, a supplier's bill or matched bank line, a ledger bucket's imported line) and M is complete (every bank
+      account of a payee's history covered through M's end, rule 22c; a ledger-fed company has imported lines in M). A manual accrual
+      on the account in M (an ADJUSTMENT crediting a liability, or an ACCRUAL schedule's instalment) hides a ledger bucket and warns
+      on a payee or supplier card. Every history line is cited as `jl:<id>`, so the amount drills to its bank row or `sheet!row`.
+    - **Posted only by the accountant's click** (*Setujui*, `postAccrual`): one SERIALIZABLE transaction re-checks that the proposal is
+      undecided and still missing, posts Dr the account / Cr 2150 on M's last day and its mirror on the 1st of M+1 (`reversesId` set)
+      through Jurnal Penyesuaian's own writer (`postAdjustmentTx`, *Balik otomatis*; a locked M+1 refuses both), and stores the
+      `ProposedEntry` (source ACCRUAL) POSTED with its entry. *Tolak* stores it DISMISSED, for M only. Nothing else proposes accruals.
+    - A POSTED accrual whose counterparty then gets a line in M (a late statement) counts the expense twice: REVIEW control
+      `accrual-paid:` *Akrual dan pembayaran di bulan yang sama* lists both and points to *Salin* of the accrual's reversal into M with
+      *Balik otomatis*; acknowledged with a note like any REVIEW, never FAIL.
 
 ## Money
 5b. **Fixed-asset register** (`lib/assets`): a `FixedAsset` per entity (fiscal group, fiscal method, acquisition date, cost, residual,
@@ -459,7 +480,10 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     cited bank lines any other way (several lines at once) gets no draft, never a free journal. A cited journal line or entry
     (`jl:`/`je:`, as the ledger anomaly scans cite) counts as its bank line when it came from one, and every account that line posts
     to (classification, tax split, suspense) is part of it. Group-level
-    controls get words only. Deterministic proposals (e.g. 1999 corrections) use the same table.
+    controls get words only. Deterministic proposals (1999 corrections, accruals from history — rule 5a, source ACCRUAL, stored only when
+    decided) use the same table. An accrual is an estimate, so unlike a draft its amount may be changed before *Setujui* (`parseMoney`,
+    > 0), as may its accounts: the debit never a bank, clearing (1190/1199) or 1999 account, the credit a liability, none of those. The
+    stored proposal keeps Buku's lines; the entry holds what was posted, and its origin says "diubah dari Rp …".
     A draft that moves a bank line is not created, shown as blocked and refused on post when an `ADJUSTMENT` of that entity, dated from
     the line's date to the period end, already moves exactly its amount off its account (`priorCorrection`): never correct twice.
     Drafts for a PT or foreign company never see the Prive line (3300); a CV's or an individual's may.

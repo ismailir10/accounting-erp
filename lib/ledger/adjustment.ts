@@ -9,7 +9,11 @@ export type AdjustmentLineInput = { accountCode: string; debit: string; credit: 
 /** The first day of the month after `date`: where an accrual's automatic reversal goes. */
 export const firstOfNextMonth = (date: Date) => dateOnly(date.getUTCFullYear(), date.getUTCMonth() + 2, 1);
 
-/** A Jurnal Penyesuaian read and checked against the client's chart, not yet posted: amounts are minor units of the entity's currency. */
+/**
+ * A Jurnal Penyesuaian read and checked against the client's chart, not yet posted: amounts are minor units of the entity's currency, one
+ * side of each line zero (the reversal mirrors it). Built by `prepareAdjustment` from the form, by an approved *Usulan akrual*
+ * (lib/adjust/accruals.ts) from its proposal, and from a waiting request's stored lines (lib/approvals/journals.ts).
+ */
 export type PreparedAdjustment = {
   entity: { id: string; functionalCurrency: string };
   date: Date;
@@ -47,9 +51,10 @@ export async function prepareAdjustment(
 export const adjustmentPosting = (lines: PreparedAdjustment["lines"]) => lines.map(({ accountId, debit, credit, memo }) => ({ accountId, debit, credit, memo }));
 
 /**
- * Posts a prepared Jurnal Penyesuaian on `tx`: one ADJUSTMENT through postJournal(), and with `reverseNextMonth` (an accrual) its reversal —
- * every line mirrored, `reversesId` set, as *Balik jurnal* (rule 3a) — on the first day of the next month; a closed next month refuses both.
- * The approval of a waiting journal (Persetujuan kedua) posts through this same writer, inside its own transaction.
+ * The one writer behind Jurnal Penyesuaian, an approved *Usulan akrual* and the approval of a waiting journal (Persetujuan kedua): posts a
+ * prepared adjustment on `tx` (the caller's transaction) as one ADJUSTMENT through postJournal(), and with `reverseNextMonth` (*Balik
+ * otomatis*, an accrual) its reversal — every line mirrored, `reversesId` set, as *Balik jurnal* (rule 3a) — on the first day of the next
+ * month; a closed next month refuses both.
  */
 export async function postPreparedAdjustment(tx: Tx, a: PreparedAdjustment, actorId?: string | null) {
   const lines = adjustmentPosting(a.lines);

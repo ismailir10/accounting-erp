@@ -11,6 +11,7 @@ import type { JournalApprovalSource, MemberRole } from "@/lib/generated/prisma/e
 import { readStoredLines } from "@/lib/approvals/journals";
 import { pendingReopens } from "@/lib/approvals/reopen";
 import { SOURCE_LABEL, waitingFor, waitReason } from "@/lib/approvals/second";
+import { accrualProposals, NO_CREDIT } from "@/lib/adjust/accruals";
 
 /**
  * Kotak persetujuan (Phase 2 item 1): every proposal of a client-month waiting for the accountant's click, in one queue. A read model,
@@ -18,18 +19,20 @@ import { SOURCE_LABEL, waitingFor, waitReason } from "@/lib/approvals/second";
  * - bank lines in Review through the month end (Review's query and order), accepted by the reviewer's writer;
  * - open *Jelaskan* drafts and the month's 1999 corrections (Tutup Buku's *Usulan jurnal koreksi*), posted by the proposal writer;
  * - adjustment-schedule instalments due by the month, overdue ones included (Jurnal Penyesuaian), posted by the schedule writer;
+ * - accruals proposed from each vendor's history (`lib/adjust/accruals.ts`), posted with their reversal by the accrual writer;
  * - counted Coretax faktur of the masa that match nothing in the books (Pajak Masa), booked by the invoice writer;
  * - journals waiting for a second approver and months an admin asked to reopen (Persetujuan kedua), decided by their own actions.
  * The firm board's count is this same function (`approvalCounts`), so the board always equals the page.
  */
 
-export type ApprovalKind = "second" | "bank" | "draft" | "scheduled" | "faktur";
+export type ApprovalKind = "second" | "bank" | "draft" | "scheduled" | "accrual" | "faktur";
 /** In page order; `param` is the kind's `?jenis=` value. Persetujuan kedua leads: a second person is waiting on it. */
 export const APPROVAL_KINDS: { key: ApprovalKind; param: string; label: string }[] = [
   { key: "second", param: "kedua", label: "Persetujuan kedua" },
   { key: "bank", param: "bank", label: "Klasifikasi bank" },
   { key: "draft", param: "draf", label: "Draf jurnal" },
   { key: "scheduled", param: "terjadwal", label: "Jurnal terjadwal" },
+  { key: "accrual", param: "akrual", label: "Usulan akrual" },
   { key: "faktur", param: "faktur", label: "Faktur Coretax" },
 ];
 /** Bank lines dominate a month; past this many the rest are counted and left to Review. */
@@ -65,6 +68,26 @@ export type BankCard = {
 };
 export type DraftCard = Awaited<ReturnType<typeof correctionViews>>[number] & { date: string };
 export type ScheduledCard = Awaited<ReturnType<typeof scheduleViews>>[number] & { overdue: boolean };
+/** An accrual proposal (plain JSON): `id` is its key; `source` marks it for *Lihat alasan* (`hasReasoning`). */
+export type AccrualCard = {
+  id: string;
+  source: "ACCRUAL";
+  entityId: string;
+  entity: string;
+  /** ISO: the month's last day, and the reversal's (the 1st of the next month). */
+  date: string;
+  reversalDate: string;
+  counterparty: string;
+  account: { code: string; name: string };
+  credit: { code: string; name: string } | null;
+  /** Without 2150 the accountant picks the liability (*Setujui* waits for it): what the card says. */
+  noCredit: string | null;
+  amount: string;
+  currency: string;
+  rationale: string;
+  warning: string | null;
+  blocked: string | null;
+};
 export type FakturCard = {
   id: string;
   direction: "KELUARAN" | "MASUKAN";
@@ -122,6 +145,7 @@ export type ApprovalQueue = {
   confident: { id: string; accountCode: string; taxTag: string | null }[];
   drafts: DraftCard[];
   scheduled: ScheduledCard[];
+  accruals: AccrualCard[];
   faktur: FakturCard[];
   /** Persetujuan kedua: waiting journals (oldest first), then reopen requests. */
   second: SecondCard[];
@@ -129,7 +153,7 @@ export type ApprovalQueue = {
   fakturAccounts: ReturnType<typeof fakturCounterAccounts> | null;
 };
 
-export type QueueInput = { clientId: string; year: number; month: number; /** Companies in scope; all of the client's when omitted. */ entityIds?: string[] };
+export type QueueInput = { clientId: string; year: number; month: number; /** Companies in scope; all of the client's when omitted. */ entityIds?: string[]; /** Today, for "the month has ended" (accruals); tests fix it. */ now?: Date };
 
 async function scopeOf(db: Db, input: QueueInput) {
   const entities = await db.entity.findMany({
@@ -156,6 +180,28 @@ async function scheduled(db: Db, input: QueueInput, ids: string[], start: Date):
   return views.map((v) => ({ ...v, overdue: v.date < first })).sort((a, b) => Number(b.overdue) - Number(a.overdue) || a.date.localeCompare(b.date));
 }
 
+async function accruals(db: Db, input: QueueInput, ids: string[]): Promise<AccrualCard[]> {
+  if (!ids.length) return [];
+  // Problems first already (blocked, then warned).
+  return (await accrualProposals(db, input.clientId, input.year, input.month, { entityIds: ids, now: input.now })).map((p) => ({
+    id: p.key,
+    source: "ACCRUAL",
+    entityId: p.entity.id,
+    entity: p.entity.shortName,
+    date: toIsoDate(p.date),
+    reversalDate: toIsoDate(p.reversalDate),
+    counterparty: p.counterparty,
+    account: { code: p.account.code, name: p.account.name },
+    credit: p.credit ? { code: p.credit.code, name: p.credit.name } : null,
+    noCredit: p.credit ? null : NO_CREDIT,
+    amount: p.amount.toString(),
+    currency: p.entity.functionalCurrency,
+    rationale: p.rationale,
+    warning: p.warning,
+    blocked: p.blocked,
+  }));
+}
+
 /** Counted faktur of the masa matching nothing in the books, for each Rupiah company that imported faktur for it. */
 async function unbookedFaktur(db: Db, input: QueueInput, entities: { id: string; shortName: string; kind: string; functionalCurrency: string }[]): Promise<FakturCard[]> {
   const companies = entities.filter(packApplies);
@@ -173,7 +219,15 @@ async function unbookedFaktur(db: Db, input: QueueInput, entities: { id: string;
   return out;
 }
 
-const countsOf = (second: number, bank: number, d: unknown[], s: unknown[], f: unknown[]): ApprovalCounts => ({ second, bank, draft: d.length, scheduled: s.length, faktur: f.length, total: second + bank + d.length + s.length + f.length });
+const countsOf = (second: number, bank: number, d: unknown[], s: unknown[], a: unknown[], f: unknown[]): ApprovalCounts => ({
+  second,
+  bank,
+  draft: d.length,
+  scheduled: s.length,
+  accrual: a.length,
+  faktur: f.length,
+  total: second + bank + d.length + s.length + a.length + f.length,
+});
 
 /**
  * Journals waiting for a second approver dated on or before the month end (a draft by its period), for the companies in scope, oldest
@@ -222,7 +276,7 @@ async function secondCards(db: Db, input: QueueInput, ids: string[], start: Date
 /** The queue for a client-month and scope, with a card per proposal (bank lines capped) and the count per kind. */
 export async function approvalQueue(db: Db, input: QueueInput): Promise<ApprovalQueue> {
   const { entities, ids, start, end } = await scopeOf(db, input);
-  const [lines, accounts, period, draftCards, scheduledCards, fakturCards, second] = await Promise.all([
+  const [lines, accounts, period, draftCards, scheduledCards, accrualCards, fakturCards, second] = await Promise.all([
     db.bankTransaction.findMany({
       where: reviewWhere(ids, end),
       include: { bankAccount: { select: { label: true, currency: true } } },
@@ -232,6 +286,7 @@ export async function approvalQueue(db: Db, input: QueueInput): Promise<Approval
     db.period.findUnique({ where: { clientId_year_month: { clientId: input.clientId, year: input.year, month: input.month } }, select: { status: true } }),
     drafts(db, input, ids, end),
     scheduled(db, input, ids, start),
+    accruals(db, input, ids),
     unbookedFaktur(db, input, entities),
     secondCards(db, input, ids, start, end),
   ]);
@@ -267,12 +322,13 @@ export async function approvalQueue(db: Db, input: QueueInput): Promise<Approval
   const low = (c: BankCard) => c.confidence < LOW_CONFIDENCE;
   const shown = [...cards].sort((a, b) => Number(low(b)) - Number(low(a))).slice(0, BANK_CARD_LIMIT);
   return {
-    counts: countsOf(second.length, lines.length, draftCards, scheduledCards, fakturCards),
+    counts: countsOf(second.length, lines.length, draftCards, scheduledCards, accrualCards, fakturCards),
     locked: period?.status === "LOCKED",
     bank: shown,
     confident,
     drafts: draftCards,
     scheduled: scheduledCards,
+    accruals: accrualCards,
     faktur: fakturCards,
     second,
     fakturAccounts: fakturCards.length ? fakturCounterAccounts(accounts) : null,
@@ -285,13 +341,14 @@ export async function approvalQueue(db: Db, input: QueueInput): Promise<Approval
  */
 export async function approvalCounts(db: Db, input: QueueInput, opts: { reopen?: boolean } = {}): Promise<ApprovalCounts> {
   const { entities, ids, start, end } = await scopeOf(db, input);
-  const [journals, reopens, bank, draftCards, scheduledCards, fakturCards] = await Promise.all([
+  const [journals, reopens, bank, draftCards, scheduledCards, accrualCards, fakturCards] = await Promise.all([
     db.journalApproval.count({ where: secondWhere(input.clientId, ids, end) }),
     opts.reopen === false ? 0 : db.reopenRequest.count({ where: reopenWhere(input.clientId, input.year, input.month) }),
     db.bankTransaction.count({ where: reviewWhere(ids, end) }),
     drafts(db, input, ids, end),
     scheduled(db, input, ids, start),
+    accruals(db, input, ids),
     unbookedFaktur(db, input, entities),
   ]);
-  return countsOf(journals + reopens, bank, draftCards, scheduledCards, fakturCards);
+  return countsOf(journals + reopens, bank, draftCards, scheduledCards, accrualCards, fakturCards);
 }

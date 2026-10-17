@@ -36,7 +36,7 @@ const summary = (xs: Awaited<ReturnType<typeof scheduleCandidates>>) => xs.map((
 describe("schedule candidates from the ledger", () => {
   beforeEach(resetDb);
 
-  it("proposes depreciation for a purchase, amortisation for a prepayment and deferred revenue, and accruals for missing costs", async () => {
+  it("proposes depreciation for a purchase, amortisation for a prepayment and deferred revenue; never an accrual", async () => {
     const { pt, c } = await books();
     const machine = await post(pt, c, dateOnly(2026, 8, 19), "1210", "2110", 48_000_000n, "Mesin pakan otomatis");
     await post(pt, c, dateOnly(2026, 8, 19), "1210", "3100", 30_000_000n, "Saldo awal kendaraan", "OPENING"); // an opening balance is not a purchase
@@ -49,18 +49,16 @@ describe("schedule candidates from the ledger", () => {
       ["DEPRECIATION", "6180", "1219", 48_000_000n, 48, "2026-9"],
       ["AMORTIZATION", null, "1170", 12_000_000n, 12, "2026-9"],
       ["AMORTIZATION", "2160", "4110", 6_000_000n, 12, "2026-9"],
-      ["ACCRUAL", "6120", "2150", 3_000_000n, 1, "2026-8"],
-      // depreciation (1 jt a month, missing too) is below materiality Rp 1.090.000
+      // Rent (3 jt a month, missing in August) is no candidate: accruals are proposed per counterparty in Kotak persetujuan
+      // (lib/adjust/accruals.ts, cycle 2026-10-18-usulan-akrual).
     ]);
     expect(found[0]).toMatchObject({ sourceEntryId: machine.id, reason: "Pembelian 1210 Aset Tetap 19 Agu 2026: Mesin pakan otomatis", memo: "Penyusutan 1210 Aset Tetap 19 Agu 2026" });
-    expect(found[3].reason).toBe("6120 Beban Sewa tercatat tiap bulan (2026-05, 2026-06, 2026-07), bulan ini belum");
   });
 
-  it("drops a candidate once a schedule cites its entry, and skips accounts a running schedule covers", async () => {
+  it("drops a candidate once a schedule cites its entry", async () => {
     const { pt, c } = await books();
     const machine = await post(pt, c, dateOnly(2026, 8, 19), "1210", "2110", 48_000_000n, "Mesin pakan otomatis");
     await legacy({ clientId: c, entityId: pt, kind: "DEPRECIATION", memo: "Penyusutan mesin", debitCode: "6180", creditCode: "1219", amount: "48.000.000", months: 48, startYear: 2026, startMonth: 9, sourceEntryId: machine.id });
-    await createSchedule(db, { clientId: c, entityId: pt, kind: "AMORTIZATION", memo: "Sewa kantor", debitCode: "6120", creditCode: "1170", amount: "36.000.000", months: 12, startYear: 2026, startMonth: 8 });
     expect(summary(await scheduleCandidates(db, c, 2026, 8))).toEqual([]);
   });
 
@@ -76,7 +74,7 @@ describe("schedule candidates from the ledger", () => {
     const long = await db.account.create({ data: { firmId: g.firm.id, clientId: c, code: "1212", name: "Peralatan Kantor dan Perlengkapan Cetak Digital Kapasitas Besar untuk Gudang Pusat", type: "ASET", normalBalance: "DEBIT", fsLine: "ASET_TETAP" } });
     const twin = await db.$transaction(async (tx) => postJournal(tx, { entityId: pt, date: dateOnly(2026, 8, 24), kind: "ADJUSTMENT", memo: "Dua printer", lines: [{ accountId: await acc("1210"), debit: 15_000_000n }, { accountId: long.id, debit: 15_000_000n }, { accountId: await acc("2110"), credit: 30_000_000n }] }));
     const name = (id: string | null) => (id === buy.id ? "buy" : id === mixed.id ? "mixed" : "twin");
-    const pending = async () => (await scheduleCandidates(db, c, 2026, 8)).filter((x) => x.kind !== "ACCRUAL" && name(x.sourceEntryId) !== "twin").map((x) => `${x.kind}:${name(x.sourceEntryId)}:${x.amount}`);
+    const pending = async () => (await scheduleCandidates(db, c, 2026, 8)).filter((x) => name(x.sourceEntryId) !== "twin").map((x) => `${x.kind}:${name(x.sourceEntryId)}:${x.amount}`);
     const twins = async () => (await scheduleCandidates(db, c, 2026, 8)).filter((x) => x.sourceEntryId === twin.id);
     const [, second] = await twins();
     expect([(await twins()).length, second.memo.length, second.memo.startsWith("Penyusutan 1212 ")]).toEqual([2, 80, true]);
@@ -190,28 +188,9 @@ describe("schedule candidates from the ledger", () => {
     await expect(db.adjustmentSchedule.update({ where: { id: ok.id }, data: { sourceEntryId: null } })).rejects.toThrow(/AdjustmentSchedule_source_line_check/);
   });
 
-  it("drops an accrual candidate once that month's accrual is created", async () => {
-    const { pt, c } = await books();
-    await createSchedule(db, { clientId: c, entityId: pt, kind: "ACCRUAL", memo: "Akrual sewa Agustus", debitCode: "6120", creditCode: "2150", amount: "3.000.000", months: 1, startYear: 2026, startMonth: 8 });
-    expect((await scheduleCandidates(db, c, 2026, 8)).filter((x) => x.kind === "ACCRUAL")).toEqual([]);
-  });
-
-  it("needs three baseline months before proposing an accrual", async () => {
-    const g = await makeGroup();
-    const pt = g.pt.entity.id;
-    const c = g.client.id;
-    for (const m of [6, 7]) {
-      await post(pt, c, dateOnly(2026, m, 10), "1130", "4100", 100_000_000n);
-      await post(pt, c, dateOnly(2026, m, 25), "6120", "1130", 3_000_000n);
-    }
-    await post(pt, c, dateOnly(2026, 8, 10), "1130", "4100", 100_000_000n);
-    expect(await scheduleCandidates(db, c, 2026, 8)).toEqual([]);
-  });
-
-  it("a finished schedule no longer covers its account: a missing rent is proposed as an accrual again", async () => {
-    const { pt, c } = await books();
-    await createSchedule(db, { clientId: c, entityId: pt, kind: "AMORTIZATION", memo: "Sewa kantor Mar–Mei", debitCode: "6120", creditCode: "1170", amount: "9.000.000", months: 3, startYear: 2026, startMonth: 3 });
-    expect(summary(await scheduleCandidates(db, c, 2026, 8))).toEqual([["ACCRUAL", "6120", "2150", 3_000_000n, 1, "2026-8"]]);
+  it("no candidate is an accrual, whatever the month misses (the recurring-cost candidate moved to Kotak persetujuan)", async () => {
+    const { c } = await books();
+    for (const month of [6, 7, 8, 9]) expect((await scheduleCandidates(db, c, 2026, month)).filter((x) => x.kind === "ACCRUAL")).toEqual([]);
   });
 });
 

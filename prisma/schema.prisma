@@ -1599,6 +1599,8 @@ model AdjustmentSchedule {
 enum ProposalSource {
   AI_CONTROL
   SUSPENSE
+  /// Usulan akrual: an accrual proposed from a vendor's history (lib/adjust/accruals.ts), stored only when decided.
+  ACCRUAL
 }
 
 enum ProposalStatus {

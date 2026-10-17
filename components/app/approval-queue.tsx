@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowRight, Check, CheckCheck, CircleAlert, Loader2, X } from "lucide-react";
+import { ArrowRight, Check, CheckCheck, CircleAlert, Loader2, Pencil, X } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Money } from "@/components/app/money";
@@ -12,18 +12,23 @@ import { MethodBadge } from "@/components/app/status";
 import { SimpleSelect } from "@/components/app/simple-select";
 import { ReasoningDisclosure } from "@/components/app/reasoning-panel";
 import { hasReasoning } from "@/lib/approvals/has-reasoning";
-import { bookFakturAction, dismissProposalAction, postAllDueAction, postInstallmentAction, postProposalAction, reviewAction } from "@/app/actions";
-import type { ApprovalKind, BankCard, DraftCard, FakturCard, ScheduledCard, SecondCard } from "@/lib/approvals/queue";
+import { Input } from "@/components/ui/input";
+import { Field, FieldError, FieldLabel } from "@/components/ui/field";
+import { bookFakturAction, dismissAccrualAction, dismissProposalAction, postAccrualAction, postAllDueAction, postInstallmentAction, postProposalAction, reviewAction } from "@/app/actions";
+import type { AccrualCard, ApprovalKind, BankCard, DraftCard, FakturCard, ScheduledCard, SecondCard } from "@/lib/approvals/queue";
 import type { TaxTag } from "@/lib/generated/prisma/enums";
 import { cn } from "@/lib/utils";
-import { formatDate, formatDateTime } from "@/lib/format";
+import { formatDate, formatDateTime, formatPeriod } from "@/lib/format";
+import { formatMoney } from "@/lib/money";
 import { JournalDecision, ReopenDecision } from "@/components/app/second-approval";
 import { formNotice, type SourceRoute } from "@/lib/approvals/second";
 
 type Account = { code: string; name: string };
 /** A Persetujuan kedua card with this member's part: `canDecide` (approve/reject, confirm/reject) and `mine` (maker or requester). */
 export type SecondView = SecondCard & { canDecide: boolean; mine: boolean };
-type Result = { ok: boolean; error?: string };
+type Result = { ok: boolean; error?: string; fields?: Record<string, string> };
+/** Debit: any account but bank, clearing and 1999; credit: a liability, none of those (the writer checks again). */
+export type AccrualAccounts = { debit: Account[]; credit: Account[] };
 
 const TAX_LABEL: Record<string, string> = { PPN_KELUARAN: "PPN Keluaran", PPN_MASUKAN: "PPN Masukan", PPH_21: "Setoran PPh 21", PPH_23: "Setoran PPh 23", PPH_4_2: "Setoran PPh 4(2)", PPH_25: "Angsuran PPh 25" };
 const DIRECTION: Record<FakturCard["direction"], { label: string; account: string; book: string }> = {
@@ -69,6 +74,111 @@ function KindCard({ kind, title, count, description, action, children }: { kind:
 }
 
 /**
+ * One *Usulan akrual* card: the counterparty and its account, the two lines and the reversal date, the rationale (with *Lihat alasan*),
+ * a warning or blocked line, then *Setujui*, *Ubah* (amount and both accounts in the row) and *Tolak*. A refusal tied to a field shows
+ * under that field; any other comes back as a toast.
+ */
+function AccrualItem({ card, label, accounts, readOnly, disabled, withReasoning, onPost, onDismiss }: {
+  card: AccrualCard;
+  label: string;
+  accounts: AccrualAccounts | null;
+  readOnly: boolean;
+  disabled: boolean;
+  withReasoning: (card: AccrualCard, line: (toggle?: React.ReactNode) => React.ReactNode) => React.ReactNode;
+  onPost: (edit: { amount: string; debitCode: string; creditCode: string }) => Promise<Record<string, string> | null>;
+  onDismiss: () => void;
+}) {
+  const id = useId();
+  const [editing, setEditing] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [debit, setDebit] = useState(card.account.code);
+  const [credit, setCredit] = useState(card.credit?.code ?? "");
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const total = BigInt(card.amount);
+  const post = async () => setErrors((await onPost(editing ? { amount, debitCode: debit, creditCode: credit } : { amount: "", debitCode: "", creditCode: credit })) ?? {});
+  const line = (side: string, code: string, name: string) => (
+    <span className="flex basis-full flex-wrap items-center gap-x-3">
+      <span className="w-12 text-xs">{side}</span>
+      <span className="min-w-0 flex-1 text-foreground">{code ? `${code} ${name}` : "belum dipilih"}</span>
+      <Money className="text-sm" value={total} currency={card.currency} />
+    </span>
+  );
+  return (
+    <Row
+      testId="approval-accrual"
+      eyebrow={
+        <>
+          {label} · {card.entity} · {isoDay(card.date)} · <span className="text-review">Perlu ditinjau</span>
+        </>
+      }
+      title={
+        <>
+          {card.counterparty} <span className="font-normal text-muted-foreground">{card.account.code} {card.account.name}</span>
+        </>
+      }
+      amount={total}
+      currency={card.currency}
+      reason={withReasoning(card, (toggle) => (
+        <>
+          {line("Debit", card.account.code, card.account.name)}
+          {line("Kredit", card.credit?.code ?? "", card.credit?.name ?? "")}
+          <span className="basis-full">Dibalik otomatis {isoDay(card.reversalDate)}</span>
+          <span className="basis-full text-foreground">
+            {card.rationale} {toggle}
+          </span>
+        </>
+      ))}
+    >
+      {card.blocked && <p className="text-sm font-medium text-review" data-testid="approval-blocked">{card.blocked}</p>}
+      {card.warning && (
+        <p className="flex items-start gap-2 border-l-2 border-review py-0.5 pl-3 text-sm" data-testid="accrual-warning">
+          <CircleAlert className="mt-0.5 size-4 shrink-0 text-review" aria-hidden />
+          {card.warning}
+        </p>
+      )}
+      {card.noCredit && !credit && !card.blocked && <p className="text-sm font-medium text-review">{card.noCredit}</p>}
+      {!readOnly && editing && accounts && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field>
+            <FieldLabel htmlFor={`${id}-amount`}>Nominal</FieldLabel>
+            <Input id={`${id}-amount`} inputMode="numeric" className="num text-right" placeholder={formatMoney(total, card.currency, { bare: true })} value={amount} aria-invalid={!!errors.amount} disabled={disabled} onChange={(e) => setAmount(e.target.value)} />
+            <FieldError>{errors.amount}</FieldError>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`${id}-debit`}>Akun debit</FieldLabel>
+            <SimpleSelect id={`${id}-debit`} label="Akun debit" value={debit} disabled={disabled} onChange={setDebit} options={accounts.debit.map((a) => ({ value: a.code, label: `${a.code} ${a.name}` }))} />
+            <FieldError>{errors.debit}</FieldError>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`${id}-credit`}>Akun kredit</FieldLabel>
+            <SimpleSelect id={`${id}-credit`} label="Akun kredit" value={credit} disabled={disabled} placeholder="Pilih liabilitas" onChange={setCredit} options={accounts.credit.map((a) => ({ value: a.code, label: `${a.code} ${a.name}` }))} />
+            <FieldError>{errors.credit}</FieldError>
+          </Field>
+        </div>
+      )}
+      {!readOnly && !editing && Object.keys(errors).length > 0 && <p className="text-sm font-medium text-review">{Object.values(errors)[0]}</p>}
+      {!readOnly && (
+        <div className="flex flex-wrap gap-2">
+          {!card.blocked && (
+            <>
+              <Button variant="outline" size="sm" disabled={disabled || !credit} onClick={() => void post()}>
+                <Check /> Setujui
+              </Button>
+              <Button variant="outline" size="sm" disabled={disabled} aria-expanded={editing} onClick={() => setEditing((e) => !e)}>
+                <Pencil /> {editing ? "Batal ubah" : "Ubah"}
+              </Button>
+            </>
+          )}
+          <Button variant="ghost" size="sm" disabled={disabled} onClick={onDismiss}>
+            <X /> Tolak
+          </Button>
+        </div>
+      )}
+    </Row>
+  );
+}
+
+/**
  * Kotak persetujuan: every proposal of the month in one list, kind by kind. Each button calls the owning page's own server action, so
  * every writer, lock, re-check and refusal stays as it is; nothing posts without a click. `readOnly`: a locked month or a viewer.
  */
@@ -84,6 +194,8 @@ export function ApprovalQueue({
   confident,
   drafts,
   scheduled,
+  accruals,
+  accrualAccounts,
   faktur,
   second,
   draftRoute,
@@ -106,6 +218,9 @@ export function ApprovalQueue({
   confident: { id: string; accountCode: string; taxTag: string | null }[];
   drafts: DraftCard[];
   scheduled: ScheduledCard[];
+  accruals: AccrualCard[];
+  /** Only when there are accrual cards. */
+  accrualAccounts: AccrualAccounts | null;
   faktur: FakturCard[];
   /** Persetujuan kedua, with what this member may do on each (decided on the server; every action checks it again). */
   second: SecondView[];
@@ -168,6 +283,23 @@ export function ApprovalQueue({
   const openDrafts = drafts.filter((d) => !done.has(d.id));
   const openScheduled = scheduled.filter((s) => !done.has(`${s.scheduleId}:${s.k}`));
   const openFaktur = faktur.filter((f) => !done.has(f.id));
+  const openAccruals = accruals.filter((a) => !done.has(a.id));
+  // An accrual's *Setujui* returns the refused field's message to its card (shown under the field) instead of a toast, so the card
+  // stays mounted with its *Ubah* fields until the writer has answered (no optimistic leave).
+  const postAccrual = async (a: AccrualCard, edit: { amount: string; debitCode: string; creditCode: string }) => {
+    setBusy(a.id);
+    const r: Result = await postAccrualAction(clientId, a.id, edit);
+    setBusy(null);
+    if (!r.ok) {
+      if (!r.fields) toast.error(r.error ?? "Gagal menyimpan.");
+      router.refresh();
+      return r.fields ?? null;
+    }
+    leave([a.id]);
+    toast.success(`Akrual dicatat, dibalik ${isoDay(a.reversalDate)}`);
+    router.refresh();
+    return null;
+  };
   const hiddenBank = bankTotal - bank.length;
   const disabled = busy !== null;
   const show = (k: ApprovalKind) => kinds.includes(k);
@@ -409,6 +541,24 @@ export function ApprovalQueue({
               </Row>
             );
           })}
+        </KindCard>
+      )}
+
+      {show("accrual") && openAccruals.length > 0 && (
+        <KindCard kind="accrual" title={labels.accrual} count={openAccruals.length} description="Vendor yang rutin tiap bulan tetapi belum ada di bulan ini. Setujui untuk mencatat akrual yang dibalik otomatis tanggal 1 bulan berikutnya.">
+          {openAccruals.map((a) => (
+            <AccrualItem
+              key={a.id}
+              card={a}
+              label={labels.accrual}
+              accounts={accrualAccounts}
+              readOnly={readOnly}
+              disabled={disabled}
+              withReasoning={(card, line) => withReasoning(card, card.id, line)}
+              onPost={(edit) => postAccrual(a, edit)}
+              onDismiss={() => run(a.id, () => dismissAccrualAction(clientId, a.id), `Usulan akrual ditolak untuk ${formatPeriod(year, month)}`)}
+            />
+          ))}
         </KindCard>
       )}
 

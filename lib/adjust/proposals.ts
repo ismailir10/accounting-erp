@@ -208,9 +208,10 @@ export async function dismissProposal(db: Db, input: { clientId: string; proposa
 
 /** Plain JSON for the proposals card (bigint as strings). */
 export async function proposalViews(db: Db, clientId: string, year: number, month: number) {
-  // 1999 corrections are shown from their source line (lib/adjust/suspense), never twice; a draft waiting for a second approver shows
-  // under Persetujuan kedua instead (lib/approvals/queue.ts), never twice either. One rejected there comes back with the reason.
-  const open = (await openProposals(db, clientId, year, month)).filter((p) => p.source !== "SUSPENSE");
+  // 1999 corrections are shown from their source line (lib/adjust/suspense), never twice; accruals are never stored open (Kotak's own
+  // kind). A draft waiting for a second approver shows under Persetujuan kedua instead (lib/approvals/queue.ts), never twice either. One
+  // rejected there comes back with the reason.
+  const open = (await openProposals(db, clientId, year, month)).flatMap((p) => (p.source === "AI_CONTROL" ? [{ ...p, source: p.source }] : []));
   const asked = await db.journalApproval.findMany({
     where: { proposalId: { in: open.map((p) => p.id) } },
     select: { proposalId: true, status: true, note: true, decidedBy: { select: { name: true } } },

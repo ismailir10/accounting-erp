@@ -10,7 +10,8 @@ import { runControls } from "@/lib/controls";
 import { bankLineState, gather, snapshotOf } from "@/lib/controls/ai-review";
 import { explainInput, explainKey, storedDropped } from "@/lib/controls/explain";
 import { priorCorrection, readLines, type ProposalLine } from "@/lib/adjust/proposals";
-import { formatDate, periodBounds } from "@/lib/format";
+import { formatDate, formatMonthYear, monthName, periodBounds, toIsoDate } from "@/lib/format";
+import { ACCRUAL_PREFIX, accrualProposals, HISTORY_MONTHS, MIN_MONTHS, NO_AI, parseAccrualKey } from "@/lib/adjust/accruals";
 import { formatMoney } from "@/lib/money";
 import { resolveAiConfig } from "@/lib/settings/ai";
 import { toCsv } from "@/lib/csv";
@@ -374,15 +375,131 @@ export function draftCsvRows(f: DraftFacts): CsvRow[] {
   return out;
 }
 
+// ---- an accrual proposal (Kotak's *Usulan akrual*, deterministic: no AI) ----
+
+type AccrualRow = { date: string; text: string; source: string; amount: string; ref: string };
+export type AccrualFacts = {
+  kind: "accrual";
+  id: string;
+  currency: string;
+  bucket: "bank" | "contact" | "ledger";
+  counterparty: string;
+  account: Account;
+  credit: Account | null;
+  /** The four months read, oldest first: each month's amount (minor units) and rows. */
+  months: { label: string; amount: string; rows: AccrualRow[] }[];
+  moved: number;
+  median: string;
+  medianMonth: string;
+  floor: string;
+  /** The month's last day ("31 Agu 2026") and name ("Agustus"). */
+  until: string;
+  monthName: string;
+  banks: string[];
+  reversal: string;
+  warning: string | null;
+  blocked: string | null;
+};
+
+/**
+ * The reasoning behind one accrual proposal of the client, recomputed from the books (nothing stored, no model). Throws
+ * `ReasoningError(NOT_FOUND)` for another client's key or one no longer proposed (decided, or the payment arrived).
+ */
+export async function accrualReasoning(db: Db, scope: { firmId: string; clientId: string }, id: string, now?: Date): Promise<AccrualFacts> {
+  const k = parseAccrualKey(id);
+  const entity = k ? await db.entity.findFirst({ where: { id: k.entityId, clientId: scope.clientId, firmId: scope.firmId }, select: { id: true } }) : null;
+  const p = k && entity ? (await accrualProposals(db, scope.clientId, k.year, k.month, { entityIds: [entity.id], now })).find((x) => x.key === id) : undefined;
+  if (!p) throw new ReasoningError(NOT_FOUND);
+  return {
+    kind: "accrual",
+    id: p.key,
+    currency: p.entity.functionalCurrency,
+    bucket: p.bucket.kind,
+    counterparty: p.counterparty,
+    account: { code: p.account.code, name: p.account.name },
+    credit: p.credit ? { code: p.credit.code, name: p.credit.name } : null,
+    months: p.history.map((h) => ({ label: formatMonthYear(h.year, h.month), amount: h.amount.toString(), rows: h.lines.map((l) => ({ date: toIsoDate(l.date), text: l.text, source: l.source, amount: l.amount.toString(), ref: l.ref })) })),
+    moved: p.history.filter((h) => h.amount !== 0n).length,
+    median: p.amount.toString(),
+    medianMonth: formatMonthYear(p.medianMonth.year, p.medianMonth.month),
+    floor: p.floor.toString(),
+    until: formatDate(p.date),
+    monthName: monthName(p.month),
+    banks: p.banks,
+    reversal: formatDate(p.reversalDate),
+    warning: p.warning,
+    blocked: p.blocked,
+  };
+}
+
+const accrualMoney = (f: AccrualFacts, minor: string) => formatMoney(BigInt(minor), f.currency);
+
+function accrualRule(f: AccrualFacts): Check[] {
+  const median = accrualMoney(f, f.median);
+  return [
+    { ok: true, text: `Ada di ${f.moved} dari ${HISTORY_MONTHS} bulan (paling sedikit ${MIN_MONTHS}), tidak ada bulan yang minus.` },
+    { ok: true, text: `Setiap bulan dalam 25 % dari nilai tengah ${median}.` },
+    { ok: true, text: `Nilai tengah ${median} tidak kurang dari batas materialitas ${accrualMoney(f, f.floor)}.` },
+  ];
+}
+
+function accrualMonth(f: AccrualFacts): string[] {
+  const out =
+    f.bucket === "bank"
+      ? [`Tidak ada mutasi ${f.counterparty} sampai ${f.until}.`, `Rekening koran ${f.banks.join(" dan ")} lengkap sampai ${f.until}.`]
+      : f.bucket === "contact"
+        ? [`Tidak ada tagihan atau pembayaran ${f.counterparty} sampai ${f.until}.`]
+        : [`Tidak ada baris ${f.account.code} di buku besar yang diimpor sampai ${f.until}.`, `Buku besar ${f.monthName} sudah diimpor.`];
+  return [...out, ...(f.warning ? [f.warning] : [])];
+}
+
+/** The accrual's five steps, in the panel's words. */
+export function accrualSteps(f: AccrualFacts): ReasoningStep[] {
+  const account = `${f.account.code} ${f.account.name}`;
+  return [
+    {
+      label: "Riwayat dibaca",
+      lines: f.months.map((m) => (m.rows.length ? `${m.label}: ${accrualMoney(f, m.amount)} (${m.rows.length} baris)` : `${m.label}: tidak ada`)),
+      rows: f.months.flatMap((m) => m.rows.map((r) => ({ date: r.date, text: r.text, amount: accrualMoney(f, r.amount), account: f.account.code, how: r.source, cited: true }))),
+    },
+    { label: "Aturan", lines: [], checks: accrualRule(f), note: NO_AI },
+    { label: "Bulan ini", lines: accrualMonth(f) },
+    {
+      label: "Nominal",
+      lines: [
+        `${accrualMoney(f, f.median)}, nilai tengah riwayat (${f.medianMonth}).`,
+        `Debit ${account} · Kredit ${f.credit ? `${f.credit.code} ${f.credit.name}` : "dipilih akuntan"} · dibalik otomatis ${f.reversal}.`,
+      ],
+    },
+    { label: "Belum dicatat", lines: [f.blocked ?? "Tidak ada yang dicatat sampai Anda menyetujui usulan ini."] },
+  ];
+}
+
+export function accrualCsvRows(f: AccrualFacts): CsvRow[] {
+  const minor = (v: string): [string, string] => [accrualMoney(f, v), v];
+  const out: CsvRow[] = [];
+  for (const m of f.months) {
+    for (const r of m.rows) out.push(["Riwayat dibaca", "Baris", r.text, r.date, ...minor(r.amount), f.currency, f.account.code, r.source, "ya", r.ref]);
+    out.push(["Riwayat dibaca", `Bulan ${m.label}`, m.rows.length ? `${m.rows.length} baris` : "tidak ada", null, ...minor(m.amount), f.currency, f.account.code, null, null, "Jumlah baris bulan ini"]);
+  }
+  out.push(...accrualRule(f).map((c) => row("Aturan", "Lolos", c.text, "Aturan Usulan akrual")));
+  out.push(["Aturan", "Batas materialitas", "1 % volume Laba Rugi rata-rata bulanan", null, ...minor(f.floor), f.currency, null, null, null, "Pindai buku besar"]);
+  out.push(...accrualMonth(f).map((t) => row("Bulan ini", "Fakta", t, "Buku besar dan rekening koran")));
+  out.push(["Nominal", "Nilai tengah", f.medianMonth, null, ...minor(f.median), f.currency, f.account.code, null, null, "Aturan Usulan akrual"]);
+  out.push(row("Nominal", "Tanpa AI", NO_AI, "Aturan Usulan akrual"));
+  return out;
+}
+
 // ---- one entry point for the action and the download ----
 
-export type ReasoningFacts = BankFacts | DraftFacts;
+export type ReasoningFacts = BankFacts | DraftFacts | AccrualFacts;
 
-/** A Kotak or Review item of the client by id: an AI bank line or an AI draft. Anything else is NOT_FOUND. */
+/** A Kotak or Review item of the client by id: an AI bank line, an AI draft or an accrual proposal (its key). Anything else is NOT_FOUND. */
 export async function reasoningFor(db: Db, scope: { firmId: string; clientId: string }, id: string): Promise<ReasoningFacts> {
+  if (id.startsWith(ACCRUAL_PREFIX)) return accrualReasoning(db, scope, id);
   const isLine = (await db.bankTransaction.count({ where: { id } })) > 0;
   return isLine ? bankReasoning(db, scope, id) : draftReasoning(db, scope, id);
 }
 
-export const reasoningSteps = (f: ReasoningFacts) => (f.kind === "bank" ? bankSteps(f) : draftSteps(f));
-export const reasoningCsv = (f: ReasoningFacts) => toCsv(CSV_HEADER, f.kind === "bank" ? bankCsvRows(f) : draftCsvRows(f));
+export const reasoningSteps = (f: ReasoningFacts) => (f.kind === "bank" ? bankSteps(f) : f.kind === "draft" ? draftSteps(f) : accrualSteps(f));
+export const reasoningCsv = (f: ReasoningFacts) => toCsv(CSV_HEADER, f.kind === "bank" ? bankCsvRows(f) : f.kind === "draft" ? draftCsvRows(f) : accrualCsvRows(f));
