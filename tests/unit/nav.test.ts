@@ -15,6 +15,7 @@ describe("sectionOf", () => {
   it("picks the most specific page: /tax/masa is Pajak Masa, /tax is Pajak Badan", () => {
     expect(sectionOf("/tax/masa")?.section.label).toBe("Pajak Masa");
     expect(sectionOf("/tax")?.section.label).toBe("Pajak Badan");
+    expect(sectionOf("/analysis")).toMatchObject({ section: { label: "Analisis keuangan" }, deeper: false });
   });
   it("does not match on a prefix that is not a path segment", () => {
     expect(sectionOf("/ledgerx")).toBeNull();
