@@ -1,4 +1,6 @@
+import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
+import { extractText, getDocumentProxy } from "unpdf";
 import { openManualImport, openClientForm } from "./qa-helpers";
 
 /**
@@ -77,6 +79,54 @@ test("receivables and payables: invoice, settle from the statement, aging equals
   await expect(page.getByText("termasuk pajak dipotong")).toContainText("200.000");
   await expect(page.getByTestId("next-step")).toContainText("Daftar piutang per Agustus 2026 cocok dengan buku besar");
 
+  // Batas kredit (cycle 2026-10-17-pengingat-piutang): an invoice due 30 days before the month end, left unpaid.
+  await newInvoice(page, "Faktur baru", { party: "PT Toko Lambat", number: "INV-300", date: "2026-08-01", due: "2026-08-01", dpp: "5.000.000" });
+  await page.getByRole("button", { name: "Simpan faktur" }).click();
+  await expect(page.getByText("Faktur INV-300 dicatat")).toBeVisible();
+  const late = page.getByTestId("aging-PIU").getByTestId("aging-row-PT Toko Lambat");
+  const setLimit = async (value: string) => {
+    await late.getByRole("button", { name: "Ubah batas kredit PT Toko Lambat" }).click();
+    await page.getByLabel("Batas kredit (Rp)").fill(value);
+    await page.getByTestId("credit-limit-save").click();
+  };
+  await setLimit("abc");
+  await expect(page.getByRole("dialog").getByRole("alert")).toContainText('Nominal "abc" tidak bisa dibaca');
+  await page.getByLabel("Batas kredit (Rp)").fill("0");
+  await page.getByTestId("credit-limit-save").click();
+  await expect(page.getByRole("dialog").getByRole("alert")).toContainText("Batas kredit harus lebih dari nol");
+  await page.keyboard.press("Escape");
+  await expect(late.getByTestId("over-limit")).toHaveCount(0);
+  await setLimit("5.000.000"); // below the open 5.550.000
+  await expect(page.getByText("Batas kredit PT Toko Lambat: Rp 5.000.000")).toBeVisible();
+  await expect(late).toContainText("Batas Rp 5.000.000");
+  await expect(late.getByTestId("over-limit")).toContainText("lewat batas kredit");
+  await expect(page.getByTestId("next-step")).toContainText("1 pelanggan lewat batas kredit");
+  await setLimit("10.000.000");
+  await expect(late).toContainText("Batas Rp 10.000.000");
+  await expect(late.getByTestId("over-limit")).toHaveCount(0);
+
+  // Pengingat: the overdue invoice with its days late, signed by the company; edited, copied, sent through WhatsApp, and the statement.
+  await late.getByRole("button", { name: "Pengingat PT Toko Lambat" }).click();
+  const reminder = page.getByTestId("reminder-dialog");
+  await expect(reminder).toContainText("Per 31 Agu 2026 · PT Piutang Uji");
+  await expect(reminder).toContainText("Bulan ini belum ditutup");
+  const message = reminder.getByLabel("Pesan pengingat tagihan");
+  await expect(message).toHaveValue(/1\. INV-300 \(tgl\. 1 Agu 2026, jatuh tempo 1 Agu 2026\): Rp 5\.550\.000, terlambat 30 hari/);
+  await expect(message).toHaveValue(/Jumlah: Rp 5\.550\.000/);
+  await expect(message).toHaveValue(/Hormat kami,\nPT Piutang Uji$/);
+  await message.fill((await message.inputValue()).replace("Mohon pembayarannya", "Mohon kiranya pembayarannya"));
+  await reminder.getByRole("button", { name: "Salin pesan" }).click();
+  await expect(page.getByText(/Pesan tersalin|Pesan sudah dipilih/)).toBeVisible();
+  const wa = await reminder.getByRole("link", { name: "Kirim lewat WhatsApp" }).getAttribute("href");
+  expect(wa!.startsWith("https://wa.me/?text=")).toBe(true);
+  expect(decodeURIComponent(wa!.slice("https://wa.me/?text=".length))).toContain("Mohon kiranya pembayarannya");
+  const [statement] = await Promise.all([page.waitForEvent("download"), reminder.getByRole("link", { name: "Unduh surat tagihan (PDF)" }).click()]);
+  expect(statement.suggestedFilename()).toBe("surat-tagihan-PT_Toko_Lambat-2026-08-31.pdf");
+  const { text } = await extractText(await getDocumentProxy(new Uint8Array(await readFile((await statement.path())!))), { mergePages: true });
+  for (const s of ["Surat Tagihan", "PT Piutang Uji", "Kepada Yth. PT Toko Lambat", "INV-300", "30 hari", "5.550.000", "Ringkasan umur tagihan", "1–30 hari"]) expect(text, s).toContain(s);
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("aging-PIU").getByRole("button", { name: /^Pengingat / })).toHaveCount(1); // the paid customers have none
+
   // Utang: a purchase bill paid in part.
   await page.getByRole("tab", { name: "Utang", exact: true }).click();
   await expect(page).toHaveURL(/tab=utang/);
@@ -90,6 +140,13 @@ test("receivables and payables: invoice, settle from the statement, aging equals
   await expect(aging.getByRole("row", { name: /CV Sumber Mesin/ })).toContainText("12.200.000");
   await expect(aging).toContainText("Cocok dengan buku besar");
   await expect(page.getByTestId("next-step")).toContainText("Daftar utang per Agustus 2026 cocok dengan buku besar");
+  // No limits or reminders for suppliers.
+  await expect(aging.getByRole("button", { name: /^(Pengingat|Ubah batas kredit) / })).toHaveCount(0);
+
+  // Riwayat lists both limit changes.
+  await page.goto(`${base}/history?kind=CREDIT_LIMIT`);
+  await expect(page.getByText("PT Toko Lambat: tanpa batas → Rp 5.000.000")).toBeVisible();
+  await expect(page.getByText("PT Toko Lambat: Rp 5.000.000 → Rp 10.000.000")).toBeVisible();
 
   // The invoice journal is in the ledger as a Faktur.
   await page.goto(`${base}/ledger/1130?period=2026-08`);
@@ -97,7 +154,18 @@ test("receivables and payables: invoice, settle from the statement, aging equals
   if (process.env.E2E_SCREENSHOTS) {
     await page.goto(`${base}/receivables?period=2026-08&tab=utang`);
     await page.screenshot({ path: `${process.env.E2E_SCREENSHOTS}/receivables-1440.png`, fullPage: true });
+    await page.goto(`${base}/receivables?period=2026-08`);
+    await page.screenshot({ path: `${process.env.E2E_SCREENSHOTS}/receivables-piutang-1440.png`, fullPage: true });
+    await page.getByRole("button", { name: "Pengingat PT Toko Lambat" }).click();
+    await page.screenshot({ path: `${process.env.E2E_SCREENSHOTS}/receivables-reminder-1440.png` });
+    await page.keyboard.press("Escape");
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: `${process.env.E2E_SCREENSHOTS}/receivables-piutang-390.png`, fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    await page.getByRole("button", { name: "Pengingat PT Toko Lambat" }).click();
+    await page.screenshot({ path: `${process.env.E2E_SCREENSHOTS}/receivables-reminder-390.png` });
+    await page.keyboard.press("Escape");
+    await page.goto(`${base}/receivables?period=2026-08&tab=utang`);
     await page.screenshot({ path: `${process.env.E2E_SCREENSHOTS}/receivables-390.png`, fullPage: true });
   }
 });

@@ -3,11 +3,12 @@
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import { Copy, Link2, Send } from "lucide-react";
+import { Link2 } from "lucide-react";
 import { createUploadLinkAction } from "@/app/actions";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { ShareMessageActions } from "@/components/app/share-message";
 
 /**
  * Permintaan data ke klien (I1a): the message built from the completeness grid, ready to copy or open in WhatsApp. Nothing is sent by
@@ -33,15 +34,6 @@ export function DataRequestCard({ message, items, clientId, canLink = false }: {
     router.refresh();
   };
   const ref = useRef<HTMLTextAreaElement>(null);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success("Pesan tersalin");
-    } catch {
-      ref.current?.select();
-      toast.message("Pesan sudah dipilih: tekan Ctrl+C untuk menyalin");
-    }
-  };
   return (
     <Card data-testid="data-request">
       <CardHeader>
@@ -52,19 +44,13 @@ export function DataRequestCard({ message, items, clientId, canLink = false }: {
       </CardHeader>
       <CardContent className="space-y-3">
         <Textarea ref={ref} value={text} onChange={(e) => setText(e.target.value)} rows={Math.min(14, text.split("\n").length + 1)} className="font-mono text-xs" aria-label="Pesan permintaan data" />
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={copy}>
-            <Copy /> Salin pesan
-          </Button>
-          <a className={buttonVariants({ variant: "outline" })} href={`https://wa.me/?text=${encodeURIComponent(text)}`} target="_blank" rel="noopener noreferrer">
-            <Send /> Kirim lewat WhatsApp
-          </a>
+        <ShareMessageActions text={text} textarea={ref}>
           {canLink && clientId && !linked && (
             <Button variant="ghost" disabled={linking} onClick={addLink}>
               <Link2 /> Sisipkan tautan unggah
             </Button>
           )}
-        </div>
+        </ShareMessageActions>
       </CardContent>
     </Card>
   );

@@ -28,6 +28,7 @@ import { deleteEmployee, importCensus, saveBenefitSetting, saveEmployee, uploadM
 import { postBenefits } from "@/lib/benefits/valuation";
 import { createInvoice, voidInvoice, type InvoiceInput } from "@/lib/receivables/invoices";
 import { setContactChannel } from "@/lib/receivables/channels";
+import { setCreditLimit } from "@/lib/receivables/credit-limit";
 import { settleFifo, settleWithReclass, tagAdvance, unsettle } from "@/lib/receivables/settle";
 import { candidateViews, type CandidateView } from "@/lib/receivables/view";
 import { postCkpn, saveCkpnSetting, type CkpnSettingInput } from "@/lib/receivables/ckpn";
@@ -693,6 +694,18 @@ export async function setContactChannelAction(input: { clientId: string; contact
     const c = await setContactChannel(prisma, { clientId: client.id, contactId: input.contactId, channel: String(input.channel ?? "") });
     revalidatePath(`/clients/${client.id}`, "layout");
     return { ok: true, channel: c.channel };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** A customer's credit limit in Rupiah (cycle 2026-10-17-pengingat-piutang): "" clears it; recorded in Riwayat as *Batas kredit*. */
+export async function setCreditLimitAction(input: { clientId: string; contactId: string; limit: string }): Promise<Result<{ limit: string | null }>> {
+  try {
+    const client = await writeClient(input.clientId);
+    const c = await setCreditLimit(prisma, { clientId: client.id, contactId: input.contactId, limit: String(input.limit ?? ""), actorId: (await getCurrentMember()).id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true, limit: c.creditLimit?.toString() ?? null };
   } catch (e) {
     return fail(e);
   }

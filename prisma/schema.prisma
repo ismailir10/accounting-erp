@@ -592,7 +592,7 @@ model AuditEvent {
   clientId  String
   client    Client      @relation(fields: [clientId], references: [id])
   entityId  String?
-  /// CLASSIFY · UNPAIR · IMPORT_REMOVED · CONTROL_NOTE · MAPPING · FINDING_RESOLVED · REPORT_FORMAT · FISCAL_YEAR · SUBLEDGER · DOCUMENT_VOID · ADVANCE · REPORT_EXPORT · MODULES
+  /// CLASSIFY · UNPAIR · IMPORT_REMOVED · CONTROL_NOTE · MAPPING · FINDING_RESOLVED · REPORT_FORMAT · FISCAL_YEAR · SUBLEDGER · DOCUMENT_VOID · ADVANCE · REPORT_EXPORT · MODULES · CREDIT_LIMIT …
   kind      String
   subject   String
   summary   String
@@ -1553,6 +1553,9 @@ model Contact {
   npwp             String?
   /// Sales channel (UC-B5), free text: Marketplace, Reseller, Langsung…
   channel          String?
+  /// Credit limit in whole Rupiah (cycle 2026-10-17-pengingat-piutang), compared per IDR company with the customer's net receivable.
+  /// Metadata only, never posted. CHECK in the migration: NULL or > 0.
+  creditLimit      BigInt?
   createdAt        DateTime          @default(now())
   invoices         Invoice[]
   /// Bank lines matched to this contact (their unmatched rest is the contact's advance).

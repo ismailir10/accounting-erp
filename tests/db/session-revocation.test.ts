@@ -31,6 +31,7 @@ import { GET as review } from "@/app/(app)/clients/[id]/review/export/route";
 import { GET as journals } from "@/app/(app)/clients/[id]/journals/export/route";
 import { GET as ledger } from "@/app/(app)/clients/[id]/ledger/export/route";
 import { GET as trialBalance } from "@/app/(app)/clients/[id]/trial-balance/export/route";
+import { GET as receivableStatement } from "@/app/(app)/clients/[id]/receivables/statement/route";
 
 const downloads = [
   ["analysis/export", analysis],
@@ -38,6 +39,7 @@ const downloads = [
   ["reports/export/management", management], ["reports/export/credit", credit],
   ["tax/export", tax], ["tax/masa/export", masa], ["review/export", review],
   ["journals/export", journals], ["ledger/export", ledger], ["trial-balance/export", trialBalance],
+  ["receivables/statement", receivableStatement],
 ] as const;
 
 async function openSession(role: "ADMIN" | "AKUNTAN" = "AKUNTAN") {
@@ -76,8 +78,10 @@ async function openSession(role: "ADMIN" | "AKUNTAN" = "AKUNTAN") {
     searchParams: Promise.resolve(Object.fromEntries(citationUrl.searchParams)),
   });
   const documents = () => IntakePage({ params: Promise.resolve({ intakeId: intake.id }) });
-  const download = (path: string, handler: typeof statements) => handler(
-    new Request(`http://localhost/clients/${g.client.id}/${path}?entity=${g.pt.entity.id}&period=2026-08`),
+  // A customer for the Surat tagihan (the other downloads ignore `contact`).
+  const customer = await db.contact.create({ data: { firmId: g.firm.id, clientId: g.client.id, name: "Toko Sejahtera" } });
+  const download = (path: string, handler: typeof statements, contactId = customer.id) => handler(
+    new Request(`http://localhost/clients/${g.client.id}/${path}?entity=${g.pt.entity.id}&period=2026-08&contact=${contactId}`),
     { params: Promise.resolve({ id: g.client.id }) },
   );
   const opened = { ...g, member, intake, version, question, citation: citation!.href, source, documents, download };
@@ -187,6 +191,19 @@ describe("subsequent requests from an already-authorized session", () => {
     expect(await askWorkspaceAction(session.question)).toEqual({
       ok: false, error: "Peran Peninjau hanya dapat melihat dan mengunduh laporan.",
     });
+  });
+
+  it("serves the Surat tagihan as a PDF with no export event (Terkirim unchanged), and 404 for an unknown customer", async () => {
+    const session = await openSession();
+    const exportsBefore = await db.auditEvent.count({ where: { kind: "REPORT_EXPORT" } });
+    const ok = await session.download("receivables/statement", receivableStatement);
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("Content-Type")).toBe("application/pdf");
+    expect(ok.headers.get("Content-Disposition")).toBe('attachment; filename="surat-tagihan-Toko_Sejahtera-2026-08-31.pdf"');
+    expect(await db.auditEvent.count({ where: { kind: "REPORT_EXPORT" } })).toBe(exportsBefore);
+    const unknown = await session.download("receivables/statement", receivableStatement, "nope");
+    expect(unknown.status).toBe(404);
+    expect(await unknown.text()).toBe("Pelanggan tidak ditemukan");
   });
 
   it("keeps expired-grant reads/downloads but denies new answers (READ_ONLY is not revocation)", async () => {

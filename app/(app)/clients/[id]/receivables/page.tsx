@@ -16,6 +16,7 @@ import { formatDate } from "@/lib/format";
 import { financialYear, fiscalLabel, periodKeyOf } from "@/lib/fiscal";
 import { CHANNEL_SUGGESTIONS, NO_CHANNEL, salesByChannel } from "@/lib/receivables/channels";
 import { SalesChannels } from "@/components/app/sales-channels";
+import { customerReminders, paymentReminder } from "@/lib/receivables/reminder";
 
 export const metadata = { title: "Piutang & Utang" };
 
@@ -40,6 +41,19 @@ export default async function ReceivablesPage({ params, searchParams }: { params
       )
     : [];
   const channels = sales ? await salesByChannel(prisma, client.id, entities, client.fiscalYearEndMonth, period.year, period.month) : [];
+  // Pengingat tagihan (cycle 2026-10-17-pengingat-piutang): per company and customer with an overdue invoice on the reminder date.
+  const due = sales ? await customerReminders(prisma, client.id, entities.map((e) => e.id), period.end) : null;
+  const reminders = due
+    ? Object.fromEntries(
+        due.customers.flatMap((c) => {
+          const e = entities.find((x) => x.id === c.entityId)!;
+          const text = paymentReminder({ company: e.name, customer: c.contact.name, asOf: due.asOf, currency: e.functionalCurrency, overdue: c.overdue, advance: c.advance });
+          return text ? [[`${c.entityId}:${c.contact.id}`, text] as const] : [];
+        }),
+      )
+    : undefined;
+  const closed = sales ? await prisma.period.findFirst({ where: { clientId: client.id, year: period.year, month: period.month, status: "LOCKED" }, select: { id: true } }) : null;
+  const overLimit = new Set(view.aging.flatMap((a) => a.rows.filter((r) => r.over).map((r) => r.contactId))).size;
   const label = formatPeriod(period.year, period.month);
   const word = sales ? "piutang" : "utang";
   const mismatch = view.comparison.filter((c) => !c.equal);
@@ -62,7 +76,10 @@ export default async function ReceivablesPage({ params, searchParams }: { params
       ) : mismatch.length ? (
         <NextStep>Daftar {word} {mismatch.map((c) => c.entity).join(", ")} berbeda dengan buku besar. Catat {sales ? "faktur" : "tagihan"} yang belum ada, termasuk rincian saldo awal.</NextStep>
       ) : view.invoices.length ? (
-        <NextStep tone="done">Daftar {word} per {label} cocok dengan buku besar{overdue.length ? `; lewat 90 hari: ${overdue.join(", ")}` : ""}.</NextStep>
+        <NextStep tone="done">
+          Daftar {word} per {label} cocok dengan buku besar{overdue.length ? `; lewat 90 hari: ${overdue.join(", ")}` : ""}
+          {overLimit ? `; ${overLimit} pelanggan lewat batas kredit` : ""}.
+        </NextStep>
       ) : (
         <NextStep>Catat {sales ? "faktur penjualan" : "tagihan pembelian"} klien, atau rincian {word} yang sudah ada di Saldo Awal.</NextStep>
       )}
@@ -76,6 +93,8 @@ export default async function ReceivablesPage({ params, searchParams }: { params
           arAp: pick((a) => a.fsLine === (sales ? "PIUTANG_USAHA" : "UTANG_USAHA") && a.normalBalance === (sales ? "DEBIT" : "CREDIT")),
         }}
         defaultDate={toIsoDate(period.end)}
+        reminders={reminders}
+        reminder={due ? { date: formatDate(due.asOf), monthOpen: !closed, periodKey: period.key } : undefined}
       />
       {channels.length > 0 && (
         <SalesChannels
