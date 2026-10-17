@@ -76,21 +76,13 @@ export async function reverseEntry(db: Db, input: { clientId: string; entryId: s
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`reverse:${entry.id}`}, 0))::text`;
     if (await tx.journalEntry.findUnique({ where: { reversesId: entry.id }, select: { id: true } })) throw new LedgerError("Jurnal ini baru saja dibalik. Muat ulang halaman.");
-    return postJournal(tx, {
-      entityId: entry.entityId,
-      date: input.date,
-      kind: "ADJUSTMENT",
-      memo: `Pembalik: ${entry.memo} (${formatDate(entry.date)})`,
-      reversesId: entry.id,
-      actorId: input.actorId,
-      lines: entry.lines.map((l) => ({
-        accountId: l.accountId,
-        debit: l.credit,
-        credit: l.debit,
-        memo: l.memo ?? undefined,
-        sourceAccountId: l.sourceAccountId,
-        sourceRef: l.sourceRef,
-      })),
-    });
+    return postJournal(tx, { entityId: entry.entityId, date: input.date, kind: "ADJUSTMENT", memo: reversalMemo(entry), reversesId: entry.id, actorId: input.actorId, lines: mirrorLines(entry.lines) });
   });
 }
+
+/** A reversal's memo: the original's, with its date. */
+export const reversalMemo = (e: { memo: string; date: Date }) => `Pembalik: ${e.memo} (${formatDate(e.date)})`;
+
+/** An entry's lines mirrored (debit ↔ credit), same accounts, memos and sources: the lines of its reversal. */
+export const mirrorLines = (lines: { accountId: string; debit: bigint; credit: bigint; memo?: string | null; sourceAccountId?: string | null; sourceRef?: string | null }[]) =>
+  lines.map((l) => ({ accountId: l.accountId, debit: l.credit, credit: l.debit, memo: l.memo ?? undefined, sourceAccountId: l.sourceAccountId ?? null, sourceRef: l.sourceRef ?? null }));
