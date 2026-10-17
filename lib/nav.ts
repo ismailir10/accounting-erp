@@ -31,6 +31,7 @@ export function clientStages(modules: string[]): NavStage[] {
     {
       label: "2 · Buku Besar",
       items: [
+        { href: "/approvals", label: "Kotak persetujuan" },
         { href: "/review", label: "Review transaksi" },
         { href: "/ledger", label: "Buku Besar" },
         { href: "/journals", label: "Jurnal Umum" },

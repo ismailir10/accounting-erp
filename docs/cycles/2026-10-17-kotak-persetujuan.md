@@ -199,7 +199,7 @@ If traceability turns out to need a column after all, that is a migration: stop 
 - [x] T1 `lib/approvals/queue.ts`: `approvalQueue` and `approvalCounts` over the four kinds, plus DB tests. Accept: each kind, scope,
       overdue and locked cases, counts = queue. Reuse: Review's query, `proposalViews` / `correctionViews` (`lib/adjust/proposals.ts`,
       `suspense.ts`), `dueProposals` / `proposalViews` (`lib/adjust/view.ts`), `fakturRecon`, `packApplies`, `isSimpleGuess`.
-- [ ] T2 Kotak page (`/clients/[id]/approvals`), the `ApprovalQueue` client component, the nav entry, and Review's `?tx=` focus.
+- [x] T2 Kotak page (`/clients/[id]/approvals`), the `ApprovalQueue` client component, the nav entry, and Review's `?tx=` focus.
       Accept: flows 1, 3 and 4 on the dev server. Reuse: `reviewAction`, `postProposalAction` / `dismissProposalAction`,
       `postInstallmentAction` / `postAllDueAction`, `bookFakturAction`, `accountantHints`, `MethodBadge`, `Money`, `LinkTabs`,
       `NextStep`. (deps: T1)
@@ -223,6 +223,12 @@ If traceability turns out to need a column after all, that is a migration: stop 
   `correctionViews`, the schedule `proposalViews`, `fakturRecon` per Rupiah company that imported faktur for the masa). Views gained
   `entityId` for the scope filter. Review's bulk rule is now `isSureSuggestion` / `bulkAcceptable` (hints.ts), shared by both pages;
   Pajak Masa's faktur account lists are `fakturCounterAccounts`, shared with Kotak.
+- T2: `app/(app)/clients/[id]/approvals/page.tsx`, `components/app/approval-queue.tsx`, `lib/nav.ts`, `components/app/app-sidebar.tsx`,
+  `components/app/status.tsx`, `components/app/review-queue.tsx`, `app/(app)/clients/[id]/review/page.tsx`, `app/actions.ts`,
+  `README.md`, `AGENTS.md`, `tests/unit/nav.test.ts` — the page (ScopeBar, `?jenis=` LinkTabs for kinds with a proposal, NextStep for
+  open / done / locked / viewer), one card per kind with divided rows, every button an existing action; Review opens on `?tx=<id>`;
+  the menu lists *Kotak persetujuan* first in stage 2. `postAllDueAction` takes an optional `entityId` so *Catat semua* in a
+  one-company scope posts only that company's instalments (`postAllDue` already took it; a foreign id matches no schedule).
 
 ## Verification
 

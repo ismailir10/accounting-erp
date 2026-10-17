@@ -89,6 +89,12 @@ describe("clientSections", () => {
     expect(labels).not.toContain("Persediaan");
     expect(labels.at(-1)).toBe("Riwayat perubahan");
   });
+  it("opens stage 2 with Kotak persetujuan, right before Review transaksi", () => {
+    const labels = clientSections([]).map((s) => s.label);
+    expect(labels.slice(labels.indexOf("Saldo Awal") + 1, labels.indexOf("Saldo Awal") + 3)).toEqual(["Kotak persetujuan", "Review transaksi"]);
+    expect(sectionOf("/approvals")).toMatchObject({ section: { label: "Kotak persetujuan" }, deeper: false });
+    expect(url(switchTarget("/clients/a1/approvals", B).href).pathname).toBe("/clients/b1/approvals");
+  });
 });
 
 describe("search", () => {

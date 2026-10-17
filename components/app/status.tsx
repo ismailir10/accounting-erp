@@ -30,6 +30,10 @@ export function MethodBadge({ method }: { method: string }) {
     AI: ["AI", "bg-primary-subtle text-primary"],
     HEURISTIC: ["Tebakan", "bg-review-subtle text-review"],
     MANUAL: ["Manual", "bg-muted text-muted-foreground"],
+    // Kotak persetujuan: where a proposal that isn't a bank classification comes from
+    SCHEDULE: ["Jadwal", "bg-secondary text-secondary-foreground"],
+    CORETAX: ["Coretax", "bg-secondary text-secondary-foreground"],
+    SUSPENSE: ["Koreksi 1999", "bg-secondary text-secondary-foreground"],
     // Account mapping (ledger import)
     PRIOR: ["Sebelumnya", "bg-secondary text-secondary-foreground"],
     NAME: ["Nama sama", "bg-secondary text-secondary-foreground"],

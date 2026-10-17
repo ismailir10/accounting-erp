@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { BookOpen, Boxes, CalendarCheck, Building2, ChartColumn, ChevronsUpDown, HandCoins, KeyRound, ReceiptText, Warehouse, ChevronDown, ClipboardCheck, Coins, FileSpreadsheet, FolderOpen, Home, Inbox, Landmark, ListFilter, LogOut, NotebookPen, Plus, Scale, Search, Settings2, SlidersHorizontal, Upload, Users, History, ListTree } from "lucide-react";
+import { BookOpen, Boxes, CalendarCheck, Building2, ChartColumn, ChevronsUpDown, HandCoins, KeyRound, ReceiptText, Warehouse, ChevronDown, ClipboardCheck, Coins, FileSpreadsheet, FolderOpen, Home, Inbox, Landmark, ListChecks, ListFilter, LogOut, NotebookPen, Plus, Scale, Search, Settings2, SlidersHorizontal, Upload, Users, History, ListTree } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { BrandMark } from "@/components/app/brand-mark";
 import { ShortcutKbd, useClientSwitcher, type SwitcherClient } from "@/components/app/client-switcher";
@@ -20,7 +20,7 @@ const DESTINATIONS = [
 // The client menu (lib/nav.ts) in three stages (ADR 0014): Sumber → Buku Besar → Laporan, in working order. The first-run steps
 // (Impor → Saldo Awal → Review → Tutup Buku) read top to bottom and are never collapsed (ui-rules 14). Modules show per client.
 const ICONS: Record<string, typeof Upload> = {
-  "/import": Upload, "/analysis": ChartColumn, "/opening": Landmark, "/review": Inbox, "/ledger": BookOpen, "/trial-balance": Scale, "/journals/new": NotebookPen,
+  "/import": Upload, "/analysis": ChartColumn, "/opening": Landmark, "/approvals": ListChecks, "/review": Inbox, "/ledger": BookOpen, "/trial-balance": Scale, "/journals/new": NotebookPen,
   "/receivables": HandCoins, "/inventory": Boxes, "/assets": Warehouse, "/leases": KeyRound, "/benefits": Users, "/close": ClipboardCheck,
   "/reports": FileSpreadsheet, "/tax/masa": CalendarCheck, "/tax": ReceiptText, "/accounts": ListTree, "/rates": Coins, "/settings": ListFilter, "/history": History,
 };

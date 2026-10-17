@@ -19,12 +19,12 @@ import { FAKTUR_PREFERRED, fakturCounterAccounts, fakturRecon } from "@/lib/tax/
  */
 
 export type ApprovalKind = "bank" | "draft" | "scheduled" | "faktur";
-/** In page order (the `?jenis=` tabs). */
-export const APPROVAL_KINDS: { key: ApprovalKind; label: string }[] = [
-  { key: "bank", label: "Klasifikasi bank" },
-  { key: "draft", label: "Draf jurnal" },
-  { key: "scheduled", label: "Jurnal terjadwal" },
-  { key: "faktur", label: "Faktur Coretax" },
+/** In page order; `param` is the kind's `?jenis=` value. */
+export const APPROVAL_KINDS: { key: ApprovalKind; param: string; label: string }[] = [
+  { key: "bank", param: "bank", label: "Klasifikasi bank" },
+  { key: "draft", param: "draf", label: "Draf jurnal" },
+  { key: "scheduled", param: "terjadwal", label: "Jurnal terjadwal" },
+  { key: "faktur", param: "faktur", label: "Faktur Coretax" },
 ];
 /** Bank lines dominate a month; past this many the rest are counted and left to Review. */
 export const BANK_CARD_LIMIT = 50;
