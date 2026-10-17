@@ -214,7 +214,7 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
   app flow).
 
 ## Tasks
-- [ ] T1 Migration + `lib/receivables` contact identity (`setContactTaxIdentity`: NPWP / NIK / NITKU / address / email, normalised,
+- [x] T1 Migration + `lib/receivables` contact identity (`setContactTaxIdentity`: NPWP / NIK / NITKU / address / email, normalised,
       audited) + invoice item detail (`setInvoiceFakturItem`, bulk) — accept: DB tests for validation, scoping and audit.
 - [ ] T2 `lib/tax/coretax-faktur-xml.ts`, a pure builder (company + rows → XML string, parts of 1,000) with the bigint 11/12 and 12 %
       math. Golden fixture + DJP sample tag-order test — accept: unit tests green. (Parallel with T1.)
@@ -227,6 +227,17 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
 - [ ] T6 verify-local: walk flows 1–4, open the XML, screenshots at 1440 and 390 px, full gate.
 
 ## Implementation
+- Plan: T1–T5 sequential, inline in one build worker (the driver gave this worker the whole cycle; T3–T5 share `lib/tax`,
+  `app/actions.ts` and the Pajak Masa page, and T2's builder is small). T6 (verify-local, the Playwright run) by the driver.
+- T1: `prisma/migrations/20261017120000_coretax_faktur`, `prisma/schema.prisma`, `lib/tax/coretax-codes.ts`,
+  `lib/receivables/faktur-identity.ts`, `lib/clients/entities.ts`, `tests/db/faktur-identity.test.ts` — the nullable columns;
+  `setContactTaxIdentity` (NPWP via `normalizeNpwp`, NIK 16 digits, NITKU 22 digits starting with the NPWP16, address, email; field
+  errors as `OnboardingError`) and `setInvoiceFakturItem` (bulk, SALES only, one company), both audited as `FAKTUR`; `renameEntity`
+  takes an optional seller NITKU. DJP's REF-General lists (Barang/Jasa, Satuan UM.0001–UM.0039) live in `coretax-codes.ts`.
+  - Decision: the change log names the identity fields changed ("Identitas pajak X diubah: NIK, alamat"), never their values (UU PDP).
+  - Decision: a NITKU must start with its holder's NPWP16 (catches a typo before Coretax does); one equal to the head office's
+    NPWP16 + `000000` is stored as null, so the default keeps following the NPWP.
+  - Decision: item detail may be set on an invoice in a locked month: it is faktur metadata and moves no figure.
 
 ## Verification
 
