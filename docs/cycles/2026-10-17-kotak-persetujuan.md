@@ -242,6 +242,14 @@ If traceability turns out to need a column after all, that is a migration: stop 
   decision (the event whose `after.entryId` is the RECLASS); a draft wins over the review event its bank-line RECLASS also wrote.
   Shown as "Asal: …" under *Sumber* on Jurnal Umum and in the Buku Besar drawer, and appended to the Excel source column of both
   workbooks. No schema column was needed.
+- T5 (worker part): `e2e/kotak-persetujuan.spec.ts` — on the demo it only reads (CV Sinar's board cell equals its Kotak, the 83 %
+  line is the one offered in bulk, *Ubah* opens Review on the 74 % line; Grup Ayam's closed July is read-only), because CV Sinar's
+  two Review lines belong to `review-safety` and Grup Ayam's August to the investor walk. Every approval runs on a client of its own
+  (flows 1, 2 and 4): three bank lines, a depreciation schedule from June (two overdue instalments) and an unbooked faktur → board
+  "7 usulan" = Kotak; *Setujui* a line, *Ubah* → Review, *Setujui* + *Catat semua 2*, the faktur booked; Jurnal Umum names
+  "Tebakan 4100 disetujui", "Tebakan 6190 diubah ke 6130" and the Coretax file; 390 px without sideways scroll. The investor walk
+  reads only the board's *Sumber* cell, so it is unchanged; `docs/demo/investor-demo.md` names the *Persetujuan* column. Not run
+  here: verify-local (flows 1–5 walked, screenshots) and the full gate run centrally.
 - Decisions made while building:
   - Bank cards keep Review's set; inside the kind, lines under 70 % (simple guesses included) come first, then Review's date order
     (the UX note's "problems first"). The 50-card cap applies after that order.

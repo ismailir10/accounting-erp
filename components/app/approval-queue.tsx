@@ -121,7 +121,9 @@ export function ApprovalQueue({
     setBusy(null);
     if (!r.ok) {
       ids.forEach(back);
-      return void toast.error(r.error ?? "Gagal menyimpan.");
+      toast.error(r.error ?? "Gagal menyimpan.");
+      // *Catat semua* stops at its first refusal with the earlier ones posted: the page shows what is left.
+      return void router.refresh();
     }
     toast.success(ok);
     router.refresh();
