@@ -9,12 +9,15 @@ import { dateOnly } from "@/lib/format";
 import { saveApprovals } from "@/lib/settings/approvals";
 import { approveJournal, rejectJournal, submitAdjustment, withdrawJournal } from "@/lib/approvals/journals";
 import { closeHistoryMonth, historyPreview } from "@/lib/controls/history";
+import { pendingReopens, requestReopen } from "@/lib/approvals/reopen";
+import { listEvents } from "@/lib/audit";
+import type { MemberRole } from "@/lib/generated/prisma/enums";
 
 const auth = vi.hoisted(() => ({ userId: null as string | null }));
 vi.mock("@/lib/auth", () => ({ authConfigured: () => true }));
 vi.mock("@/lib/supabase/server", () => ({ createSupabaseServerClient: async () => ({ auth: { getClaims: async () => ({ data: auth.userId ? { claims: { sub: auth.userId } } : null }) } }) }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
-const { ackControlAction, unlockAction } = await import("@/app/actions");
+const { ackControlAction, unlockAction, confirmReopenAction, rejectReopenAction, cancelReopenAction } = await import("@/app/actions");
 
 type G = Awaited<ReturnType<typeof makeGroup>>;
 const member = (g: G, role: "ADMIN" | "AKUNTAN", name: string) => db.firmMember.create({ data: { firmId: g.firm.id, userId: randomUUID(), email: `${name}@example.test`, name, role } });
@@ -210,6 +213,117 @@ describe("Persetujuan kedua: a month can't be locked while a journal in it waits
     const preview = await historyPreview(db, g.client.id, { year: 2026, month: 8 });
     await expect(closeHistoryMonth(db, { clientId: g.client.id, until: { year: 2026, month: 8 }, month: { year: 2026, month: 7 }, note: "Wajar untuk uji", fingerprint: preview.months.find((x) => x.month === 7)!.fingerprint, actor: admin })).rejects.toThrow("Belum bisa tutup buku: 1 jurnal menunggu persetujuan kedua.");
     expect(await status(g, 7)).toBe("OPEN");
+  });
+});
+
+describe("Persetujuan kedua: reopening with Buka kembali bulan on", () => {
+  beforeEach(resetDb);
+  const REOPEN = { manual: false, manualAbove: "", aiDraft: false, aiDraftAbove: "", reopen: true };
+  async function closedJuly() {
+    const g = await makeGroup();
+    const a = await member(g, "ADMIN", "admin-a");
+    await db.firmMember.update({ where: { id: a.id }, data: { name: "Admin A" } });
+    await entry(g, 7);
+    await lock(g, 7);
+    return { g, a: { ...a, name: "Admin A" } };
+  }
+  const as = (m: { id: string; role: MemberRole }) => ({ id: m.id, role: m.role });
+
+  it("with two admins: a request leaves the month locked; another admin's confirmation opens it, removes its sign-offs and logs requester, confirmer and reason", async () => {
+    const { g, a } = await closedJuly();
+    const b = await member(g, "ADMIN", "admin-b");
+    await saveApprovals(db, { firmId: g.firm.id, settings: REOPEN });
+    auth.userId = a.userId;
+    expect(await unlockAction(g.client.id, 2026, 7, "Faktur susulan masuk")).toEqual({ ok: true, pending: true });
+    expect(await status(g, 7)).toBe("LOCKED");
+    expect(await db.periodUnlockLog.count()).toBe(0);
+    const req = await db.reopenRequest.findFirstOrThrow();
+    expect(req).toMatchObject({ status: "PENDING", year: 2026, month: 7, reason: "Faktur susulan masuk", requestedById: a.id });
+    expect((await pendingReopens(db, g.client.id, { year: 2026, month: 8 })).map((r) => [r.label, r.requestedBy])).toEqual([["Juli 2026", "Admin A"]]);
+    expect(await pendingReopens(db, g.client.id, { year: 2026, month: 6 })).toEqual([]);
+
+    // The requester can't confirm; an Akuntan is refused by the guard; one pending request per month.
+    expect(await confirmReopenAction(g.client.id, req.id)).toEqual({ ok: false, error: "Anda yang meminta membuka kembali bulan ini, jadi konfirmasinya oleh admin lain. Batalkan permintaan bila tidak jadi." });
+    expect(await unlockAction(g.client.id, 2026, 7, "Sekali lagi ya")).toEqual({ ok: false, error: "Sudah ada permintaan membuka kembali Juli 2026 yang menunggu konfirmasi." });
+    const akuntan = await member(g, "AKUNTAN", "sari");
+    await db.clientAccess.create({ data: { memberId: akuntan.id, clientId: g.client.id } });
+    auth.userId = akuntan.userId;
+    expect(await confirmReopenAction(g.client.id, req.id)).toEqual({ ok: false, error: "Hanya admin kantor yang dapat membuka kembali periode." });
+    expect(await unlockAction(g.client.id, 2026, 7, "Faktur susulan masuk")).toEqual({ ok: false, error: "Hanya admin kantor yang dapat membuka kembali periode." });
+    expect(await status(g, 7)).toBe("LOCKED");
+
+    auth.userId = b.userId;
+    expect(await confirmReopenAction(g.client.id, req.id)).toEqual({ ok: true });
+    expect(await status(g, 7)).toBe("OPEN");
+    expect(await db.closeSignoff.count({ where: { period: { clientId: g.client.id, month: 7 } } })).toBe(0);
+    expect(await db.periodUnlockLog.findFirstOrThrow()).toMatchObject({ unlockedById: b.id, requestedById: a.id, reason: "Faktur susulan masuk" });
+    expect(await db.reopenRequest.findUniqueOrThrow({ where: { id: req.id } })).toMatchObject({ status: "APPROVED", decidedById: b.id });
+    expect((await listEvents(db, g.client.id, { subject: `reopen:${req.id}` })).map((e) => e.summary)).toEqual([
+      'Buka kembali Juli 2026 dikonfirmasi: "Faktur susulan masuk" (diminta Admin A)',
+      'Permintaan buka kembali Juli 2026: "Faktur susulan masuk"',
+    ]);
+    expect(await confirmReopenAction(g.client.id, req.id)).toEqual({ ok: false, error: "Juli 2026 sudah dibuka kembali." });
+  });
+
+  it("a request is checked like an unlock: the month must be closed and no later month closed", async () => {
+    const { g, a } = await closedJuly();
+    await member(g, "ADMIN", "admin-b");
+    await saveApprovals(db, { firmId: g.firm.id, settings: REOPEN });
+    await expect(requestReopen(db, { clientId: g.client.id, year: 2026, month: 8, actor: as(a), reason: "Koreksi faktur" })).rejects.toThrow("Periode Agustus 2026 belum ditutup.");
+    await entry(g, 8);
+    await lock(g, 8);
+    await expect(requestReopen(db, { clientId: g.client.id, year: 2026, month: 7, actor: as(a), reason: "Koreksi faktur" })).rejects.toThrow("Buka kembali Agustus 2026 dulu: bulan setelahnya masih ditutup.");
+    await expect(requestReopen(db, { clientId: g.client.id, year: 2026, month: 8, actor: as(a), reason: "ok" })).rejects.toThrow("Tulis alasan membuka kembali periode (min. 5 karakter).");
+    expect(await db.reopenRequest.count()).toBe(0);
+  });
+
+  it("reject (another admin, with a note) and cancel (the requester only) leave the month closed", async () => {
+    const { g, a } = await closedJuly();
+    const b = await member(g, "ADMIN", "admin-b");
+    await saveApprovals(db, { firmId: g.firm.id, settings: REOPEN });
+    const r1 = await requestReopen(db, { clientId: g.client.id, year: 2026, month: 7, actor: as(a), reason: "Koreksi faktur" });
+    const id1 = r1.opened ? "" : r1.requestId;
+    auth.userId = b.userId;
+    expect(await rejectReopenAction(g.client.id, id1, "ok")).toEqual({ ok: false, error: "Tulis alasan menolak (min. 5 karakter)." });
+    expect(await cancelReopenAction(g.client.id, id1)).toEqual({ ok: false, error: "Hanya admin yang meminta yang dapat membatalkan permintaan ini." });
+    expect(await rejectReopenAction(g.client.id, id1, "Koreksi di Agustus saja")).toEqual({ ok: true });
+    expect(await db.reopenRequest.findUniqueOrThrow({ where: { id: id1 } })).toMatchObject({ status: "REJECTED", note: "Koreksi di Agustus saja", decidedById: b.id });
+
+    const r2 = await requestReopen(db, { clientId: g.client.id, year: 2026, month: 7, actor: as(a), reason: "Koreksi faktur lagi" });
+    const id2 = r2.opened ? "" : r2.requestId;
+    auth.userId = a.userId;
+    expect(await rejectReopenAction(g.client.id, id2, "Tidak jadi saja")).toMatchObject({ ok: false, error: expect.stringMatching(/^Anda yang meminta membuka kembali/) });
+    expect(await cancelReopenAction(g.client.id, id2)).toEqual({ ok: true });
+    expect((await db.reopenRequest.findUniqueOrThrow({ where: { id: id2 } })).status).toBe("WITHDRAWN");
+    expect(await status(g, 7)).toBe("LOCKED");
+    expect(await db.periodUnlockLog.count()).toBe(0);
+    expect((await listEvents(db, g.client.id, { kind: "APPROVAL" })).map((e) => e.summary).slice(0, 2)).toEqual(["Permintaan buka kembali Juli 2026 dibatalkan", 'Permintaan buka kembali Juli 2026: "Koreksi faktur lagi"']);
+  });
+
+  it("with one active admin the request opens at once and says so, in the log and in Riwayat", async () => {
+    const { g, a } = await closedJuly();
+    await member(g, "AKUNTAN", "sari");
+    await saveApprovals(db, { firmId: g.firm.id, settings: REOPEN });
+    auth.userId = a.userId;
+    expect(await unlockAction(g.client.id, 2026, 7, "Faktur susulan")).toEqual({ ok: true, fallback: true });
+    expect(await status(g, 7)).toBe("OPEN");
+    expect(await db.periodUnlockLog.findFirstOrThrow()).toMatchObject({ unlockedById: a.id, requestedById: null, reason: "Faktur susulan · Dibuka tanpa konfirmasi kedua: hanya satu admin aktif" });
+    expect((await listEvents(db, g.client.id, { kind: "APPROVAL" }))[0]).toMatchObject({ actor: "Admin A", summary: 'Juli 2026 dibuka kembali: "Faktur susulan" · Dibuka tanpa konfirmasi kedua: hanya satu admin aktif' });
+    expect(await db.reopenRequest.count()).toBe(0);
+  });
+
+  it("with the setting off, reopening is today's, and a direct unlock closes a waiting request as 'dibuka langsung'", async () => {
+    const { g, a } = await closedJuly();
+    const b = await member(g, "ADMIN", "admin-b");
+    await saveApprovals(db, { firmId: g.firm.id, settings: REOPEN });
+    const r = await requestReopen(db, { clientId: g.client.id, year: 2026, month: 7, actor: as(a), reason: "Koreksi faktur" });
+    await saveApprovals(db, { firmId: g.firm.id, settings: { ...REOPEN, reopen: false } });
+    auth.userId = b.userId;
+    expect(await unlockAction(g.client.id, 2026, 7, "Langsung saja")).toEqual({ ok: true });
+    expect(await status(g, 7)).toBe("OPEN");
+    expect(await db.periodUnlockLog.findFirstOrThrow()).toMatchObject({ unlockedById: b.id, requestedById: null, reason: "Langsung saja" });
+    expect(await db.reopenRequest.findUniqueOrThrow({ where: { id: r.opened ? "" : r.requestId } })).toMatchObject({ status: "WITHDRAWN", note: "dibuka langsung", decidedById: b.id });
+    expect((await listEvents(db, g.client.id, { kind: "APPROVAL" }))[0].summary).toBe("Permintaan buka kembali Juli 2026 ditutup: dibuka langsung");
   });
 });
 

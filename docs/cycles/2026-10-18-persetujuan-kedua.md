@@ -394,7 +394,7 @@ migration: stop and ask.
       - the lock refusal;
       - accounting-rules 3a, 20b, 23 and the new rule.
       Accept: `second-approval` and `period-lock` DB tests; existing `adjustment`, `reverse-entry`, `proposals` unchanged. (deps: T1, T2)
-- [ ] T4 Reopen: request / confirm / reject / cancel around `unlockPeriod`, the fallback, the log's requester, accounting-rules 4.
+- [x] T4 Reopen: request / confirm / reject / cancel around `unlockPeriod`, the fallback, the log's requester, accounting-rules 4.
       Accept: `period-lock` reopen tests. (deps: T1, T2; parallel with T3)
 - [ ] T5 Kotak *Persetujuan kedua* (queue, counts, firm board, checklist proof), the Jurnal Penyesuaian form and *Terakhir dicatat*,
       the *Balik jurnal* dialog, the draft card, the Tutup Buku panel, the Jurnal Umum drawer line, and the card on Pengaturan kantor
@@ -427,6 +427,11 @@ migration: stop and ask.
   behind `requireCapability("books.write", { clientId })`), accounting-rules 2a (new), 3a, 20b, 23, 25. Submits take the client's close
   lock so a lock either sees the request or refuses it; approvals lock the row (`FOR UPDATE`) so a double click or an approve racing a
   reject decides once.
+- T4: `lib/approvals/reopen.ts` (request / confirm / reject / cancel, the one-admin fallback, `pendingReopens`), `lib/controls/index.ts`
+  (`unlockReason`, `reopenablePeriod`, `unlockPeriodTx` with the requester on the log; a direct unlock closes a waiting request as
+  "dibuka langsung" via `closeReopenRequests` in `lib/approvals/pending.ts`), `app/actions.ts` (`unlockAction` through `requestReopen`,
+  returning `{ ok: true }` exactly as before on a direct reopen, `pending` / `fallback` otherwise; new `confirmReopenAction`,
+  `rejectReopenAction`, `cancelReopenAction`, each behind `requireCapability("period.unlock", { clientId })`), accounting-rules 4.
 
 ## Verification
 

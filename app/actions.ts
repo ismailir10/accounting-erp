@@ -17,7 +17,8 @@ import { createUploadLink, revokeUploadLink, uploadPath, UploadLinkError } from 
 import { importStatement, type ImportSummary } from "@/lib/import/pipeline";
 import { resolveProvider } from "@/lib/settings/ai";
 import { acceptSimilar, reviewTransaction, splitTransaction, unpairTransfer, type SplitPartInput } from "@/lib/review";
-import { CloseError, lockPeriod, runControls, unlockPeriod } from "@/lib/controls";
+import { CloseError, lockPeriod, runControls } from "@/lib/controls";
+import { cancelReopen, confirmReopen, rejectReopen, requestReopen } from "@/lib/approvals/reopen";
 import { LedgerError } from "@/lib/ledger/post";
 import { approveJournal, rejectJournal, submitAdjustment, submitProposal, submitReversal, withdrawJournal, type Outcome } from "@/lib/approvals/journals";
 import { ApprovalError } from "@/lib/approvals/second";
@@ -480,12 +481,54 @@ export async function lockAction(clientId: string, year: number, month: number):
   }
 }
 
-/** Admin only, in reverse order of closing, with a reason that is kept in the unlock log (lib/controls unlockPeriod). */
-export async function unlockAction(clientId: string, year: number, month: number, reason: string): Promise<Result> {
+/**
+ * Admin only, in reverse order of closing, with a reason that is kept in the unlock log (lib/controls unlockPeriod). With the firm's
+ * *Buka kembali bulan* on (Persetujuan kedua, lib/approvals/reopen.ts) it stores a request another admin confirms (`opened: false`).
+ */
+export async function unlockAction(clientId: string, year: number, month: number, reason: string): Promise<Result<{ pending?: true; fallback?: true }>> {
   try {
-    await clientFor("period.unlock", clientId);
-    await unlockPeriod(prisma, clientId, year, month, await getCurrentMember(), reason);
+    const { member } = await requireCapability("period.unlock", { clientId });
+    const client = await getClientForMember(clientId);
+    const o = await requestReopen(prisma, { clientId: client.id, year, month, actor: { id: member.id, role: member.role }, reason: typeof reason === "string" ? reason : "" });
     revalidatePath("/", "layout");
+    // As before when the month opened directly; `pending` when it waits for another admin, `fallback` when it opened without one.
+    return !o.opened ? { ok: true, pending: true } : o.fallback ? { ok: true, fallback: true } : { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** *Konfirmasi buka kembali* and *Tolak*: another admin (`period.unlock`, not the requester). *Batalkan permintaan*: the requester. */
+export async function confirmReopenAction(clientId: string, requestId: string): Promise<Result> {
+  try {
+    const { member } = await requireCapability("period.unlock", { clientId });
+    const client = await getClientForMember(clientId);
+    await confirmReopen(prisma, { clientId: client.id, requestId, actor: { id: member.id, role: member.role } });
+    revalidatePath("/", "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function rejectReopenAction(clientId: string, requestId: string, note: string): Promise<Result> {
+  try {
+    const { member } = await requireCapability("period.unlock", { clientId });
+    const client = await getClientForMember(clientId);
+    await rejectReopen(prisma, { clientId: client.id, requestId, actor: { id: member.id, role: member.role }, note: typeof note === "string" ? note : "" });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function cancelReopenAction(clientId: string, requestId: string): Promise<Result> {
+  try {
+    const { member } = await requireCapability("period.unlock", { clientId });
+    const client = await getClientForMember(clientId);
+    await cancelReopen(prisma, { clientId: client.id, requestId, actor: { id: member.id, role: member.role } });
+    revalidatePath(`/clients/${client.id}`, "layout");
     return { ok: true };
   } catch (e) {
     return fail(e);

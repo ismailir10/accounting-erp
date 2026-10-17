@@ -80,7 +80,13 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
    or line dated in a LOCKED month; only `deleteClient` passes, through `set_config('buku.client_delete', 'on', true)` in its own transaction. Closing goes in order: a month can't be locked while an earlier
    month with entries other than the Saldo Awal is open (`lockPeriod`, checked again under the client lock). Unlock (`unlockPeriod`) is
    explicit, **ADMIN only**, needs a reason (≥ 5 characters), runs in reverse order (refused while a later month is locked) and writes a
-   `PeriodUnlockLog` row in the same transaction.
+   `PeriodUnlockLog` row in the same transaction. With the firm's *Buka kembali bulan* on (Persetujuan kedua, `lib/approvals/reopen.ts`)
+   the admin's reason creates a `ReopenRequest` (checked like the unlock; one PENDING per client-month) and the month **stays locked**
+   until another active Pemilik or Admin confirms it — the confirm runs the same unlock in the same transaction as the decision, and the
+   log keeps `requestedById` (the requester) beside `unlockedById` (the confirmer). Reject (another admin, a note ≥ 5 characters) and
+   cancel (the requester) leave it locked. With a single active admin the reopen happens at once and the log and Riwayat say "Dibuka tanpa
+   konfirmasi kedua: hanya satu admin aktif"; with the setting off it is exactly the direct unlock, which also closes a waiting request
+   of the month as "dibuka langsung".
 5. **Opening balances** are `OPENING` entries. **No plug** (ADR 0012): a difference between the typed lines posts to **3290 Selisih Saldo
    Awal** and opens a **Temuan** (`Finding`, `T-<n>` per client) in the same transaction — never to 3200. Saldo Laba is typed (or copied
    from the difference by an explicit click). A Temuan is resolved once: a written decision (≥ 10 characters) and one `OPENING` entry dated the
