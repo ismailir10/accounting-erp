@@ -92,20 +92,20 @@ Lead = Buku is ahead · Par = good enough · Gap = worth building · Skip = not 
 |---|---|---|---|---|---|
 | Built for | SME owner | SME → enterprise | US finance team | Indonesian accounting firm | **Lead** (only one) |
 | Bank data in | BCA CSV; others retyped | API feeds, 4–6 banks, owner's mandate | Plaid + CSV | 25 banks: PDF, CSV, XLSX, MT940, and scans read by OCR; every row proven by the running balance. **3 of 25 formats checked on real files** | **Lead** in coverage, **Gap** in proof |
-| Matching / classification | date + amount | auto-match + bank rules | ML match, confidence modes, amount cap | transfer match → rules → memory → LLM → review with confidence %. Deterministic matches post at one fixed threshold | Par; **Gap**: per-firm automation dial |
+| Matching / classification | date + amount | auto-match + bank rules | ML match, confidence modes, amount cap | transfer match → rules (firm *Instruksi kantor* included) → memory → LLM → review with confidence %. Each deterministic source posts directly or waits, per firm (*Otomasi*), with an Rp cap | Par |
 | Moving an existing client's books in | master-data CSV; transactions are a paid add-on | API | specialist-led, 4–6 weeks | Jurnal, Accurate and Excel GL/Neraca exports, each line traced to `sheet!row` | **Lead** |
 | GL integrity | — | audit trail | native GL | one writer, bigint money, DB triggers, no plugs, `verify:books` | **Lead** |
 | Reports | 130+ | 80+, combined view | custom builder, drill-down | full SAK set + CALK, per-client format, credit and management packs, drill-down to the bank row | Par+; drill-down to the source row is **Lead** in Indonesia |
-| Close | optional month lock | date lock | checklist with owners and reviewers, admin-only reopen | controls, sign-offs, sequential lock, admin unlock with a reason | Par; **Gap**: tasks with owner, reviewer and due date |
-| Journal approval | ERP tier | multi-level approvals | approval routing by source and amount | accountant approves AI drafts; manual journals have no second approver | **Gap** |
-| Tax | e-Faktur CSV; no Coretax found | Klikpajak (PJAP): e-Faktur, e-Bupot, Coretax | US | Pajak Masa workpaper, PPh 21 TER, PPh Badan pack, Coretax import reconciled to the GL | **Lead** on workpapers; **Gap**: Coretax-ready output files |
-| AI | separate BI chatbot | P&L summaries in English | approval cards, reasoning, accruals, flux, memory, MCP | classification, account mapping, OCR, *Jelaskan* + draft entries, commentary citing only computed numbers, Tanya Buku; never posts | Ahead of the incumbents; **Gap** vs Rillet: one queue, reasoning view, flux approval, firm memory |
+| Close | optional month lock | date lock | checklist with owners and reviewers, admin-only reopen | controls, sign-offs, sequential lock, admin unlock with a reason, *Checklist tutup buku* with Pelaksana, Pereviu and due day | Par |
+| Journal approval | ERP tier | multi-level approvals | approval routing by source and amount | accountant approves AI drafts; *Persetujuan kedua* routes manual journals, AI drafts and reopening a month to a second member by amount | Par |
+| Tax | e-Faktur CSV; no Coretax found | Klikpajak (PJAP): e-Faktur, e-Bupot, Coretax | US | Pajak Masa workpaper, PPh 21 TER, PPh Badan pack, Coretax import reconciled to the GL, faktur keluaran and BPPU XML for upload | **Lead** on workpapers; Coretax files still to be confirmed against a real upload |
+| AI | separate BI chatbot | P&L summaries in English | approval cards, reasoning, accruals, flux, memory, MCP | classification, account mapping, OCR, *Jelaskan* + draft entries, commentary citing only computed numbers, Tanya Buku, *Kotak persetujuan*, *Lihat alasan*, flux explanations, *Instruksi kantor*, accruals from history; never posts | Ahead of the incumbents; Par with Rillet's approval pattern |
 | Multi-client firm | none | reseller cashback | partners implement; no console | firm board, roles, client assignment, upload link `/kirim` | **Lead** |
 | Sub-ledgers / ERP | full ERP | full ERP | AR, AP, prepaids, assets | AR/AP from bank, assets, leases, benefits, periodic stock count | **Skip** the rest |
 | Pricing | per company, add-ons, caps | per company | no per-seat fee | not set | Decision (§7) |
 
 Caveat: competitor facts come mostly from vendor pages and help docs read in October 2026. Review sites blocked fetching, so the
-complaints come from search snippets. Prices exclude PPN and change often. Buku facts come from the code at `ec00b5b`.
+complaints come from search snippets. Prices exclude PPN and change often. Buku facts come from the code at `ec00b5b`; the Matching, Close, Journal approval, Tax and AI rows were updated after the Phase 2 and 3 cycles of October 2026.
 
 ## 4. "Best of three" — what we take, what we leave
 
