@@ -17,6 +17,7 @@ import { formatMoney } from "@/lib/money";
 import { RECEIPT_KINDS, WITHHOLDING_KINDS, WITHHOLDING_LABEL } from "@/lib/tax/withholding";
 import type { WithholdingKind } from "@/lib/generated/prisma/enums";
 import { ENTRY_KIND_LABEL } from "@/lib/reports/entry-source";
+import { formNotice, type SourceRoute } from "@/lib/approvals/second";
 
 export type LedgerRow = {
   id: string;
@@ -26,6 +27,8 @@ export type LedgerRow = {
   kind: string;
   /** "Nama · 27 Sep 2026, 14:02" — who posted the entry and when; "Sistem" for seeds. */
   postedBy?: string;
+  /** Persetujuan kedua: "Diajukan <maker> · Disetujui <approver>" when it came through a second approver. */
+  approval?: string | null;
   /** The proposal the entry was approved from ("Usulan AI 6120 (92 %) disetujui"), if any (lib/reports/entry-origin.ts). */
   origin?: string | null;
   debit: string;
@@ -42,7 +45,9 @@ export type LedgerRow = {
 const KIND: Record<string, string> = ENTRY_KIND_LABEL;
 
 /** Every GL line opens its source: the full journal and — for bank lines — the original statement row, for imports the file row. */
-export function LedgerTable({ rows, opening, currency = "IDR", accounts }: { rows: LedgerRow[]; opening: string; currency?: string; accounts?: AccountOption[] }) {
+export function LedgerTable({ rows, opening, currency = "IDR", accounts, reverseRoute }: { rows: LedgerRow[]; opening: string; currency?: string; accounts?: AccountOption[]; /** Persetujuan kedua's *Jurnal manual* for this member: *Balik jurnal* above it waits. */ reverseRoute?: SourceRoute }) {
+  // The reversal's amount is the original's Σdebit, in the books' currency.
+  const reverseNotice = (r: LedgerRow) => formNotice(reverseRoute, r.entry.lines.reduce((s, l) => s + BigInt(l.debit), 0n), currency);
   const router = useRouter();
   const [open, setOpen] = useState<LedgerRow | null>(null);
   const [newCode, setNewCode] = useState("");
@@ -57,7 +62,7 @@ export function LedgerTable({ rows, opening, currency = "IDR", accounts }: { row
     const r = await reverseEntryAction({ entryId: open.reversal.entryId, date: reverseDate });
     setSaving(false);
     if (!r.ok) return void toast.error(r.error);
-    toast.success("Jurnal pembalik dicatat");
+    toast.success(r.pending ? "Jurnal menunggu persetujuan" : "Jurnal pembalik dicatat");
     setOpen(null);
     router.refresh();
   };
@@ -146,6 +151,7 @@ export function LedgerTable({ rows, opening, currency = "IDR", accounts }: { row
                 <SheetDescription>
                   {open.memo}
                   {open.postedBy && <span className="mt-1 block text-xs">Dicatat oleh {open.postedBy}</span>}
+                  {open.approval && <span className="mt-0.5 block text-xs" data-testid="entry-approval">{open.approval}</span>}
                   {open.origin && <span className="mt-0.5 block text-xs" data-testid="entry-origin">Asal: {open.origin}</span>}
                 </SheetDescription>
               </SheetHeader>
@@ -269,8 +275,9 @@ export function LedgerTable({ rows, opening, currency = "IDR", accounts }: { row
                             <span className="text-xs text-muted-foreground">Tanggal jurnal pembalik</span>
                             <Input type="date" value={reverseDate} min={open.reversal.date} onChange={(e) => setReverseDate(e.target.value)} className="w-44" />
                           </label>
-                          <Button variant="outline" disabled={saving || !reverseDate} onClick={reverse}>{saving ? "Mencatat…" : "Balik jurnal"}</Button>
+                          <Button variant="outline" disabled={saving || !reverseDate} onClick={reverse}>{saving ? "Mencatat…" : reverseNotice(open)?.waits ? "Ajukan persetujuan" : "Balik jurnal"}</Button>
                         </div>
+                        {reverseNotice(open) && <p className="text-sm text-muted-foreground" data-testid="reverse-second-notice">{reverseNotice(open)!.text}</p>}
                       </>
                     )}
                   </section>

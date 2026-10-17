@@ -4,7 +4,9 @@ import { DEFAULT_APPROVALS, describeApprovalChanges, parseApprovals } from "@/li
 import {
   APPROVAL_TIER,
   approverProblem,
+  formNotice,
   hasApprover,
+  sourceRoute,
   hasSecondAdmin,
   journalHead,
   reopenDeciderProblem,
@@ -116,6 +118,21 @@ describe("the reopen confirm rule", () => {
     expect(reopenDeciderProblem({ id: "o", role: "OWNER" }, { requestedById: "a" })).toBeNull();
     expect(reopenDeciderProblem({ id: "o", role: "OWNER" }, { requestedById: "o" })).toMatch(/^Anda yang meminta membuka kembali bulan ini/);
     expect(reopenDeciderProblem({ id: "k", role: "AKUNTAN" }, { requestedById: "o" })).toBe("Hanya admin kantor yang dapat membuka kembali periode.");
+  });
+});
+
+describe("the forms' notice (Jurnal Penyesuaian, Balik jurnal, a draft's Catat jurnal)", () => {
+  const route = sourceRoute(ON, "MANUAL", false);
+  it("says nothing at or below the threshold or with the source off; above it the button reads Ajukan persetujuan", () => {
+    expect(formNotice(sourceRoute(DEFAULT_APPROVALS, "MANUAL", false), 10n ** 12n, "IDR")).toBeNull();
+    expect(formNotice(route, 100_000_000n, "IDR")).toBeNull();
+    expect(formNotice(route, 150_000_000n, "IDR")).toEqual({ waits: true, text: "Di atas Rp 100.000.000: jurnal ini menunggu persetujuan anggota lain sebelum dicatat." });
+    expect(formNotice(sourceRoute({ ...DEFAULT_APPROVALS, manual: true }, "REVERSAL", false), 1n, "IDR")).toMatchObject({ waits: true, text: expect.stringMatching(/^Semua nominal:/) });
+    expect(formNotice(route, 1n, "USD")).toMatchObject({ waits: true, text: expect.stringMatching(/^Perusahaan berbuku USD:/) });
+    expect(formNotice(sourceRoute(ON, "AI_DRAFT", false), 60_000_000n, "IDR")).toMatchObject({ waits: true, text: expect.stringMatching(/^Di atas Rp 50\.000\.000:/) });
+  });
+  it("with nobody else to approve, it says the journal posts without a second approver", () => {
+    expect(formNotice(sourceRoute(ON, "MANUAL", true), 150_000_000n, "IDR")).toEqual({ waits: false, text: "Dicatat tanpa persetujuan kedua: tidak ada anggota lain yang berhak menyetujui." });
   });
 });
 

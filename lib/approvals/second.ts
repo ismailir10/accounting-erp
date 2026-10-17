@@ -29,6 +29,32 @@ export function routing(settings: SecondApproval, source: JournalApprovalSource,
   return { routed: false };
 }
 
+/**
+ * What a form needs to say before the click (Jurnal Penyesuaian, *Balik jurnal*, a draft's *Catat jurnal*): the source switched on, its
+ * threshold (whole-Rupiah digits; null = every journal), and `alone` when no other member may approve this member's journal (it then
+ * posts at once, the fallback). Plain JSON for client components.
+ */
+export type SourceRoute = { on: boolean; above: string | null; alone: boolean };
+export const sourceRoute = (settings: SecondApproval, source: JournalApprovalSource, alone: boolean): SourceRoute => {
+  const on = source === "AI_DRAFT" ? settings.aiDraft : settings.manual;
+  const above = source === "AI_DRAFT" ? settings.aiDraftAbove : settings.manualAbove;
+  return { on, above: above?.toString() ?? null, alone };
+};
+
+/**
+ * The muted line under a form's totals and whether its button reads *Ajukan persetujuan*: null when the journal posts at once as before.
+ * Same rule as `routing` (equal posts, above waits, another currency always waits).
+ */
+export function formNotice(route: SourceRoute | null | undefined, amount: bigint, currency: string): { waits: boolean; text: string } | null {
+  if (!route?.on || amount <= 0n) return null;
+  const threshold = route.above === null ? null : BigInt(route.above);
+  const routed = threshold === null || currency !== "IDR" || amount > threshold;
+  if (!routed) return null;
+  if (route.alone) return { waits: false, text: `${JOURNAL_FALLBACK}.` };
+  const why = threshold === null ? "Semua nominal" : currency !== "IDR" ? `Perusahaan berbuku ${currency}` : `Di atas ${formatRupiah(threshold)}`;
+  return { waits: true, text: `${why}: jurnal ini menunggu persetujuan anggota lain sebelum dicatat.` };
+}
+
 /** Why it waits, as Kotak and the forms say it: "di atas Rp 100.000.000", "semua nominal", or the other-currency rule. */
 export function waitReason(threshold: bigint | null, currency: string): string {
   if (threshold === null) return "semua nominal perlu persetujuan";

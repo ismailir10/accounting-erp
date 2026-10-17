@@ -66,7 +66,7 @@ export async function loadFacts(db: Db, clientId: string, year: number, month: n
   await Promise.all([
     need.has("controls") && runControls(db, clientId, year, month).then((c) => void (out.controls = c)),
     need.has("sumber") && completenessMatrix(db, clientId, year, month, 1).then((m) => void (out.sumber = sumberOf(m, year, month))),
-    need.has("approvals") && approvalCounts(db, { clientId, year, month }).then((c) => void (out.approvals = c.total)),
+    need.has("approvals") && approvalCounts(db, { clientId, year, month }, { reopen: false }).then((c) => void (out.approvals = c.total)),
     need.has("opening") && setupProgress(db, clientId).then((s) => void (out.opening = { needs: s.needsOpening.map((e) => e.shortName), hasData: s.hasData })),
     (need.has("lockedAt") || need.has("sentAt")) && lockedAt().then(async (at) => { if (need.has("sentAt")) out.sentAt = await sentAfterLock(db, clientId, year, month, at); }),
   ]);

@@ -11,7 +11,7 @@ import { chosenAccounts, postProposal, readLines } from "@/lib/adjust/proposals"
 import { closeLock } from "@/lib/adjust/schedules";
 import { clientPeople } from "@/lib/checklist/view";
 import { readApprovals } from "@/lib/settings/approvals";
-import { ApprovalError, approvalSubject, approverProblem, hasApprover, JOURNAL_FALLBACK, journalHead, NOTE_MESSAGE, NOTE_MIN, PENDING_DRAFT, routing, waitReason } from "@/lib/approvals/second";
+import { ApprovalError, approvalSubject, approverProblem, hasApprover, JOURNAL_FALLBACK, journalHead, NOTE_MESSAGE, NOTE_MIN, PENDING_DRAFT, routing, sourceRoute, waitReason, type SourceRoute } from "@/lib/approvals/second";
 
 /**
  * Persetujuan kedua for journals (cycle 2026-10-18-persetujuan-kedua, accounting-rules 2a). A routed journal is saved as a request
@@ -51,6 +51,13 @@ async function firmOf(db: Db | Tx, clientId: string) {
 /** Whether another active member who holds the client may approve this maker's journal. */
 async function approverExists(db: Db | Tx, clientId: string, maker: Maker) {
   return hasApprover((await clientPeople(db, clientId)).values(), maker);
+}
+
+/** What a form tells this member before the click (lib/approvals/second `formNotice`): the firm's route for the source, and the fallback. */
+export async function routeFor(db: Db, clientId: string, member: Maker, source: JournalApprovalSource): Promise<SourceRoute> {
+  const settings = await readApprovals(db, await firmOf(db, clientId));
+  const on = source === "AI_DRAFT" ? settings.aiDraft : settings.manual;
+  return sourceRoute(settings, source, on && !(await approverExists(db, clientId, member)));
 }
 
 type Head = { source: JournalApprovalSource; memo: string; date: Date; amount: bigint; currency: string };

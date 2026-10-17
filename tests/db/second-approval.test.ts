@@ -16,6 +16,7 @@ import { saveApprovals, type ApprovalsInput } from "@/lib/settings/approvals";
 import { approveJournal, rejectJournal, submitAdjustment, submitProposal, submitReversal, type Maker } from "@/lib/approvals/journals";
 import { JOURNAL_FALLBACK, PENDING_DRAFT } from "@/lib/approvals/second";
 import { pendingJournalCount } from "@/lib/approvals/pending";
+import { journalRegister } from "@/lib/reports/journal-register";
 import { removeStatementImport } from "@/lib/imports/remove";
 
 const auth = vi.hoisted(() => ({ userId: null as string | null }));
@@ -148,6 +149,12 @@ describe("Persetujuan kedua — Jurnal manual above Rp 100.000.000", () => {
     expect(events.map((e) => [e.actor, e.summary])).toEqual([
       ["Budi Akuntan", 'Jurnal manual "Akrual gaji Juli" 31 Jul 2026 · Rp 150.000.000 disetujui dan dicatat dengan jurnal pembalik 1 Agu 2026'],
       ["Andi Akuntan", 'Jurnal manual "Akrual gaji Juli" 31 Jul 2026 · Rp 150.000.000 diajukan untuk persetujuan kedua (di atas Rp 100.000.000)'],
+    ]);
+    // Jurnal Umum and the Buku Besar drawer name both people, on the journal and on its reversal.
+    const reg = await journalRegister(db, { clientId: g.client.id, entityIds: [g.pt.entity.id] }, { start: dateOnly(2026, 7, 1), end: dateOnly(2026, 8, 31), kinds: null, search: null }, "all");
+    expect(reg.entries.map((e) => [e.memo.slice(0, 9), e.approval, e.postedBy])).toEqual([
+      ["Akrual ga", "Diajukan Andi Akuntan · Disetujui Budi Akuntan", "Budi Akuntan"],
+      ["Pembalik:", "Diajukan Andi Akuntan · Disetujui Budi Akuntan", "Budi Akuntan"],
     ]);
     // Decided once: a second click finds it approved and writes nothing.
     await expect(approveJournal(db, { clientId: g.client.id, approvalId: id, approver: maker(m.admin) })).rejects.toThrow("Jurnal ini sudah disetujui dan dicatat.");

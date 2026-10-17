@@ -21,6 +21,27 @@ export async function pendingJournalCount(db: Db | Tx, clientId: string, year: n
 
 export const pendingLockMessage = (n: number) => `Belum bisa tutup buku: ${n} jurnal menunggu persetujuan kedua.`;
 
+/**
+ * Who asked and who approved the entries that came through a second approver: "Diajukan Andi · Disetujui Budi", per entry id. A *Balik
+ * otomatis* reversal posted with its journal carries the same line (its `reversesId` is the approved entry). Entries without one are
+ * absent: their `postedBy` says who posted them, as before.
+ */
+export async function approvalLines(db: Db | Tx, entries: { id: string; reversesId: string | null }[]): Promise<Map<string, string>> {
+  if (!entries.length) return new Map();
+  const reversed = entries.flatMap((e) => (e.reversesId ? [e.reversesId] : []));
+  const rows = await db.journalApproval.findMany({
+    where: { status: "APPROVED", OR: [{ entryId: { in: entries.map((e) => e.id) } }, ...(reversed.length ? [{ entryId: { in: reversed }, reverseNextMonth: true }] : [])] },
+    select: { entryId: true, reverseNextMonth: true, maker: { select: { name: true } }, decidedBy: { select: { name: true } } },
+  });
+  const byEntry = new Map(rows.map((r) => [r.entryId!, r]));
+  const out = new Map<string, string>();
+  for (const e of entries) {
+    const a = byEntry.get(e.id) ?? (e.reversesId ? byEntry.get(e.reversesId) : undefined);
+    if (a && (byEntry.get(e.id) || a.reverseNextMonth)) out.set(e.id, `Diajukan ${a.maker.name} · Disetujui ${a.decidedBy?.name ?? "Sistem"}`);
+  }
+  return out;
+}
+
 export const DIRECT_UNLOCK_NOTE = "dibuka langsung";
 
 /**

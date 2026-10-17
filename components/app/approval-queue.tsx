@@ -13,12 +13,16 @@ import { SimpleSelect } from "@/components/app/simple-select";
 import { ReasoningDisclosure } from "@/components/app/reasoning-panel";
 import { hasReasoning } from "@/lib/approvals/has-reasoning";
 import { bookFakturAction, dismissProposalAction, postAllDueAction, postInstallmentAction, postProposalAction, reviewAction } from "@/app/actions";
-import type { ApprovalKind, BankCard, DraftCard, FakturCard, ScheduledCard } from "@/lib/approvals/queue";
+import type { ApprovalKind, BankCard, DraftCard, FakturCard, ScheduledCard, SecondCard } from "@/lib/approvals/queue";
 import type { TaxTag } from "@/lib/generated/prisma/enums";
 import { cn } from "@/lib/utils";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatDateTime } from "@/lib/format";
+import { JournalDecision, ReopenDecision } from "@/components/app/second-approval";
+import { formNotice, type SourceRoute } from "@/lib/approvals/second";
 
 type Account = { code: string; name: string };
+/** A Persetujuan kedua card with this member's part: `canDecide` (approve/reject, confirm/reject) and `mine` (maker or requester). */
+export type SecondView = SecondCard & { canDecide: boolean; mine: boolean };
 type Result = { ok: boolean; error?: string };
 
 const TAX_LABEL: Record<string, string> = { PPN_KELUARAN: "PPN Keluaran", PPN_MASUKAN: "PPN Masukan", PPH_21: "Setoran PPh 21", PPH_23: "Setoran PPh 23", PPH_4_2: "Setoran PPh 4(2)", PPH_25: "Angsuran PPh 25" };
@@ -81,6 +85,8 @@ export function ApprovalQueue({
   drafts,
   scheduled,
   faktur,
+  second,
+  draftRoute,
   fakturAccounts,
   draftAccounts,
   reviewHref,
@@ -101,6 +107,10 @@ export function ApprovalQueue({
   drafts: DraftCard[];
   scheduled: ScheduledCard[];
   faktur: FakturCard[];
+  /** Persetujuan kedua, with what this member may do on each (decided on the server; every action checks it again). */
+  second: SecondView[];
+  /** Persetujuan kedua's *Draf AI* for this member: a larger draft's click becomes a request. */
+  draftRoute?: SourceRoute;
   fakturAccounts: Record<FakturCard["direction"], Account[]> | null;
   draftAccounts: Account[];
   /** Review in scope; `&tx=<id>` opens a line. */
@@ -116,7 +126,7 @@ export function ApprovalQueue({
   const [fakturCode, setFakturCode] = useState<Record<string, string>>({});
   const leave = (ids: string[]) => setDone((d) => new Set([...d, ...ids]));
   const back = (id: string) => setDone((d) => { const n = new Set(d); n.delete(id); return n; });
-  const run = async (key: string, fn: () => Promise<Result>, ok: string, ids: string[] = [key]) => {
+  const run = async <R extends Result>(key: string, fn: () => Promise<R>, ok: string | ((r: R) => string), ids: string[] = [key]) => {
     setBusy(key);
     leave(ids);
     const r = await fn();
@@ -127,7 +137,7 @@ export function ApprovalQueue({
       // *Catat semua* stops at its first refusal with the earlier ones posted: the page shows what is left.
       return void router.refresh();
     }
-    toast.success(ok);
+    toast.success(typeof ok === "string" ? ok : ok(r));
     router.refresh();
   };
 
@@ -153,6 +163,7 @@ export function ApprovalQueue({
   };
 
   const codesOf = (d: DraftCard) => codes[d.id] ?? d.lines.map((l) => l.accountCode);
+  const secondTitle = (s: SecondView) => (s.type === "journal" ? s.memo : `${s.requestedBy} meminta membuka kembali ${s.label}`);
   const openBank = bank.filter((c) => !done.has(c.id));
   const openDrafts = drafts.filter((d) => !done.has(d.id));
   const openScheduled = scheduled.filter((s) => !done.has(`${s.scheduleId}:${s.k}`));
@@ -166,6 +177,63 @@ export function ApprovalQueue({
 
   return (
     <div className="space-y-6">
+      {show("second") && second.length > 0 && (
+        <KindCard kind="second" title={labels.second} count={second.length} description="Jurnal besar dan pembukaan kembali bulan yang menunggu anggota lain. Tidak ada yang mengubah buku sebelum disetujui.">
+          {second.map((s) =>
+            s.type === "journal" ? (
+              <Row
+                key={s.id}
+                testId="approval-second"
+                eyebrow={
+                  <>
+                    {s.sourceLabel} · {s.entity} · {isoDay(s.date)}
+                    {s.earlier && <span className="font-medium text-review"> · bulan lalu</span>}
+                  </>
+                }
+                title={secondTitle(s)}
+                amount={BigInt(s.total)}
+                currency={s.currency}
+                reason={
+                  <span>
+                    Diajukan {s.maker} · {formatDateTime(new Date(s.at))} · menunggu persetujuan karena {s.why}
+                    {s.reverseNextMonth && " · dengan jurnal pembalik tanggal 1 bulan berikutnya"}
+                  </span>
+                }
+              >
+                <table className="w-full text-sm">
+                  <thead className="sr-only">
+                    <tr><th>Akun</th><th>Debit</th><th>Kredit</th></tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {s.lines.map((l, i) => (
+                      <tr key={i}>
+                        <td className="py-1 pr-3">
+                          <span className="font-mono text-xs">{l.accountCode}</span> {l.accountName}
+                          {l.memo && <span className="block text-xs text-muted-foreground">{l.memo}</span>}
+                        </td>
+                        <td className="w-28 py-1 text-right">{BigInt(l.debit) > 0n && <Money value={BigInt(l.debit)} currency={s.currency} />}</td>
+                        <td className="w-28 py-1 text-right">{BigInt(l.credit) > 0n && <Money value={BigInt(l.credit)} currency={s.currency} />}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <JournalDecision clientId={clientId} id={s.id} memo={s.memo} canDecide={s.canDecide} isMaker={s.mine} waitingFor={s.waitingFor} />
+              </Row>
+            ) : (
+              <li key={s.id} className="space-y-2 py-4 first:pt-0 last:pb-0" data-testid="approval-reopen">
+                <p className="eyebrow text-muted-foreground">
+                  Buka kembali · {s.label}
+                  {s.earlier && <span className="font-medium text-review"> · bulan lalu</span>}
+                </p>
+                <p className="font-medium">{secondTitle(s)}</p>
+                <p className="text-sm text-muted-foreground">“{s.reason}” · {formatDateTime(new Date(s.at))}</p>
+                <ReopenDecision clientId={clientId} id={s.id} label={s.label} canDecide={s.canDecide} isRequester={s.mine} />
+              </li>
+            ),
+          )}
+        </KindCard>
+      )}
+
       {!readOnly && sure.length > 0 && show("bank") && (
         <div className="flex flex-wrap items-center gap-3">
           <Button disabled={disabled} onClick={acceptConfident} data-testid="approve-confident">
@@ -269,11 +337,13 @@ export function ApprovalQueue({
                   ))}
                 </div>
                 {d.blocked && <p className="text-sm font-medium text-review" data-testid="approval-blocked">{d.blocked}</p>}
+                {d.rejected && <p className="text-sm font-medium text-review" data-testid="approval-rejected">{d.rejected}</p>}
+                {!readOnly && !d.blocked && d.source === "AI_CONTROL" && formNotice(draftRoute, total, d.currency) && <p className="text-sm text-muted-foreground">{formNotice(draftRoute, total, d.currency)!.text}</p>}
                 {!readOnly && (
                   <div className="flex flex-wrap gap-2">
                     {!d.blocked && (
-                      <Button variant="outline" size="sm" disabled={disabled} onClick={() => run(d.id, () => postProposalAction(clientId, d.id, codesOf(d)), "Jurnal dicatat")}>
-                        <Check /> Setujui
+                      <Button variant="outline" size="sm" disabled={disabled} onClick={() => run(d.id, () => postProposalAction(clientId, d.id, codesOf(d)), (r) => (r.ok && r.pending ? "Jurnal menunggu persetujuan" : "Jurnal dicatat"))}>
+                        <Check /> {d.source === "AI_CONTROL" && formNotice(draftRoute, total, d.currency)?.waits ? "Ajukan persetujuan" : "Setujui"}
                       </Button>
                     )}
                     {/* A 1999 difference must be corrected before the close: its correction can't be refused. */}

@@ -396,7 +396,7 @@ migration: stop and ask.
       Accept: `second-approval` and `period-lock` DB tests; existing `adjustment`, `reverse-entry`, `proposals` unchanged. (deps: T1, T2)
 - [x] T4 Reopen: request / confirm / reject / cancel around `unlockPeriod`, the fallback, the log's requester, accounting-rules 4.
       Accept: `period-lock` reopen tests. (deps: T1, T2; parallel with T3)
-- [ ] T5 Kotak *Persetujuan kedua* (queue, counts, firm board, checklist proof), the Jurnal Penyesuaian form and *Terakhir dicatat*,
+- [x] T5 Kotak *Persetujuan kedua* (queue, counts, firm board, checklist proof), the Jurnal Penyesuaian form and *Terakhir dicatat*,
       the *Balik jurnal* dialog, the draft card, the Tutup Buku panel, the Jurnal Umum drawer line, and the card on Pengaturan kantor
       with its actions; README (settings, actions). Accept: `approvals` DB test; flows 1–5 on the dev server. (deps: T3, T4; reuse:
       the `AutomationCard` layout, `StatusPill`, `NextStep`, the approval-queue rows)
@@ -432,6 +432,16 @@ migration: stop and ask.
   "dibuka langsung" via `closeReopenRequests` in `lib/approvals/pending.ts`), `app/actions.ts` (`unlockAction` through `requestReopen`,
   returning `{ ok: true }` exactly as before on a direct reopen, `pending` / `fallback` otherwise; new `confirmReopenAction`,
   `rejectReopenAction`, `cancelReopenAction`, each behind `requireCapability("period.unlock", { clientId })`), accounting-rules 4.
+- T5: `lib/approvals/queue.ts` (kind `second` first, `?jenis=kedua`: journals through the month end with "bulan lalu", reopen requests up
+  to the month even when it is closed; `approvalCounts(…, { reopen: false })` for the checklist proof), `lib/checklist/view.ts`,
+  `lib/approvals/pending.ts` (`approvalLines`: "Diajukan … · Disetujui …"), `lib/reports/journal-register.ts` + `account-ledger.ts`,
+  `lib/approvals/second.ts` (`sourceRoute`, `formNotice`: the forms' line and *Ajukan persetujuan*), `components/app/approvals-card.tsx`
+  (the firm card, read-only for Akuntan/Peninjau, one-admin warning), `components/app/second-approval.tsx` (*Setujui & catat*, *Tolak* with
+  *Alasan menolak*, *Tarik kembali*; *Konfirmasi buka kembali*, *Tolak*, *Batalkan permintaan*; Tutup Buku's request panel),
+  `components/app/approval-queue.tsx`, `journal-form.tsx`, `proposals-card.tsx` ("Ditolak …" and the notice), `ledger-table.tsx` (*Balik
+  jurnal*'s notice, the drawer's approval line), `close-panel.tsx` (*Minta buka kembali*, the lock blocker linking to Kotak, *Riwayat buka
+  kembali* naming requester and confirmer), the pages (settings, approvals, journals/new with *Menunggu persetujuan* first, journals,
+  ledger, close), README. Eligibility shown on a row is computed on the server from the same pure rule the actions enforce.
 
 ## Verification
 

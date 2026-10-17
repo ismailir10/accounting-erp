@@ -8,6 +8,7 @@ import { formatMoney } from "@/lib/money";
 import { formatRateId } from "@/lib/fx/currency";
 import { sourceAccountLabel } from "@/lib/ledger-import/code";
 import { entryOrigins } from "@/lib/reports/entry-origin";
+import { approvalLines } from "@/lib/approvals/pending";
 
 /**
  * One account's ledger for a month: opening balance, lines with running balance, and the source behind each line
@@ -69,6 +70,8 @@ export async function accountLedger(
   }
   // The proposal an entry was approved from (Kotak persetujuan), shown in its drawer.
   const origins = await entryOrigins(db, lines.map((l) => l.entryId));
+  // Persetujuan kedua: who asked and who approved, instead of only who posted.
+  const approvals = await approvalLines(db, [...new Map(lines.map((l) => [l.entryId, { id: l.entryId, reversesId: l.entry.reversesId }])).values()]);
   const sign = args.normalBalance === "DEBIT" ? 1n : -1n;
   const opening = ((before._sum.debit ?? 0n) - (before._sum.credit ?? 0n)) * sign;
   const balances = lines.reduce<bigint[]>((acc, l) => [...acc, (acc.at(-1) ?? opening) + (l.debit - l.credit) * sign], []);
@@ -81,6 +84,7 @@ export async function accountLedger(
       memo: l.entry.memo,
       kind: l.entry.kind,
       postedBy: `${l.entry.postedBy?.name ?? "Sistem"} · ${formatDateTime(l.entry.createdAt)}`,
+      approval: approvals.get(l.entryId) ?? null,
       origin: origins.get(l.entryId) ?? null,
       debit: l.debit.toString(),
       credit: l.credit.toString(),
