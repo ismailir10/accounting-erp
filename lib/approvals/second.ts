@@ -12,6 +12,8 @@ export class ApprovalError extends Error {}
 
 export const SOURCE_LABEL: Record<JournalApprovalSource, string> = { MANUAL: "Jurnal manual", REVERSAL: "Balik jurnal", AI_DRAFT: "Draf AI" };
 export const REOPEN_LABEL = "Buka kembali";
+/** A waiting *Usulan akrual*: routed as *Jurnal manual* (with *Balik otomatis*), shown by what it is. */
+export const ACCRUAL_LABEL = "Usulan akrual";
 
 export type Routing = { routed: false } | { routed: true; threshold: bigint | null };
 
@@ -30,9 +32,9 @@ export function routing(settings: SecondApproval, source: JournalApprovalSource,
 }
 
 /**
- * What a form needs to say before the click (Jurnal Penyesuaian, *Balik jurnal*, a draft's *Catat jurnal*): the source switched on, its
- * threshold (whole-Rupiah digits; null = every journal), and `alone` when no other member may approve this member's journal (it then
- * posts at once, the fallback). Plain JSON for client components.
+ * What a form needs to say before the click (Jurnal Penyesuaian, *Balik jurnal*, a draft's *Catat jurnal*, an accrual card's *Setujui*):
+ * the source switched on, its threshold (whole-Rupiah digits; null = every journal), and `alone` when no other member may approve this
+ * member's journal (it then posts at once, the fallback). Plain JSON for client components.
  */
 export type SourceRoute = { on: boolean; above: string | null; alone: boolean };
 export const sourceRoute = (settings: SecondApproval, source: JournalApprovalSource, alone: boolean): SourceRoute => {

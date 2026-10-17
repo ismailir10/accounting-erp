@@ -2391,6 +2391,8 @@ model JournalApproval {
   proposalId       String?
   proposal         ProposedEntry?        @relation(fields: [proposalId], references: [id], onDelete: Restrict)
   accounts         String[]              @default([])
+  /// MANUAL with *Balik otomatis* only: the *Usulan akrual* this request posts (its `ProposedEntry` key, stored POSTED on approval).
+  accrualKey       String?
   /// Σdebit in minor units of the entity's functional currency, and the threshold in force (whole Rupiah; null = every journal).
   amount           BigInt
   threshold        BigInt?

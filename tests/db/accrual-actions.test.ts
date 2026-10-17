@@ -37,7 +37,7 @@ describe("accrual actions through the guard", () => {
     signIn(rina);
     expect(await postAccrualAction(g.client.id, telkom.key, { amount: "0" })).toEqual({ ok: false, error: "Nominal harus lebih dari nol.", fields: { amount: "Nominal harus lebih dari nol." } });
     expect(await postAccrualAction(g.client.id, telkom.key, { creditCode: "6120" })).toMatchObject({ ok: false, fields: { credit: "Akun kredit harus akun liabilitas, bukan bank, kliring (1190/1199) atau 1999." } });
-    expect(await postAccrualAction(g.client.id, telkom.key, { amount: "450.000" })).toEqual({ ok: true });
+    expect(await postAccrualAction(g.client.id, telkom.key, { amount: "450.000" })).toMatchObject({ ok: true, pending: false, fallback: false });
     expect(await dismissAccrualAction(g.client.id, telkom.key)).toEqual({ ok: false, error: "Usulan akrual ini sudah diputuskan." });
     expect(await db.proposedEntry.findUniqueOrThrow({ where: { key: telkom.key } })).toMatchObject({ status: "POSTED", decidedById: rina.id });
   });

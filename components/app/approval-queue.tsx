@@ -19,7 +19,7 @@ import type { AccrualCard, ApprovalKind, BankCard, DraftCard, FakturCard, Schedu
 import type { TaxTag } from "@/lib/generated/prisma/enums";
 import { cn } from "@/lib/utils";
 import { formatDate, formatDateTime, formatPeriod } from "@/lib/format";
-import { formatMoney } from "@/lib/money";
+import { formatMoney, parseMoney } from "@/lib/money";
 import { JournalDecision, ReopenDecision } from "@/components/app/second-approval";
 import { formNotice, type SourceRoute } from "@/lib/approvals/second";
 
@@ -78,10 +78,12 @@ function KindCard({ kind, title, count, description, action, children }: { kind:
  * a warning or blocked line, then *Setujui*, *Ubah* (amount and both accounts in the row) and *Tolak*. A refusal tied to a field shows
  * under that field; any other comes back as a toast.
  */
-function AccrualItem({ card, label, accounts, readOnly, disabled, withReasoning, onPost, onDismiss }: {
+function AccrualItem({ card, label, accounts, route, readOnly, disabled, withReasoning, onPost, onDismiss }: {
   card: AccrualCard;
   label: string;
   accounts: AccrualAccounts | null;
+  /** Persetujuan kedua's *Jurnal manual* for this member: above its threshold *Setujui* becomes *Ajukan persetujuan*. */
+  route?: SourceRoute;
   readOnly: boolean;
   disabled: boolean;
   withReasoning: (card: AccrualCard, line: (toggle?: React.ReactNode) => React.ReactNode) => React.ReactNode;
@@ -95,6 +97,15 @@ function AccrualItem({ card, label, accounts, readOnly, disabled, withReasoning,
   const [credit, setCredit] = useState(card.credit?.code ?? "");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const total = BigInt(card.amount);
+  // The amount the click would post: *Ubah*'s typed amount when it reads, else Buku's (the writer reads it again).
+  const typed = (() => {
+    try {
+      return editing && amount.trim() ? parseMoney(amount, card.currency) : total;
+    } catch {
+      return total;
+    }
+  })();
+  const notice = formNotice(route, typed, card.currency);
   const post = async () => setErrors((await onPost(editing ? { amount, debitCode: debit, creditCode: credit } : { amount: "", debitCode: "", creditCode: credit })) ?? {});
   const line = (side: string, code: string, name: string) => (
     <span className="flex basis-full flex-wrap items-center gap-x-3">
@@ -130,6 +141,7 @@ function AccrualItem({ card, label, accounts, readOnly, disabled, withReasoning,
       ))}
     >
       {card.blocked && <p className="text-sm font-medium text-review" data-testid="approval-blocked">{card.blocked}</p>}
+      {card.rejected && <p className="text-sm text-review">{card.rejected}</p>}
       {card.warning && (
         <p className="flex items-start gap-2 border-l-2 border-review py-0.5 pl-3 text-sm" data-testid="accrual-warning">
           <CircleAlert className="mt-0.5 size-4 shrink-0 text-review" aria-hidden />
@@ -157,12 +169,13 @@ function AccrualItem({ card, label, accounts, readOnly, disabled, withReasoning,
         </div>
       )}
       {!readOnly && !editing && Object.keys(errors).length > 0 && <p className="text-sm font-medium text-review">{Object.values(errors)[0]}</p>}
+      {!readOnly && !card.blocked && notice && <p className="text-sm text-muted-foreground">{notice.text}</p>}
       {!readOnly && (
         <div className="flex flex-wrap gap-2">
           {!card.blocked && (
             <>
               <Button variant="outline" size="sm" disabled={disabled || !credit} onClick={() => void post()}>
-                <Check /> Setujui
+                <Check /> {notice?.waits ? "Ajukan persetujuan" : "Setujui"}
               </Button>
               <Button variant="outline" size="sm" disabled={disabled} aria-expanded={editing} onClick={() => setEditing((e) => !e)}>
                 <Pencil /> {editing ? "Batal ubah" : "Ubah"}
@@ -199,6 +212,7 @@ export function ApprovalQueue({
   faktur,
   second,
   draftRoute,
+  accrualRoute,
   fakturAccounts,
   draftAccounts,
   reviewHref,
@@ -226,6 +240,8 @@ export function ApprovalQueue({
   second: SecondView[];
   /** Persetujuan kedua's *Draf AI* for this member: a larger draft's click becomes a request. */
   draftRoute?: SourceRoute;
+  /** Persetujuan kedua's *Jurnal manual* for this member: an accrual's *Setujui* follows it. */
+  accrualRoute?: SourceRoute;
   fakturAccounts: Record<FakturCard["direction"], Account[]> | null;
   draftAccounts: Account[];
   /** Review in scope; `&tx=<id>` opens a line. */
@@ -288,7 +304,7 @@ export function ApprovalQueue({
   // stays mounted with its *Ubah* fields until the writer has answered (no optimistic leave).
   const postAccrual = async (a: AccrualCard, edit: { amount: string; debitCode: string; creditCode: string }) => {
     setBusy(a.id);
-    const r: Result = await postAccrualAction(clientId, a.id, edit);
+    const r = await postAccrualAction(clientId, a.id, edit);
     setBusy(null);
     if (!r.ok) {
       if (!r.fields) toast.error(r.error ?? "Gagal menyimpan.");
@@ -296,7 +312,7 @@ export function ApprovalQueue({
       return r.fields ?? null;
     }
     leave([a.id]);
-    toast.success(`Akrual dicatat, dibalik ${isoDay(a.reversalDate)}`);
+    toast.success(r.pending ? "Jurnal menunggu persetujuan" : `Akrual dicatat, dibalik ${isoDay(a.reversalDate)}`);
     router.refresh();
     return null;
   };
@@ -552,6 +568,7 @@ export function ApprovalQueue({
               card={a}
               label={labels.accrual}
               accounts={accrualAccounts}
+              route={accrualRoute}
               readOnly={readOnly}
               disabled={disabled}
               withReasoning={(card, line) => withReasoning(card, card.id, line)}

@@ -20,7 +20,7 @@ import { acceptSimilar, reviewTransaction, splitTransaction, unpairTransfer, typ
 import { CloseError, lockPeriod, runControls } from "@/lib/controls";
 import { cancelReopen, confirmReopen, rejectReopen, requestReopen } from "@/lib/approvals/reopen";
 import { LedgerError } from "@/lib/ledger/post";
-import { approveJournal, rejectJournal, submitAdjustment, submitProposal, submitReversal, withdrawJournal, type Outcome } from "@/lib/approvals/journals";
+import { approveJournal, rejectJournal, submitAccrual, submitAdjustment, submitProposal, submitReversal, withdrawJournal, type Outcome } from "@/lib/approvals/journals";
 import { ApprovalError } from "@/lib/approvals/second";
 import { createSchedule, postAllDue, postInstallment, stopSchedule, type ScheduleInput } from "@/lib/adjust/schedules";
 import { createAsset, type AssetInput } from "@/lib/assets/register";
@@ -69,7 +69,7 @@ import { explainControl, ExplainError, type ControlExplanation } from "@/lib/con
 import { ReasoningError, reasoningFor, reasoningSteps, type ReasoningStep } from "@/lib/approvals/reasoning";
 import { dismissProposal } from "@/lib/adjust/proposals";
 import { postSuspenseCorrection, SUSPENSE_NOT_DISMISSABLE, SUSPENSE_PREFIX } from "@/lib/adjust/suspense";
-import { AccrualFieldError, dismissAccrual, postAccrual } from "@/lib/adjust/accruals";
+import { AccrualFieldError, dismissAccrual } from "@/lib/adjust/accruals";
 import { AiBudgetError } from "@/lib/ai/budget";
 import { AI_LONG_TIMEOUT_MS, AiAnswerError } from "@/lib/ai/provider";
 import { aiRunForView, scheduleAiRun } from "@/lib/ai/background";
@@ -1541,14 +1541,16 @@ export async function dismissProposalAction(clientId: string, proposalId: string
  * *Usulan akrual* (cycle 2026-10-18-usulan-akrual): *Setujui* — with *Ubah*'s amount and accounts, blank keeps Buku's — posts the accrual
  * and its reversal on the 1st of the next month; *Tolak* stores the decision for the month. The card's id is the proposal's key; the
  * writer recomputes the proposal from the books, so a crafted key posts nothing that isn't proposed. A refusal tied to a field says which.
+ * With Persetujuan kedua's *Jurnal manual* on, *Setujui* follows that route (lib/approvals/journals.ts `submitAccrual`): above the
+ * threshold it returns `pending` and nothing is posted until another member approves it.
  */
-export async function postAccrualAction(clientId: string, key: string, edit?: { amount?: string; debitCode?: string; creditCode?: string }): Promise<Result> {
+export async function postAccrualAction(clientId: string, key: string, edit?: { amount?: string; debitCode?: string; creditCode?: string }): Promise<Result<Saved>> {
   try {
-    const client = await writeClient(clientId);
+    const { client, member } = await writer(clientId);
     const text = (v: unknown) => (typeof v === "string" ? v : null);
-    await postAccrual(prisma, { firmId: client.firmId, clientId: client.id, key: String(key), edit: { amount: text(edit?.amount), debitCode: text(edit?.debitCode), creditCode: text(edit?.creditCode) }, actorId: (await getCurrentMember()).id });
+    const o = await submitAccrual(prisma, { firmId: client.firmId, clientId: client.id, key: String(key), edit: { amount: text(edit?.amount), debitCode: text(edit?.debitCode), creditCode: text(edit?.creditCode) }, maker: member });
     revalidatePath(`/clients/${client.id}`, "layout");
-    return { ok: true };
+    return { ok: true, ...saved(o) };
   } catch (e) {
     if (e instanceof AccrualFieldError) return { ok: false, error: e.message, fields: { [e.field]: e.message } };
     return fail(e);

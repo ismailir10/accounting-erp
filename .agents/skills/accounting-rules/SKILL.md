@@ -41,12 +41,13 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
    entities goes through 1190 in each entity's own books (rule 10). The only exception clears what older books left there (a
    line moving that entity's balance on the account toward zero); close control `bank-entity:` (REVIEW) shows such leftovers.
 2a. **Persetujuan kedua: a waiting journal is a request, never an entry** (`lib/approvals/journals.ts`, cycle 2026-10-18-persetujuan-kedua).
-   When the firm's card routes a journal (*Jurnal manual* — Jurnal Penyesuaian with or without *Balik otomatis*, and *Balik jurnal* — or a
-   *Draf AI*, each strictly above its whole-Rupiah threshold; a company kept in another currency routes every journal of a switched-on
-   source), the save stores a `JournalApproval` (lines as account code + minor-unit strings + note, the maker and the maker's role) and
+   When the firm's card routes a journal (*Jurnal manual* — Jurnal Penyesuaian with or without *Balik otomatis*, *Balik jurnal* and an
+   accrual card's *Setujui* — or a *Draf AI*, each strictly above its whole-Rupiah threshold; a company kept in another currency routes
+   every journal of a switched-on source), the save stores a `JournalApproval` (lines as account code + minor-unit strings + note, the maker and the maker's role) and
    writes **no** `JournalEntry`: no report, control or ledger view sees it. Every check the post would make runs at submission
    (`checkJournal`). Another member with `books.write` on the client, never the maker, of a tier at least the maker's (Admin and Pemilik
-   one tier; Peninjau never) approves it; the maker's own writer then posts it through `postJournal()` in **one transaction** with the
+   one tier; Peninjau never) approves it; the maker's own writer (the adjustment writer, through the accrual writer for an approved
+   *Usulan akrual* — rule 5a; the reversal writer; `postProposal`) then posts it through `postJournal()` in **one transaction** with the
    status change (`APPROVED` + `entryId`), every check made again; a refusal leaves it `PENDING`. `postedById` is the approver; the request
    keeps the maker. Reject needs a note (≥ 5 characters); only the maker withdraws. When no other member may approve (the only admin's own
    journal), it posts at once and Riwayat says "Dicatat tanpa persetujuan kedua". The deterministic writers (schedules, registers, tax,
@@ -117,10 +118,17 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
       account of a payee's history covered through M's end, rule 22c; a ledger-fed company has imported lines in M). A manual accrual
       on the account in M (an ADJUSTMENT crediting a liability, or an ACCRUAL schedule's instalment) hides a ledger bucket and warns
       on a payee or supplier card. Every history line is cited as `jl:<id>`, so the amount drills to its bank row or `sheet!row`.
-    - **Posted only by the accountant's click** (*Setujui*, `postAccrual`): one SERIALIZABLE transaction re-checks that the proposal is
-      undecided and still missing, posts Dr the account / Cr 2150 on M's last day and its mirror on the 1st of M+1 (`reversesId` set)
-      through Jurnal Penyesuaian's own writer (`postAdjustmentTx`, *Balik otomatis*; a locked M+1 refuses both), and stores the
-      `ProposedEntry` (source ACCRUAL) POSTED with its entry. *Tolak* stores it DISMISSED, for M only. Nothing else proposes accruals.
+    - **Posted only by the accountant's click** (*Setujui*, `postAccrual` / `postPreparedAccrual`): one SERIALIZABLE transaction
+      re-checks that the proposal is undecided and still missing, posts Dr the account / Cr 2150 on M's last day and its mirror on the
+      1st of M+1 (`reversesId` set) through Jurnal Penyesuaian's own writer (`postPreparedAdjustment`, *Balik otomatis*; a locked M+1
+      refuses both), and stores the `ProposedEntry` (source ACCRUAL) POSTED with its entry. *Tolak* stores it DISMISSED, for M only.
+      Nothing else proposes accruals.
+    - **With Persetujuan kedua's *Jurnal manual* on** (rule 2a), *Setujui* follows the manual journal's route (`submitAccrual`): strictly
+      above the threshold (or every accrual of a non-Rupiah company) it stores a MANUAL `JournalApproval` with *Balik otomatis* and
+      `accrualKey` = the proposal's key — no entry, no `ProposedEntry`; the card leaves *Usulan akrual* while it waits and refuses a direct
+      *Setujui* / *Tolak*. Another member's approval re-reads the proposal and posts the stored lines through the same accrual writer,
+      storing the decision and approving the request in one transaction; a refusal (payment arrived, decided, M+1 locked) leaves it
+      waiting. A rejected request brings the card back with the reason. Equal posts; with nobody else to approve, it posts at once.
     - A POSTED accrual whose counterparty then gets a line in M (a late statement) counts the expense twice: REVIEW control
       `accrual-paid:` *Akrual dan pembayaran di bulan yang sama* lists both and points to *Salin* of the accrual's reversal into M with
       *Balik otomatis*; acknowledged with a note like any REVIEW, never FAIL.

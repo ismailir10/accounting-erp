@@ -9,15 +9,17 @@ import { adjustmentPosting, firstOfNextMonth, postAdjustment, postPreparedAdjust
 import { checkReversal, mirrorLines, reverseEntry, reverseEntryTx } from "@/lib/ledger/reverse";
 import { chosenAccounts, postProposal, readLines } from "@/lib/adjust/proposals";
 import { closeLock } from "@/lib/adjust/schedules";
+import { ACCRUAL_PENDING, checkAccrualOpen, currentAccrual, postAccrual, postPreparedAccrual, prepareAccrual, type AccrualEdit } from "@/lib/adjust/accruals";
 import { clientPeople } from "@/lib/checklist/view";
 import { readApprovals } from "@/lib/settings/approvals";
 import { ApprovalError, approvalSubject, approverProblem, hasApprover, JOURNAL_FALLBACK, journalHead, NOTE_MESSAGE, NOTE_MIN, PENDING_DRAFT, routing, sourceRoute, waitReason, type SourceRoute } from "@/lib/approvals/second";
 
 /**
  * Persetujuan kedua for journals (cycle 2026-10-18-persetujuan-kedua, accounting-rules 2a). A routed journal is saved as a request
- * (`JournalApproval`), never as a ledger entry; on approval the maker's own writer posts it — the adjustment writer, the reversal writer
- * or `postProposal` — all through postJournal(), the only writer, in one transaction with the status change. Below the threshold, with the
- * card off, or for a source that isn't routed, every writer runs exactly as before.
+ * (`JournalApproval`), never as a ledger entry; on approval the maker's own writer posts it — the adjustment writer (directly, or through
+ * the accrual writer for an approved *Usulan akrual*), the reversal writer or `postProposal` — all through postJournal(), the only writer,
+ * in one transaction with the status change. Below the threshold, with the card off, or for a source that isn't routed, every writer
+ * runs exactly as before.
  */
 export type Maker = { id: string; role: MemberRole };
 /** `posted`: the entry is in the books (`fallback` when no one else could approve it); otherwise it waits as `approvalId`. */
@@ -83,6 +85,7 @@ type NewRequest = {
   reversesId?: string;
   proposalId?: string;
   accounts?: string[];
+  accrualKey?: string;
 };
 
 /** Stores the request and its "diajukan" event in `tx` (the caller has checked it could post). */
@@ -100,6 +103,7 @@ async function createRequest(tx: Tx, r: NewRequest) {
       reversesId: r.reversesId ?? null,
       proposalId: r.proposalId ?? null,
       accounts: r.accounts ?? [],
+      accrualKey: r.accrualKey ?? null,
       amount: r.amount,
       threshold: r.threshold,
       makerId: r.maker.id,
@@ -157,6 +161,45 @@ async function checkPrepared(tx: Tx, a: PreparedAdjustment) {
     await checkJournal(tx, { entityId: a.entity.id, date: on, lines: mirrorLines(lines) });
   } catch (e) {
     if (e instanceof LedgerError) throw new LedgerError(`Jurnal pembalik ${formatDate(on)} tidak bisa dicatat: ${e.message}. Jurnalnya tidak disimpan.`);
+    throw e;
+  }
+}
+
+/**
+ * *Setujui* on a *Usulan akrual* card (with *Ubah*'s edits) follows *Jurnal manual*'s route (cycle 2026-10-18-usulan-akrual, decisions
+ * while integrating): the accountant's click is the maker's. Card off or at/below the threshold: posted at once, exactly as the accrual
+ * writer does. Above it: the proposal is re-checked (undecided, payment still missing) with every check the post would make (the month and
+ * the reversal's), and the journal is stored as a request with *Balik otomatis* naming the proposal (`accrualKey`) — no entry, and the
+ * card leaves *Usulan akrual* while it waits. With nobody else to approve, it posts at once and Riwayat says so.
+ */
+export async function submitAccrual(db: Db, input: { firmId: string; clientId: string; key: string; edit?: AccrualEdit; maker: Maker; now?: Date }): Promise<Outcome> {
+  const settings = await readApprovals(db, input.firmId);
+  const by = input.maker.id;
+  if (!settings.manual) return { posted: true, entryId: (await postAccrual(db, { ...input, actorId: by })).id, fallback: false };
+  const { proposal, prepared } = await prepareAccrual(db, input);
+  const amount = sumDebit(prepared.lines);
+  const route = routing(settings, "MANUAL", amount, prepared.entity.functionalCurrency);
+  const h: Head = { source: "MANUAL", memo: prepared.memo, date: prepared.date, amount, currency: prepared.entity.functionalCurrency };
+  const direct = { firmId: input.firmId, clientId: input.clientId, proposal, prepared, actorId: by };
+  if (!route.routed) return { posted: true, entryId: (await postPreparedAccrual(db, direct)).id, fallback: false };
+  if (!(await approverExists(db, input.clientId, input.maker))) {
+    const entry = await postPreparedAccrual(db, { ...direct, onPosted: (tx, e) => recordFallback(tx, input.clientId, prepared.entity.id, h, e.id, by) });
+    return { posted: true, entryId: entry.id, fallback: true };
+  }
+  try {
+    const a = await db.$transaction(
+      async (tx) => {
+        await closeLock(tx, input.clientId);
+        await checkAccrualOpen(tx, proposal);
+        await checkPrepared(tx, prepared);
+        return createRequest(tx, { ...h, clientId: input.clientId, entityId: prepared.entity.id, lines: stored(prepared.lines), threshold: route.threshold, maker: input.maker, reverseNextMonth: true, accrualKey: proposal.key });
+      },
+      { isolationLevel: "Serializable", timeout: 60_000 },
+    );
+    return { posted: false, approvalId: a.id };
+  } catch (e) {
+    if (isUnique(e)) throw new LedgerError(ACCRUAL_PENDING); // a second request racing this one
+    if ((e as { code?: string }).code === "P2034") throw new LedgerError("Buku sedang diubah bersamaan; coba catat lagi.");
     throw e;
   }
 }
@@ -270,7 +313,7 @@ async function markApproved(tx: Tx, a: Request, entryId: string, approverId: str
 }
 
 /** The stored lines on the client's chart as it is now (an account removed meanwhile refuses). */
-async function preparedOf(tx: Tx, a: Request): Promise<PreparedAdjustment> {
+async function preparedOf(tx: Db | Tx, a: Request): Promise<PreparedAdjustment> {
   const lines = readStoredLines(a.lines);
   const accounts = new Map((await tx.account.findMany({ where: { clientId: a.clientId, code: { in: lines.map((l) => l.accountCode) } } })).map((x) => [x.code, x]));
   return {
@@ -291,21 +334,29 @@ async function preparedOf(tx: Tx, a: Request): Promise<PreparedAdjustment> {
  * the reversal's month, the chart, not already reversed, a draft's freshness and grounding). Posting and the status change are one
  * transaction; a refusal leaves the request PENDING and returns the writer's reason. The entry's `postedById` is the approver.
  */
-export async function approveJournal(db: Db, input: { clientId: string; approvalId: string; approver: Maker }) {
+export async function approveJournal(db: Db, input: { clientId: string; approvalId: string; approver: Maker; now?: Date }) {
   const first = await loadRequest(db, input.clientId, input.approvalId);
   const problem = approverProblem(input.approver, first);
   if (problem) throw new ApprovalError(problem);
   const by = input.approver.id;
+  const claimed = async (tx: Tx) => {
+    await closeLock(tx, input.clientId);
+    await claim(tx, input.clientId, first.id);
+  };
+  if (first.accrualKey) {
+    // A waiting *Usulan akrual*: the proposal read again now (still undecided, payment still missing, next month open), the stored
+    // lines posted through the accrual writer with *Balik otomatis*, the decision stored POSTED and the request approved — one transaction.
+    const proposal = await currentAccrual(db, input.clientId, first.accrualKey, input.now, true);
+    if (proposal.blocked) throw new LedgerError(proposal.blocked);
+    return postPreparedAccrual(db, { firmId: first.firmId, clientId: input.clientId, proposal, prepared: await preparedOf(db, first), actorId: by, guard: claimed, onPosted: (tx, entry) => markApproved(tx, first, entry.id, by) });
+  }
   if (first.source === "AI_DRAFT") {
     return postProposal(db, {
       clientId: input.clientId,
       proposalId: first.proposalId!,
       accounts: first.accounts,
       actorId: by,
-      guard: async (tx) => {
-        await closeLock(tx, input.clientId);
-        await claim(tx, input.clientId, first.id);
-      },
+      guard: claimed,
       onPosted: (tx, entry) => markApproved(tx, first, entry.id, by),
     });
   }

@@ -369,6 +369,39 @@ migration: stop and ask.
   | 390 px without sideways scroll | e2e (both tests) |
   | Deck claims (`kantor.html` slides 10 and 07) | ship (driver) |
 
+- **Decisions while integrating** (merge onto *Instruksi kantor* and *Persetujuan kedua*, driver's decision):
+  - **An accrual card's *Setujui* follows Persetujuan kedua's *Jurnal manual* route.** With the firm's *Jurnal manual* on, the
+    accountant's *Setujui* (with *Ubah*'s edits) is the maker's click: strictly above the threshold it becomes a pending
+    `JournalApproval` instead of posting (no `JournalEntry`, no `ProposedEntry`); equal posts; a non-Rupiah company routes every
+    accrual; when no other member may approve (the only admin's own click) it posts at once and Riwayat says "Dicatat tanpa persetujuan
+    kedua". With the setting off (the default) *Setujui* is exactly as built in this cycle.
+  - **One writer.** Persetujuan kedua split the adjustment writer into `prepareAdjustment` + `postPreparedAdjustment`; this cycle's
+    `postAdjustmentTx` is folded into the latter, so Jurnal Penyesuaian, an approved waiting journal and the accrual post all go through
+    `postPreparedAdjustment` (*Balik otomatis* included). The accrual writer is split the same way: `prepareAccrual` (the proposal as it
+    reads now, *Ubah* checked, a `PreparedAdjustment`) and `postPreparedAccrual` (SERIALIZABLE: a `guard`, the undecided/still-missing
+    re-check `checkAccrualOpen`, the one adjustment writer, the POSTED decision, an `onPosted` hook). `postAccrual` (direct),
+    `submitAccrual` (routing, `lib/approvals/journals.ts`) and `approveJournal` (the approval) all use it.
+  - **The link is one nullable column, `JournalApproval.accrualKey`** (migration `20261018160000_accrual_second_approval`: additive, no
+    backfill; the source CHECK allows it only on a MANUAL request with *Balik otomatis*; a partial unique index keeps one PENDING per
+    proposal). The request is MANUAL with *Balik otomatis*, lines as typed (Dr the account / Cr the liability, the counterparty as each
+    line's note); Kotak shows it under *Persetujuan kedua* labelled *Usulan akrual*, and `accrualProposals` leaves a waiting key out, so
+    the card is never in both kinds. While it waits, a direct *Setujui* or *Tolak* (and a second request) is refused: "Usulan akrual ini
+    menunggu persetujuan kedua. Putuskan di Kotak persetujuan." August (dated) and September (its reversal) can't lock meanwhile.
+  - **Approval** re-reads the proposal (`currentAccrual` with `withPending`): a payment that arrived, a decision made or a locked next
+    month refuses and leaves the request PENDING; otherwise the stored lines post, the `ProposedEntry` is stored POSTED with the entry
+    (`decidedById` = the approver, so the origin line reads as an approved accrual) and the request becomes APPROVED, in one transaction
+    under the client's close lock. **Reject or withdraw** stores nothing on the proposal: the card comes back to *Usulan akrual*, a
+    rejected one with "Ditolak <nama>: <alasan>" (as a rejected AI draft), and may be submitted again or rejected.
+  - The card says so before the click with the forms' own line (`formNotice` on the typed amount): "Di atas Rp …: jurnal ini menunggu
+    persetujuan anggota lain sebelum dicatat." and *Ajukan persetujuan*; the toast reads "Jurnal menunggu persetujuan".
+    `postAccrualAction` now answers like `adjustmentAction` (`entryId`, `pending`, `fallback`).
+  - Tests: `tests/db/accrual-second-approval.test.ts` — card off posts at once with no request; above the threshold a request with no
+    entry, the card under *Persetujuan kedua* only, counts = queue, direct paths refused, both months' lock blocked; approval by a second
+    member posts the accrual and its 1 Sep reversal (`postedById` = approver), stores POSTED and approves the request (never the maker's
+    own; a second click decides nothing); at/below the threshold posts directly and *Ubah*'s amount is what is routed; a rejection
+    returns the card with the reason and an approval after the payment arrived stays pending; the one-admin fallback. Kotak:
+    `tests/db/approvals.test.ts` (both kinds, `second` and `accrual` in the counts, *Persetujuan kedua* first).
+
 ## Verification
 - Build worker, on its own test database (`buku_test_b`), before the driver's walk:
   - `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code` after `migrate deploy`:
@@ -382,6 +415,8 @@ migration: stop and ask.
 
 ## Ship Notes
 - Migration `20261018140000_accrual_proposals`: `ALTER TYPE "ProposalSource" ADD VALUE 'ACCRUAL'` only — additive, no backfill.
+- Migration `20261018160000_accrual_second_approval` (after Persetujuan kedua's): `JournalApproval.accrualKey` (nullable), the source
+  CHECK extended for it, a partial unique index of one PENDING request per proposal — additive, no backfill.
 - No env var, no dependency, no AI call. Numbers move only when an accountant approves an accrual.
 - The `e2e` label applies (Kotak, Jurnal Penyesuaian, Tutup Buku flows).
 - Deck review at ship: `kantor.html` slide 10 *Penyesuaian* (accruals proposed from each vendor's history) and slide 07 *Review*

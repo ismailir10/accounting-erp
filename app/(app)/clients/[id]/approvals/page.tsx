@@ -37,6 +37,8 @@ export default async function ApprovalsPage({ params, searchParams }: { params: 
       : { ...s, canDecide: canReopen && s.requestedById !== me.id, mine: canReopen && s.requestedById === me.id },
   );
   const draftRoute = q.drafts.some((d) => d.source === "AI_CONTROL") ? await routeFor(prisma, client.id, me, "AI_DRAFT") : undefined;
+  // An accrual's *Setujui* follows *Jurnal manual*'s route (the card says so before the click).
+  const accrualRoute = q.accruals.length ? await routeFor(prisma, client.id, me, "MANUAL") : undefined;
   const reopenOnly = q.locked && q.counts.total === q.counts.second && second.some((s) => s.type === "reopen");
   const query = { entity: scope.value, period: period.key };
   // A kind with nothing waiting has no tab; an unknown or empty `?jenis=` falls back to Semua (ui-rules 13a).
@@ -99,6 +101,7 @@ export default async function ApprovalsPage({ params, searchParams }: { params: 
           faktur={q.faktur}
           second={second}
           draftRoute={draftRoute}
+          accrualRoute={accrualRoute}
           fakturAccounts={q.fakturAccounts}
           draftAccounts={draftAccounts}
           reviewHref={withParams(`${base}/review`, query)}

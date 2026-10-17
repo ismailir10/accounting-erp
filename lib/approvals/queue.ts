@@ -10,7 +10,7 @@ import { FAKTUR_PREFERRED, fakturCounterAccounts, fakturRecon } from "@/lib/tax/
 import type { JournalApprovalSource, MemberRole } from "@/lib/generated/prisma/enums";
 import { readStoredLines } from "@/lib/approvals/journals";
 import { pendingReopens } from "@/lib/approvals/reopen";
-import { SOURCE_LABEL, waitingFor, waitReason } from "@/lib/approvals/second";
+import { ACCRUAL_LABEL, SOURCE_LABEL, waitingFor, waitReason } from "@/lib/approvals/second";
 import { accrualProposals, NO_CREDIT } from "@/lib/adjust/accruals";
 
 /**
@@ -87,6 +87,8 @@ export type AccrualCard = {
   rationale: string;
   warning: string | null;
   blocked: string | null;
+  /** Persetujuan kedua: the latest request for it was rejected — "Ditolak <nama>: <alasan>" (it is back to decide again). */
+  rejected: string | null;
 };
 export type FakturCard = {
   id: string;
@@ -182,8 +184,19 @@ async function scheduled(db: Db, input: QueueInput, ids: string[], start: Date):
 
 async function accruals(db: Db, input: QueueInput, ids: string[]): Promise<AccrualCard[]> {
   if (!ids.length) return [];
-  // Problems first already (blocked, then warned).
-  return (await accrualProposals(db, input.clientId, input.year, input.month, { entityIds: ids, now: input.now })).map((p) => ({
+  // Problems first already (blocked, then warned). One waiting for a second approver is under Persetujuan kedua instead; one rejected
+  // there is back here with the reason (a withdrawn one says nothing), as a rejected AI draft is.
+  const proposals = await accrualProposals(db, input.clientId, input.year, input.month, { entityIds: ids, now: input.now });
+  const asked = proposals.length
+    ? await db.journalApproval.findMany({ where: { accrualKey: { in: proposals.map((p) => p.key) }, status: { in: ["REJECTED", "WITHDRAWN"] } }, select: { accrualKey: true, status: true, note: true, decidedBy: { select: { name: true } } }, orderBy: { decidedAt: "desc" } })
+    : [];
+  const latest = new Map<string, (typeof asked)[number]>();
+  for (const a of asked) if (a.accrualKey && !latest.has(a.accrualKey)) latest.set(a.accrualKey, a);
+  const rejected = (key: string) => {
+    const a = latest.get(key);
+    return a?.status === "REJECTED" ? `Ditolak ${a.decidedBy?.name ?? "anggota lain"}: ${a.note}` : null;
+  };
+  return proposals.map((p) => ({
     id: p.key,
     source: "ACCRUAL",
     entityId: p.entity.id,
@@ -199,6 +212,7 @@ async function accruals(db: Db, input: QueueInput, ids: string[]): Promise<Accru
     rationale: p.rationale,
     warning: p.warning,
     blocked: p.blocked,
+    rejected: rejected(p.key),
   }));
 }
 
@@ -252,7 +266,7 @@ async function secondCards(db: Db, input: QueueInput, ids: string[], start: Date
     type: "journal",
     id: a.id,
     source: a.source,
-    sourceLabel: SOURCE_LABEL[a.source],
+    sourceLabel: a.accrualKey ? ACCRUAL_LABEL : SOURCE_LABEL[a.source],
     entityId: a.entityId,
     entity: a.entity.shortName,
     currency: a.entity.functionalCurrency,

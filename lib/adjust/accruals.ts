@@ -8,7 +8,7 @@ import { todayWib } from "@/lib/checklist/rules";
 import { dateOnly, formatDate, formatMonthYear, monthName, periodBounds } from "@/lib/format";
 import { formatMoney, parseMoney } from "@/lib/money";
 import { LedgerError } from "@/lib/ledger/post";
-import { postPreparedAdjustment } from "@/lib/ledger/adjustment";
+import { postPreparedAdjustment, type PreparedAdjustment } from "@/lib/ledger/adjustment";
 import type { ProposalLine } from "@/lib/adjust/proposals";
 
 /**
@@ -180,7 +180,13 @@ export type AccrualProposal = {
   blocked: string | null;
 };
 
-export type ProposalOptions = { entityIds?: string[]; /** Today is read in Asia/Jakarta (tests fix it). */ now?: Date };
+export type ProposalOptions = {
+  entityIds?: string[];
+  /** Today is read in Asia/Jakarta (tests fix it). */
+  now?: Date;
+  /** Include proposals waiting for a second approver (Persetujuan kedua): only its approval reads them. */
+  withPending?: boolean;
+};
 
 type Line = Awaited<ReturnType<typeof historyLines>>[number];
 
@@ -300,7 +306,13 @@ export async function accrualProposals(db: Db, clientId: string, year: number, m
     });
     if (!recurring.length) continue;
 
-    const decided = new Set((await db.proposedEntry.findMany({ where: { key: { in: recurring.map((g) => accrualKey(e.id, year, month, byId.get(g.accountId)!.code, g.bucket)) } }, select: { key: true } })).map((p) => p.key));
+    // Decided, or waiting for a second approver (shown under Persetujuan kedua instead, never twice).
+    const keys = recurring.map((g) => accrualKey(e.id, year, month, byId.get(g.accountId)!.code, g.bucket));
+    const [stored, waiting] = await Promise.all([
+      db.proposedEntry.findMany({ where: { key: { in: keys } }, select: { key: true } }),
+      opts.withPending ? [] : db.journalApproval.findMany({ where: { accrualKey: { in: keys }, status: "PENDING" }, select: { accrualKey: true } }),
+    ]);
+    const decided = new Set([...stored.map((p) => p.key), ...waiting.flatMap((a) => (a.accrualKey ? [a.accrualKey] : []))]);
     const opening = await openingDate(db, e.id);
     const covered = new Map<string, boolean>();
     const isCovered = async (bankAccountId: string) => {
@@ -413,6 +425,7 @@ export class AccrualFieldError extends LedgerError {
 }
 
 export const DECIDED = "Usulan akrual ini sudah diputuskan.";
+export const ACCRUAL_PENDING = "Usulan akrual ini menunggu persetujuan kedua. Putuskan di Kotak persetujuan.";
 const GONE = "Usulan akrual ini tidak berlaku lagi. Muat ulang halaman.";
 
 /** *Ubah*: a new amount (major units, typed) and accounts; blank keeps Buku's. */
@@ -428,13 +441,25 @@ async function labelOf(db: Db | Tx, clientId: string, code: string, bucket: Buck
 
 const arrivedText = (label: string, a: Arrival) => `Pembayaran ${label} ${formatDate(a.date)} sudah masuk; usulan ini tidak berlaku lagi.`;
 
-/** The proposal behind a key as it reads now, or the reason it no longer exists (decided, the payment arrived, or anything else). */
-export async function currentAccrual(db: Db, clientId: string, key: string, now?: Date): Promise<AccrualProposal> {
+/** A request of Persetujuan kedua waiting on this proposal: no direct *Setujui* or *Tolak* while it waits. */
+async function waitingRequest(db: Db | Tx, key: string) {
+  return (await db.journalApproval.findFirst({ where: { accrualKey: key, status: "PENDING" }, select: { id: true } })) !== null;
+}
+export const noPendingAccrual = (key: string) => async (db: Db | Tx) => {
+  if (await waitingRequest(db, key)) throw new LedgerError(ACCRUAL_PENDING);
+};
+
+/**
+ * The proposal behind a key as it reads now, or the reason it no longer exists (waiting for a second approver, decided, the payment
+ * arrived, or anything else). `withPending`: a waiting proposal is read as any other (its approval).
+ */
+export async function currentAccrual(db: Db, clientId: string, key: string, now?: Date, withPending = false): Promise<AccrualProposal> {
   const k = parseAccrualKey(key);
   const entity = k ? await db.entity.findFirst({ where: { id: k.entityId, clientId }, select: { id: true } }) : null;
   if (!k || !entity) throw new LedgerError(GONE);
-  const found = (await accrualProposals(db, clientId, k.year, k.month, { entityIds: [k.entityId], now })).find((p) => p.key === key);
+  const found = (await accrualProposals(db, clientId, k.year, k.month, { entityIds: [k.entityId], now, withPending })).find((p) => p.key === key);
   if (found) return found;
+  if (!withPending && (await waitingRequest(db, key))) throw new LedgerError(ACCRUAL_PENDING);
   if (await db.proposedEntry.findUnique({ where: { key }, select: { id: true } })) throw new LedgerError(DECIDED);
   const account = await db.account.findFirst({ where: { clientId, code: k.code }, select: { id: true } });
   const [first] = account ? await arrivals(db, k.entityId, account.id, k.bucket, k.year, k.month) : [];
@@ -465,11 +490,11 @@ const stored = (firmId: string, clientId: string, p: AccrualProposal) => ({
 const isCode = (e: unknown, code: string) => (e as { code?: string } | null)?.code === code;
 
 /**
- * *Setujui* (with *Ubah*'s edits): one SERIALIZABLE transaction that re-checks the proposal is still undecided and still missing, posts
- * the ADJUSTMENT on the month's last day and its mirror on the 1st of the next month through Jurnal Penyesuaian's own writer
- * (`postPreparedAdjustment`, *Balik otomatis*), and stores the decision POSTED with its entry. A locked next month refuses both.
+ * *Setujui*'s journal (with *Ubah*'s edits), read and checked but not posted: the proposal as it reads now, and the ADJUSTMENT on the
+ * month's last day with *Balik otomatis* as the one adjustment writer takes it (lib/ledger/adjustment.ts). A refusal tied to a field says
+ * which. Persetujuan kedua routes this journal as *Jurnal manual* (lib/approvals/journals.ts `submitAccrual`).
  */
-export async function postAccrual(db: Db, input: { firmId: string; clientId: string; key: string; edit?: AccrualEdit; actorId?: string | null; now?: Date }) {
+export async function prepareAccrual(db: Db, input: { clientId: string; key: string; edit?: AccrualEdit; now?: Date }): Promise<{ proposal: AccrualProposal; prepared: PreparedAdjustment }> {
   const p = await currentAccrual(db, input.clientId, input.key, input.now);
   if (p.blocked) throw new LedgerError(p.blocked);
   const edit = input.edit ?? {};
@@ -495,27 +520,56 @@ export async function postAccrual(db: Db, input: { firmId: string; clientId: str
   if (special(credit) || credit.type !== "LIABILITAS") throw new AccrualFieldError("credit", "Akun kredit harus akun liabilitas, bukan bank, kliring (1190/1199) atau 1999.");
   if (debit.id === credit.id) throw new AccrualFieldError("credit", "Akun debit dan kredit harus berbeda.");
   const note = p.counterparty.slice(0, 200);
+  return {
+    proposal: p,
+    prepared: {
+      entity: { id: p.entity.id, functionalCurrency: p.entity.functionalCurrency },
+      date: p.date,
+      memo: p.memo,
+      lines: [
+        { accountId: debit.id, accountCode: debit.code, debit: amount, credit: 0n, memo: note },
+        { accountId: credit.id, accountCode: credit.code, debit: 0n, credit: amount, memo: note },
+      ],
+      reverseNextMonth: true,
+    },
+  };
+}
+
+/** Inside a decision's transaction: the proposal is still undecided and its payment still hasn't arrived. */
+export async function checkAccrualOpen(tx: Tx, p: AccrualProposal) {
+  if (await tx.proposedEntry.findUnique({ where: { key: p.key }, select: { id: true } })) throw new LedgerError(DECIDED);
+  const [first] = await arrivals(tx, p.entity.id, p.account.id, p.bucket, p.year, p.month);
+  if (first) throw new LedgerError(arrivedText(p.counterparty, first));
+}
+
+/**
+ * Posts a prepared accrual: one SERIALIZABLE transaction that runs `guard` (default: no request waiting on it), re-checks the proposal is
+ * still undecided and still missing, posts through the one adjustment writer (`postPreparedAdjustment`, *Balik otomatis*), stores the
+ * decision POSTED with its entry, then `onPosted` in the same transaction. A locked next month refuses both. The approval of a waiting
+ * accrual (Persetujuan kedua) posts through here with its own guard (the row claimed) and hook (the request approved).
+ */
+export async function postPreparedAccrual(
+  db: Db,
+  input: {
+    firmId: string;
+    clientId: string;
+    proposal: AccrualProposal;
+    prepared: PreparedAdjustment;
+    actorId?: string | null;
+    guard?: (tx: Tx) => Promise<void>;
+    onPosted?: (tx: Tx, entry: { id: string }) => Promise<void>;
+  },
+) {
+  const p = input.proposal;
+  const guard = input.guard ?? noPendingAccrual(p.key);
   try {
     return await db.$transaction(
       async (tx) => {
-        if (await tx.proposedEntry.findUnique({ where: { key: p.key }, select: { id: true } })) throw new LedgerError(DECIDED);
-        const [first] = await arrivals(tx, p.entity.id, p.account.id, p.bucket, p.year, p.month);
-        if (first) throw new LedgerError(arrivedText(p.counterparty, first));
-        const entry = await postPreparedAdjustment(
-          tx,
-          {
-            entity: { id: p.entity.id, functionalCurrency: p.entity.functionalCurrency },
-            date: p.date,
-            memo: p.memo,
-            lines: [
-              { accountId: debit.id, accountCode: debit.code, debit: amount, credit: 0n, memo: note },
-              { accountId: credit.id, accountCode: credit.code, debit: 0n, credit: amount, memo: note },
-            ],
-            reverseNextMonth: true,
-          },
-          input.actorId,
-        );
+        await guard(tx);
+        await checkAccrualOpen(tx, p);
+        const entry = await postPreparedAdjustment(tx, input.prepared, input.actorId);
         await tx.proposedEntry.create({ data: { ...stored(input.firmId, input.clientId, p), status: "POSTED", entryId: entry.id, decidedById: input.actorId ?? null, decidedAt: new Date() } });
+        await input.onPosted?.(tx, entry);
         return entry;
       },
       { isolationLevel: "Serializable", timeout: 60_000 },
@@ -525,6 +579,16 @@ export async function postAccrual(db: Db, input: { firmId: string; clientId: str
     if (isCode(e, "P2034")) throw new LedgerError("Buku sedang diubah bersamaan; coba catat lagi.");
     throw e;
   }
+}
+
+/**
+ * *Setujui* (with *Ubah*'s edits), posting at once: the ADJUSTMENT on the month's last day and its mirror on the 1st of the next month
+ * through Jurnal Penyesuaian's own writer, and the decision stored POSTED with its entry. With Persetujuan kedua's *Jurnal manual* on, the
+ * action goes through `submitAccrual` (lib/approvals/journals.ts), which may store a request instead.
+ */
+export async function postAccrual(db: Db, input: { firmId: string; clientId: string; key: string; edit?: AccrualEdit; actorId?: string | null; now?: Date }) {
+  const { proposal, prepared } = await prepareAccrual(db, input);
+  return postPreparedAccrual(db, { firmId: input.firmId, clientId: input.clientId, proposal, prepared, actorId: input.actorId });
 }
 
 /**
