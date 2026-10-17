@@ -77,7 +77,7 @@ test("an AKUNTAN cannot delete a client, change AI settings, or reopen a closed 
   await expect(akuntan.getByRole("heading", { name: "Pengaturan klien" })).toBeVisible();
   await expect(akuntan.getByText("Hapus klien")).toHaveCount(0);
   await akuntan.goto(`/clients/${jasa}/close?period=2026-08`);
-  await expect(akuntan.getByRole("heading", { name: "Tutup Buku" })).toBeVisible();
+  await expect(akuntan.getByRole("heading", { name: "Tutup Buku", exact: true })).toBeVisible();
   await expect(akuntan.getByTestId("unlock")).toHaveCount(0);
   await akuntan.context().close();
 });

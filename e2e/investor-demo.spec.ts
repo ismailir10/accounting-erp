@@ -103,8 +103,8 @@ test("statement in → reviewed → traceable reports → combined → closed", 
 
   // 7. Close: arithmetic passes; the ledger scan flags the machine bought in August (Aset Tetap moves for the first time
   // since its opening balance), and PT Ayam holds stock with no August count → the accountant notes why → sign-offs → lock
-  await page.getByRole("link", { name: "Tutup Buku" }).click();
-  await expect(page.getByRole("heading", { name: "Tutup Buku" })).toBeVisible();
+  await page.getByRole("link", { name: "Tutup Buku", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Tutup Buku", exact: true })).toBeVisible();
   await expect(page.getByText(/\d+ kontrol lolos/).first()).toBeVisible();
   await expect(page.getByText("Gagal")).toHaveCount(0);
   const flagged = page.locator('[data-testid^="control-"]').filter({ hasText: "Perlu dicek" });
