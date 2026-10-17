@@ -18,7 +18,7 @@ import { DEFAULT_RATE, grossUpWithholding, WITHHOLDING_LABEL } from "@/lib/tax/w
 import type { WithholdingKind } from "@/lib/generated/prisma/enums";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { accountantHints } from "@/lib/classify/hints";
+import { accountantHints, bulkAcceptable, isSureSuggestion } from "@/lib/classify/hints";
 import type { AiRunView } from "@/lib/ai/run";
 import { AiRunStatus, useAiRun } from "@/components/app/ai-run-status";
 
@@ -267,8 +267,8 @@ export function ReviewQueue({
   // Confident suggestions the reviewer hasn't touched: accepted in one click, in order, through the same saves as Enter.
   // A line with an open accountant hint (capex, a down payment, missing withholding) is never accepted in bulk: it needs a look.
   const hintsFor = (i: ReviewItem, c = get(i)) => accountantHints({ description: i.description, amount: BigInt(i.amount), account: accounts.find((o) => o.code === c.code) ?? null, wht: c.wht ?? "none", entityKind: i.entityKind ?? "PT" });
-  const sure = visible.filter((i) => i.method === "AI" && i.confidence >= 0.8 && !unsaved(i) && i.suggestedCode);
-  const confident = sure.filter((i) => hintsFor(i).length === 0);
+  const sure = visible.filter((i) => !unsaved(i) && isSureSuggestion(i));
+  const confident = sure.filter((i) => bulkAcceptable({ ...i, amount: BigInt(i.amount), entityKind: i.entityKind ?? "PT" }, accounts.find((o) => o.code === i.suggestedCode) ?? null));
   const hinted = sure.length - confident.length;
   const acceptConfident = () => {
     for (const i of confident) accept(i);

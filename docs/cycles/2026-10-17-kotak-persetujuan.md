@@ -196,7 +196,7 @@ None planned:
 If traceability turns out to need a column after all, that is a migration: stop and ask.
 
 ## Tasks
-- [ ] T1 `lib/approvals/queue.ts`: `approvalQueue` and `approvalCounts` over the four kinds, plus DB tests. Accept: each kind, scope,
+- [x] T1 `lib/approvals/queue.ts`: `approvalQueue` and `approvalCounts` over the four kinds, plus DB tests. Accept: each kind, scope,
       overdue and locked cases, counts = queue. Reuse: Review's query, `proposalViews` / `correctionViews` (`lib/adjust/proposals.ts`,
       `suspense.ts`), `dueProposals` / `proposalViews` (`lib/adjust/view.ts`), `fakturRecon`, `packApplies`, `isSimpleGuess`.
 - [ ] T2 Kotak page (`/clients/[id]/approvals`), the `ApprovalQueue` client component, the nav entry, and Review's `?tx=` focus.
@@ -215,6 +215,14 @@ If traceability turns out to need a column after all, that is a migration: stop 
       (`verify:books` ALL PASS). (deps: T2–T4)
 
 ## Implementation
+- Plan: T1 → T2, T3, T4 sequential, inline in one worker (they share the read model and the views it reads; a fan-out would cost
+  more than it saves). T5: the e2e spec and docs here; verify-local runs centrally.
+- T1: `lib/approvals/queue.ts`, `lib/classify/hints.ts`, `lib/adjust/{proposals,suspense,view}.ts`, `lib/tax/faktur.ts`,
+  `components/app/review-queue.tsx`, `app/(app)/clients/[id]/tax/masa/page.tsx`, `tests/db/approvals.test.ts`,
+  `tests/unit/review-hints.test.ts` — `approvalQueue` / `approvalCounts` over the four kinds (Review's query and order for bank lines,
+  `correctionViews`, the schedule `proposalViews`, `fakturRecon` per Rupiah company that imported faktur for the masa). Views gained
+  `entityId` for the scope filter. Review's bulk rule is now `isSureSuggestion` / `bulkAcceptable` (hints.ts), shared by both pages;
+  Pajak Masa's faktur account lists are `fakturCounterAccounts`, shared with Kotak.
 
 ## Verification
 

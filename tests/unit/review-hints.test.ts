@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accountantHints } from "@/lib/classify/hints";
+import { accountantHints, bulkAcceptable } from "@/lib/classify/hints";
 
 const acc = (code: string, name: string, group: string) => ({ code, name, group });
 const base = { wht: "none", entityKind: "PT" };
@@ -28,5 +28,19 @@ describe("accountant hints in Review", () => {
     expect(accountantHints(rent)[0]).toMatchObject({ key: "rent42", apply: { wht: "PPH_4_2", rate: "10" } });
     expect(accountantHints({ ...rent, description: "SEWA MOBIL OPERASIONAL" })[0].key).toBe("rent23");
     expect(accountantHints({ ...svc, amount: 15_000_000n })).toEqual([]);
+  });
+});
+
+describe("bulk acceptance (Review's Terima N yakin, Kotak's Setujui N usulan yakin)", () => {
+  const sale = acc("4100", "Penjualan", "Pendapatan · Pendapatan usaha");
+  const line = { method: "AI", confidence: 0.92, suggestedCode: "4100", description: "TRSF CR PT MITRA UNGGAS", amount: 11_000_000n, entityKind: "PT" };
+  it("takes only a sure AI suggestion with an account and no open hint", () => {
+    expect(bulkAcceptable(line, sale)).toBe(true);
+    expect(bulkAcceptable({ ...line, confidence: 0.8 }, sale)).toBe(true);
+    expect(bulkAcceptable({ ...line, confidence: 0.79 }, sale)).toBe(false);
+    for (const method of ["HEURISTIC", "RULE", "MEMORY", "TRANSFER"]) expect(bulkAcceptable({ ...line, method }, sale)).toBe(false);
+    expect(bulkAcceptable({ ...line, suggestedCode: null }, null)).toBe(false);
+    // A down payment received is not revenue yet: the hint holds it back.
+    expect(bulkAcceptable({ ...line, description: "TRSF CR PT MITRA UNGGAS DP AYAM" }, sale)).toBe(false);
   });
 });
