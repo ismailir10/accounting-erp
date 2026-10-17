@@ -3,7 +3,7 @@ import { Download } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { loadClientPage } from "@/lib/client-page";
 import { type SearchParams, withParams } from "@/lib/scope";
-import { formatDate, formatPeriod, periodBounds } from "@/lib/format";
+import { dateOnly, formatDate, formatPeriod, periodBounds } from "@/lib/format";
 import { formatRupiah } from "@/lib/money";
 import { packApplies } from "@/lib/tax/pack";
 import { masaReport, ppnLine, pph25Notes, pph25StateLabel, previousStateLabel, rowNotes, terNote, terRow, withholdingLabel, type MasaRow, type Pph25, type WithholdingLine } from "@/lib/tax/masa-report";
@@ -18,6 +18,8 @@ import { withholdingAccountCode } from "@/lib/tax/withholding";
 import { PTKP_LABEL } from "@/lib/tax/ter";
 import type { WithholdingKind } from "@/lib/generated/prisma/enums";
 import { DIRECTION_LABEL, fakturNotes, fakturRecon } from "@/lib/tax/faktur";
+import { fakturKeluaranDraft, fakturKeluaranFiles } from "@/lib/tax/coretax-faktur";
+import { CoretaxFaktur } from "@/components/app/coretax-faktur";
 import { ScopeBar } from "@/components/app/scope-bar";
 import { Money } from "@/components/app/money";
 import { StatusPill } from "@/components/app/status";
@@ -69,6 +71,9 @@ export default async function TaxMasaPage({ params, searchParams }: { params: Pr
   const faktur = await fakturRecon(prisma, { clientId: client.id, entityId: entity.id, year: period.year, month: period.month });
   const fakturGap = fakturNotes(faktur)[0];
   const counterAccounts = (await prisma.account.findMany({ where: { clientId: client.id }, orderBy: { code: "asc" } })).filter((a) => !a.isBank && !a.isSuspense && !a.isClearing && !a.isIntercompany);
+  const coretax = await fakturKeluaranDraft(prisma, { clientId: client.id, entityId: entity.id, year: period.year, month: period.month });
+  const coretaxParts = fakturKeluaranFiles(coretax).map((f, i) => ({ href: withParams(`${base}/tax/masa/coretax`, { period: period.key, entity: entity.id, part: i ? String(i + 1) : undefined }), rows: f.rows }));
+  const uploadBy = period.month === 12 ? dateOnly(period.year + 1, 1, 15) : dateOnly(period.year, period.month + 1, 15);
   const bupot = await bupotRecon(prisma, { clientId: client.id, entityId: entity.id, year: period.year, month: period.month });
   const bupotGap = bupotNotes(bupot)[0];
   const day = (d: Date) => formatDate(d);
@@ -188,6 +193,42 @@ export default async function TaxMasaPage({ params, searchParams }: { params: Pr
               notCounted: d.notCounted.map((f) => ({ id: f.id, number: f.number, date: day(f.date), npwp: f.npwp, name: f.name, ppn: f.ppn.toString(), status: f.status, sourceRef: f.sourceRef })),
               uncredited: d.uncredited.map((f) => ({ id: f.id, number: f.number, date: day(f.date), npwp: f.npwp, name: f.name, ppn: f.ppn.toString(), status: f.status, sourceRef: f.sourceRef })),
             }))}
+          />
+        </CardContent>
+      </Card>
+
+      <Card id="faktur-coretax" className="scroll-mt-6">
+        <CardHeader>
+          <CardTitle>Faktur keluaran untuk Coretax</CardTitle>
+          <CardDescription>
+            Faktur penjualan ber-PPN masa {label} dari Piutang & Utang sebagai file impor Coretax: kode transaksi 04, DPP nilai lain 11/12 dari DPP, PPN 12%. Coretax memberi
+            nomor fakturnya sendiri.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <CoretaxFaktur
+            clientId={client.id}
+            label={label}
+            parts={coretaxParts}
+            counts={coretax.counts}
+            companyReasons={coretax.companyReasons.map((r) => r.text)}
+            rows={coretax.rows.map((r) => ({
+              invoiceId: r.invoiceId,
+              number: r.number,
+              date: day(r.date),
+              description: r.description,
+              dpp: r.dpp.toString(),
+              ppn: r.ppn.toString(),
+              contact: { id: r.contact.id, name: r.contact.name, npwp: r.contact.npwp ?? "", nik: r.contact.nik ?? "", nitku: r.contact.nitku ?? "", address: r.contact.address ?? "", email: r.contact.email ?? "" },
+              item: { ...r.item, own: r.item.name === r.description ? "" : r.item.name },
+              status: r.status,
+              reasons: r.reasons,
+              coretaxNumber: r.coretaxNumber,
+            }))}
+            bankPpn={coretax.bankPpn.map((b) => ({ key: b.key, date: day(b.date), label: b.label, ppn: b.ppn.toString() }))}
+            settingsHref={`${base}/settings`}
+            receivablesHref={withParams(`${base}/receivables`, { period: period.key })}
+            uploadBy={day(uploadBy)}
           />
         </CardContent>
       </Card>

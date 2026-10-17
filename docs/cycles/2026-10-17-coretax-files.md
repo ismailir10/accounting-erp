@@ -214,20 +214,67 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
   app flow).
 
 ## Tasks
-- [ ] T1 Migration + `lib/receivables` contact identity (`setContactTaxIdentity`: NPWP / NIK / NITKU / address / email, normalised,
+- [x] T1 Migration + `lib/receivables` contact identity (`setContactTaxIdentity`: NPWP / NIK / NITKU / address / email, normalised,
       audited) + invoice item detail (`setInvoiceFakturItem`, bulk) — accept: DB tests for validation, scoping and audit.
-- [ ] T2 `lib/tax/coretax-faktur-xml.ts`, a pure builder (company + rows → XML string, parts of 1,000) with the bigint 11/12 and 12 %
+- [x] T2 `lib/tax/coretax-faktur-xml.ts`, a pure builder (company + rows → XML string, parts of 1,000) with the bigint 11/12 and 12 %
       math. Golden fixture + DJP sample tag-order test — accept: unit tests green. (Parallel with T1.)
-- [ ] T3 `lib/tax/coretax-faktur.ts` `fakturKeluaranDraft` (candidates, exclusion via `fakturRecon` matches and I5e numbers, block
+- [x] T3 `lib/tax/coretax-faktur.ts` `fakturKeluaranDraft` (candidates, exclusion via `fakturRecon` matches and I5e numbers, block
       reasons) — accept: DB tests for every inclusion and block rule. (Deps: T1; reuse `fakturRecon`, `npwpDigits`, `packApplies`.)
-- [ ] T4 Download route `tax/masa/coretax` (`?entity&period&part`), audit event, server actions — accept: route DB tests (member 200,
+- [x] T4 Download route `tax/masa/coretax` (`?entity&period&part`), audit event, server actions — accept: route DB tests (member 200,
       stranger and revoked 404, no `REPORT_EXPORT`). (Deps: T2, T3.)
-- [ ] T5 Card *Faktur keluaran untuk Coretax* on Pajak Masa, with the identity sheet and the bulk item form — accept: Playwright flows
+- [x] T5 Card *Faktur keluaran untuk Coretax* on Pajak Masa, with the identity sheet and the bulk item form — accept: Playwright flows
       1 and 3. (Deps: T4.)
 - [ ] T6 verify-local: walk flows 1–4, open the XML, screenshots at 1440 and 390 px, full gate.
 
 ## Implementation
+- Plan: T1–T5 sequential, inline in one build worker (the driver gave this worker the whole cycle; T3–T5 share `lib/tax`,
+  `app/actions.ts` and the Pajak Masa page, and T2's builder is small). T6 (verify-local, the Playwright run) by the driver.
+- T1: `prisma/migrations/20261017120000_coretax_faktur`, `prisma/schema.prisma`, `lib/tax/coretax-codes.ts`,
+  `lib/receivables/faktur-identity.ts`, `lib/clients/entities.ts`, `tests/db/faktur-identity.test.ts` — the nullable columns;
+  `setContactTaxIdentity` (NPWP via `normalizeNpwp`, NIK 16 digits, NITKU 22 digits starting with the NPWP16, address, email; field
+  errors as `OnboardingError`) and `setInvoiceFakturItem` (bulk, SALES only, one company), both audited as `FAKTUR`; `renameEntity`
+  takes an optional seller NITKU. DJP's REF-General lists (Barang/Jasa, Satuan UM.0001–UM.0039) live in `coretax-codes.ts`.
+  - Decision: the change log names the identity fields changed ("Identitas pajak X diubah: NIK, alamat"), never their values (UU PDP).
+  - Decision: a NITKU must start with its holder's NPWP16 (catches a typo before Coretax does); one equal to the head office's
+    NPWP16 + `000000` is stored as null, so the default keeps following the NPWP.
+  - Decision: item detail may be set on an invoice in a locked month: it is faktur metadata and moves no figure.
+- T2: `lib/tax/coretax-faktur-xml.ts`, `tests/unit/coretax-faktur-xml.test.ts`, `tests/fixtures/coretax/` — the pure builder (DJP
+  v1.4 element order, tab-indented like DJP's sample, empty elements self-closed as there), kode 04 arithmetic in bigint sen
+  (DPP Nilai Lain = half-up 11/12, PPN = half-up 12 % of it), files of at most 1,000. The golden file was checked by hand.
+  - Decision: DJP's sample itself is not committed. `djp-sample-v1.4-shape.xml` is our transcription of its element names and order
+    with placeholder values (checked tag-for-tag against DJP's file on 2026-10-17); the order test reads it.
+  - Decision: amounts are written as DJP's sample writes them, whole numbers without decimals and others with two (`9166666.67`).
+  - Decision: `BuyerDocumentNumber` is `-` for a TIN buyer (the template's Keterangan rule; DJP's XML sample leaves it empty).
+- T3: `lib/tax/coretax-faktur.ts`, `tests/db/coretax-faktur.test.ts` — `fakturKeluaranDraft` (candidates; *Sudah ada di Coretax*
+  from `fakturRecon`'s keluaran matches and from a stored Coretax faktur with the invoice's number, I5e; every block reason with where
+  it is fixed; the company's NPWP / NITKU as a file-level block; bank lines with a PPN split from the ekualisasi's unmatched book side)
+  and `fakturKeluaranFiles` (the *Siap* rows in parts of 1,000).
+  - Decision: an invoice without its own item takes Barang/Jasa, Kode and Satuan from the contact's last sales invoice that had them
+    (any month, any company of the client), so a regular buyer is *Siap* without a click; the name stays the invoice's description.
+  - Decision: Buku holds no kode transaksi, so a non-04 faktur shows as the PPN reason; its text says other codes (luxury goods,
+    pemungut) are not supported and go straight into Coretax.
+- T4: `app/(app)/clients/[id]/tax/masa/coretax/route.ts`, `lib/reports/export-log.ts`, `app/actions.ts`,
+  `tests/db/coretax-route.test.ts`, `tests/db/session-revocation.test.ts` — the download (`?entity&period&part`, the workbook's
+  access through `exportContext`; 400 with the reason when nothing is *Siap* or the company blocks, 404 for a part that doesn't exist),
+  audited by `recordFakturDownload` (`FAKTUR`, subject `coretax:<entity>:YYYY-MM`; a support session goes to the support log, as
+  `recordExport` does, sharing one `logDownload`); `setContactTaxIdentityAction` and `setInvoiceFakturItemAction` through
+  `writeClient` (`books.write`, as recording an invoice); `renameEntityAction` passes the seller NITKU.
+- T5: `components/app/coretax-faktur.tsx`, `app/(app)/clients/[id]/tax/masa/page.tsx`, `components/app/entities-card.tsx`,
+  `app/(app)/clients/[id]/settings/page.tsx`, `e2e/coretax-faktur.spec.ts`, `README.md` — the card after *Ekualisasi PPN*: the three
+  counts and one primary *Unduh XML (n faktur)* (disabled at 0 or while the company blocks; with more than 1,000 rows one link per
+  part, the first primary), *Atur barang/jasa untuk semua*, rows *Diblokir* first with each reason and its fix in place (*Lengkapi
+  pembeli* sheet, *Atur barang/jasa* sheet, *Buka Piutang & Utang* for the PPN), *Siap* and *Sudah ada di Coretax* folded, bank-line
+  PPN listed apart, the format footnote and the upload-by hint; the empty month points to Piutang & Utang. *Ubah* on a PT/CV in
+  Pengaturan klien takes the seller NITKU. The e2e spec walks flows 1 and 3 (written, not run here: the driver runs Playwright).
+  - Decision: the company-level block (no NPWP) is one alert above the counts with *Lengkapi data perusahaan* (Pengaturan klien →
+    Perusahaan & rekening); rows keep their own reasons so the rest can be fixed meanwhile.
+  - Decision: the upload deadline shows as a hint ("paling lambat 15 <bulan berikutnya>; belum dicek dengan PER-11/PJ/2025"), never a block.
 
 ## Verification
 
 ## Ship Notes
+- Migration `20261017120000_coretax_faktur`: additive nullable columns only (`Contact.nik/nitku/address/email`, `Entity.nitku`,
+  `Invoice.fakturItemKind/fakturItemCode/fakturUnit/fakturItemName`), no backfill, no CHECK. Rollback: revert the code; the columns can
+  stay (nothing else reads them).
+- No env var, no new dependency, no AI call, no report number moves (`verify:books` unaffected). The `e2e` label applies (app flow).
+- Post-merge: the pilot firm uploads one real file to Coretax before the format is called confirmed (Assumptions).

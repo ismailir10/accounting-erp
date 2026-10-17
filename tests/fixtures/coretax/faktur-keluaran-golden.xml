@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Buku: faktur keluaran untuk impor Coretax, format DJP v1.4 / template 1.6.1, belum diuji dengan unggahan nyata. 3 faktur. -->
+<TaxInvoiceBulk xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="TaxInvoice.xsd">
+	<TIN>0012345678015000</TIN>
+	<ListOfTaxInvoice>
+		<TaxInvoice>
+			<TaxInvoiceDate>2026-08-05</TaxInvoiceDate>
+			<TaxInvoiceOpt>Normal</TaxInvoiceOpt>
+			<TrxCode>04</TrxCode>
+			<AddInfo/>
+			<CustomDoc/>
+			<CustomDocMonthYear/>
+			<RefDesc>INV-081</RefDesc>
+			<FacilityStamp/>
+			<SellerIDTKU>0012345678015000000000</SellerIDTKU>
+			<BuyerTin>0987654321012000</BuyerTin>
+			<BuyerDocument>TIN</BuyerDocument>
+			<BuyerCountry>IDN</BuyerCountry>
+			<BuyerDocumentNumber>-</BuyerDocumentNumber>
+			<BuyerName>PT Mitra Unggas Sentosa</BuyerName>
+			<BuyerAdress/>
+			<BuyerEmail/>
+			<BuyerIDTKU>0987654321012000000000</BuyerIDTKU>
+			<ListOfGoodService>
+				<GoodService>
+					<Opt>B</Opt>
+					<Code>000000</Code>
+					<Name>Jasa konsultasi Agustus 2026</Name>
+					<Unit>UM.0030</Unit>
+					<Price>10000000</Price>
+					<Qty>1</Qty>
+					<TotalDiscount>0</TotalDiscount>
+					<TaxBase>10000000</TaxBase>
+					<OtherTaxBase>9166666.67</OtherTaxBase>
+					<VATRate>12</VATRate>
+					<VAT>1100000</VAT>
+					<STLGRate>0</STLGRate>
+					<STLG>0</STLG>
+				</GoodService>
+			</ListOfGoodService>
+		</TaxInvoice>
+		<TaxInvoice>
+			<TaxInvoiceDate>2026-08-12</TaxInvoiceDate>
+			<TaxInvoiceOpt>Normal</TaxInvoiceOpt>
+			<TrxCode>04</TrxCode>
+			<AddInfo/>
+			<CustomDoc/>
+			<CustomDocMonthYear/>
+			<RefDesc>INV-082</RefDesc>
+			<FacilityStamp/>
+			<SellerIDTKU>0012345678015000000000</SellerIDTKU>
+			<BuyerTin>0000000000000000</BuyerTin>
+			<BuyerDocument>National ID</BuyerDocument>
+			<BuyerCountry>IDN</BuyerCountry>
+			<BuyerDocumentNumber>3174061502560010</BuyerDocumentNumber>
+			<BuyerName>Budi Santoso</BuyerName>
+			<BuyerAdress>Jl. Kenanga No. 2, Jakarta</BuyerAdress>
+			<BuyerEmail>budi@contoh.id</BuyerEmail>
+			<BuyerIDTKU>000000</BuyerIDTKU>
+			<ListOfGoodService>
+				<GoodService>
+					<Opt>A</Opt>
+					<Code>000000</Code>
+					<Name>Pakan ayam</Name>
+					<Unit>UM.0003</Unit>
+					<Price>1000001</Price>
+					<Qty>1</Qty>
+					<TotalDiscount>0</TotalDiscount>
+					<TaxBase>1000001</TaxBase>
+					<OtherTaxBase>916667.58</OtherTaxBase>
+					<VATRate>12</VATRate>
+					<VAT>110000.11</VAT>
+					<STLGRate>0</STLGRate>
+					<STLG>0</STLG>
+				</GoodService>
+			</ListOfGoodService>
+		</TaxInvoice>
+		<TaxInvoice>
+			<TaxInvoiceDate>2026-08-31</TaxInvoiceDate>
+			<TaxInvoiceOpt>Normal</TaxInvoiceOpt>
+			<TrxCode>04</TrxCode>
+			<AddInfo/>
+			<CustomDoc/>
+			<CustomDocMonthYear/>
+			<RefDesc>INV-083/&lt;R&amp;D&gt;</RefDesc>
+			<FacilityStamp/>
+			<SellerIDTKU>0012345678015000000000</SellerIDTKU>
+			<BuyerTin>0111222333444000</BuyerTin>
+			<BuyerDocument>TIN</BuyerDocument>
+			<BuyerCountry>IDN</BuyerCountry>
+			<BuyerDocumentNumber>-</BuyerDocumentNumber>
+			<BuyerName>CV Tani &amp; Ternak &lt;Cabang&gt;</BuyerName>
+			<BuyerAdress>Jl. &quot;Raya&quot; &apos;Bogor&apos;</BuyerAdress>
+			<BuyerEmail/>
+			<BuyerIDTKU>0111222333444000000001</BuyerIDTKU>
+			<ListOfGoodService>
+				<GoodService>
+					<Opt>B</Opt>
+					<Code>000000</Code>
+					<Name>Sewa alat &amp; mesin</Name>
+					<Unit>UM.0024</Unit>
+					<Price>999999</Price>
+					<Qty>1</Qty>
+					<TotalDiscount>0</TotalDiscount>
+					<TaxBase>999999</TaxBase>
+					<OtherTaxBase>916665.75</OtherTaxBase>
+					<VATRate>12</VATRate>
+					<VAT>109999.89</VAT>
+					<STLGRate>0</STLGRate>
+					<STLG>0</STLG>
+				</GoodService>
+			</ListOfGoodService>
+		</TaxInvoice>
+	</ListOfTaxInvoice>
+</TaxInvoiceBulk>

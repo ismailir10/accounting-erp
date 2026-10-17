@@ -61,7 +61,7 @@ export default async function SettingsPage({ params, searchParams }: { params: P
   const pointers = tab.key === "perusahaan" ? await clientUsage(prisma, client.id) : null;
   const entityViews = pointers
     ? client.entities.map((e) => ({
-        id: e.id, name: e.name, shortName: e.shortName, npwp: e.npwp ?? "", kind: e.kind,
+        id: e.id, name: e.name, shortName: e.shortName, npwp: e.npwp ?? "", nitku: e.nitku ?? "", kind: e.kind,
         blocked: client.entities.length < 2 ? LAST_ENTITY : blockedReason("entity", pointers.entities.get(e.id) ?? []),
         banks: e.bankAccounts.map((b) => {
           const u = pointers.banks.get(b.id) ?? [];

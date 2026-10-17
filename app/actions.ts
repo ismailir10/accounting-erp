@@ -29,6 +29,7 @@ import { postBenefits } from "@/lib/benefits/valuation";
 import { createInvoice, voidInvoice, type InvoiceInput } from "@/lib/receivables/invoices";
 import { setContactChannel } from "@/lib/receivables/channels";
 import { setCreditLimit } from "@/lib/receivables/credit-limit";
+import { setContactTaxIdentity, setInvoiceFakturItem } from "@/lib/receivables/faktur-identity";
 import { settleFifo, settleWithReclass, tagAdvance, unsettle } from "@/lib/receivables/settle";
 import { candidateViews, type CandidateView } from "@/lib/receivables/view";
 import { postCkpn, saveCkpnSetting, type CkpnSettingInput } from "@/lib/receivables/ckpn";
@@ -711,6 +712,47 @@ export async function setCreditLimitAction(input: { clientId: string; contactId:
   }
 }
 
+/** A buyer's tax identity for the Coretax faktur file (NPWP / NIK / NITKU / address / email); an empty field clears it. */
+export async function setContactTaxIdentityAction(input: { clientId: string; contactId: string; npwp: string; nik: string; nitku: string; address: string; email: string }): Promise<Result> {
+  try {
+    const client = await writeClient(input.clientId);
+    await setContactTaxIdentity(prisma, {
+      clientId: client.id,
+      contactId: input.contactId,
+      npwp: String(input.npwp ?? ""),
+      nik: String(input.nik ?? ""),
+      nitku: String(input.nitku ?? ""),
+      address: String(input.address ?? ""),
+      email: String(input.email ?? ""),
+      actorId: (await getCurrentMember()).id,
+    });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return editFail(e);
+  }
+}
+
+/** The one faktur item (Barang/Jasa, Kode, Satuan, optionally the name) of one or more sales invoices of a company. */
+export async function setInvoiceFakturItemAction(input: { clientId: string; invoiceIds: string[]; kind: string; code: string; unit: string; name?: string | null }): Promise<Result<{ count: number }>> {
+  try {
+    const client = await writeClient(input.clientId);
+    const count = await setInvoiceFakturItem(prisma, {
+      clientId: client.id,
+      invoiceIds: Array.isArray(input.invoiceIds) ? input.invoiceIds.map(String) : [],
+      kind: String(input.kind ?? ""),
+      code: String(input.code ?? ""),
+      unit: String(input.unit ?? ""),
+      name: input.name === undefined || input.name === null ? undefined : String(input.name),
+      actorId: (await getCurrentMember()).id,
+    });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true, count };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 /** Keluarkan dokumen (UC-B5): reverses a wrongly entered invoice or bill on its own date, with the reason. */
 export async function voidInvoiceAction(input: { clientId: string; invoiceId: string; reason: string }): Promise<Result> {
   try {
@@ -908,8 +950,8 @@ export async function addEntityAction(clientId: string, input: NewEntityInput): 
 
 const editFail = (e: unknown) => (e instanceof OnboardingError ? { ok: false as const, error: e.message, fields: e.fields } : fail(e));
 
-/** *Ubah* on a company/owner (Pengaturan klien): name, short name, NPWP. Labels only, so the role that may add an entity may fix one. */
-export async function renameEntityAction(clientId: string, entityId: string, input: { name: string; shortName: string; npwp: string }): Promise<Result> {
+/** *Ubah* on a company/owner (Pengaturan klien): name, short name, NPWP, seller NITKU. Labels only, so the role that may add an entity may fix one. */
+export async function renameEntityAction(clientId: string, entityId: string, input: { name: string; shortName: string; npwp: string; nitku?: string }): Promise<Result> {
   try {
     const client = await clientFor("client.create", clientId);
     const member = await getCurrentMember();
