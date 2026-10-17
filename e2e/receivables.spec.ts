@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { extractText, getDocumentProxy } from "unpdf";
-import { openManualImport, openClientForm } from "./qa-helpers";
+import { asPeninjau, noSideScroll, openManualImport, openClientForm } from "./qa-helpers";
 
 /**
  * Receivables and payables, end to end (synthetic): a fresh client imports August's statement → a sales invoice with PPN → its
@@ -27,7 +27,7 @@ async function newInvoice(page: Page, button: string, v: { party: string; number
   await page.getByRole("button", { name: "Hitung 11%" }).click();
 }
 
-test("receivables and payables: invoice, settle from the statement, aging equals the ledger", async ({ page }) => {
+test("receivables and payables: invoice, settle from the statement, aging equals the ledger", async ({ page, browser, baseURL }) => {
   await openClientForm(page);
   await page.getByLabel("Nama klien").fill("Grup Uji Piutang");
   await page.getByLabel("Nama lengkap").fill("PT Piutang Uji");
@@ -151,21 +151,45 @@ test("receivables and payables: invoice, settle from the statement, aging equals
   // The invoice journal is in the ledger as a Faktur.
   await page.goto(`${base}/ledger/1130?period=2026-08`);
   await expect(page.getByText("Faktur INV-100 · PT Mitra Unggas")).toBeVisible();
-  if (process.env.E2E_SCREENSHOTS) {
+  const shots = process.env.E2E_SCREENSHOTS;
+  if (shots) {
     await page.goto(`${base}/receivables?period=2026-08&tab=utang`);
-    await page.screenshot({ path: `${process.env.E2E_SCREENSHOTS}/receivables-1440.png`, fullPage: true });
+    await page.screenshot({ path: `${shots}/receivables-1440.png`, fullPage: true });
     await page.goto(`${base}/receivables?period=2026-08`);
-    await page.screenshot({ path: `${process.env.E2E_SCREENSHOTS}/receivables-piutang-1440.png`, fullPage: true });
+    await page.screenshot({ path: `${shots}/receivables-piutang-1440.png`, fullPage: true });
     await page.getByRole("button", { name: "Pengingat PT Toko Lambat" }).click();
-    await page.screenshot({ path: `${process.env.E2E_SCREENSHOTS}/receivables-reminder-1440.png` });
+    await page.screenshot({ path: `${shots}/receivables-reminder-1440.png` });
     await page.keyboard.press("Escape");
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.screenshot({ path: `${process.env.E2E_SCREENSHOTS}/receivables-piutang-390.png`, fullPage: true });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-    await page.getByRole("button", { name: "Pengingat PT Toko Lambat" }).click();
-    await page.screenshot({ path: `${process.env.E2E_SCREENSHOTS}/receivables-reminder-390.png` });
-    await page.keyboard.press("Escape");
-    await page.goto(`${base}/receivables?period=2026-08&tab=utang`);
-    await page.screenshot({ path: `${process.env.E2E_SCREENSHOTS}/receivables-390.png`, fullPage: true });
   }
+
+  // 390 px: Piutang and Utang do not scroll sideways, and the reminder dialog fits the screen.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${base}/receivables?period=2026-08`);
+  await expect(page.getByTestId("aging-PIU").getByTestId("aging-row-PT Toko Lambat")).toBeVisible();
+  await noSideScroll(page);
+  if (shots) await page.screenshot({ path: `${shots}/receivables-piutang-390.png`, fullPage: true });
+  await page.getByRole("button", { name: "Pengingat PT Toko Lambat" }).click();
+  const dialog = page.getByTestId("reminder-dialog");
+  await expect(dialog).toBeVisible();
+  await expect.poll(async () => {
+    const box = (await dialog.boundingBox())!;
+    return box.x >= 0 && box.x + box.width <= 390;
+  }).toBe(true);
+  await noSideScroll(page);
+  if (shots) await page.screenshot({ path: `${shots}/receivables-reminder-390.png` });
+  await page.keyboard.press("Escape");
+  await page.goto(`${base}/receivables?period=2026-08&tab=utang`);
+  await expect(page.getByTestId("invoice-SM-77")).toBeAttached();
+  await noSideScroll(page);
+  if (shots) await page.screenshot({ path: `${shots}/receivables-390.png`, fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // A Peninjau sees the limit and can prepare the reminder, but has no pencil to change the limit.
+  await asPeninjau(page, browser, baseURL, "Grup Uji Piutang", async (viewer) => {
+    await viewer.goto(`${new URL(base).pathname}/receivables?period=2026-08`);
+    const row = viewer.getByTestId("aging-PIU").getByTestId("aging-row-PT Toko Lambat");
+    await expect(row).toContainText("Batas Rp 10.000.000");
+    await expect(viewer.getByRole("button", { name: /^Ubah batas kredit / })).toHaveCount(0);
+    await expect(row.getByRole("button", { name: "Pengingat PT Toko Lambat" })).toBeVisible();
+  });
 });

@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import ExcelJS from "exceljs";
 import { readFile } from "node:fs/promises";
+import { asPeninjau, noSideScroll } from "./qa-helpers";
 
 /**
  * Analisis keuangan on the demo group through August 2026: the monthly Laba Rugi's total is the year to date shown on Laporan Keuangan,
@@ -58,6 +59,21 @@ test("Wawasan: trend and margin equal their tables; a group asks for one company
   await expect(page.getByTestId("insight-margin-sentence")).toContainText("Margin laba kotor turun");
   await expect(page.getByTestId("movers-pick-company")).toBeVisible();
 
+  // 390 px: the Wawasan tab does not scroll sideways.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByTestId("insight-margin-gpm")).toBeVisible();
+  await noSideScroll(page);
+  if (process.env.E2E_SCREENSHOTS) await page.screenshot({ path: `${process.env.E2E_SCREENSHOTS}/wawasan-390.png`, fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // A margin figure opens Rasio keuangan for the same scope.
+  await page.getByTestId("insight-margin-gpm").getByTestId("current").getByRole("link").click();
+  await expect(page).toHaveURL(/tab=rasio/);
+  await expect(page).toHaveURL(/entity=combined/);
+  await expect(page.getByTestId("ratio-gpm")).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/tab=wawasan/);
+
   await page.getByTestId("insight-trend-netProfit").getByTestId("current").getByRole("link").click();
   await expect(page).not.toHaveURL(/tab=/);
   await expect(page.getByTestId("trend-net")).toBeVisible();
@@ -65,10 +81,11 @@ test("Wawasan: trend and margin equal their tables; a group asks for one company
 
 /**
  * Wawasan, flow 2: PT Jasa Kreatif Digital, July 2026 — 6170 Beban Jasa Profesional is over the threshold with its one line and
- * their source, opens its Buku Besar, and a typed explanation, once approved, is in the management pack's Perubahan Akun. It is removed
+ * their source, opens its Buku Besar, and a typed explanation, once approved, is in the management pack's Perubahan Akun. In August the same account
+ * offers it again with *Pakai lagi*, approving nothing until clicked. A Peninjau sees the approved text without any button. It is removed
  * at the end so the demo stays as seeded. (CI has no AI key: *Susun dengan AI* is covered by DB tests with MockProvider.)
  */
-test("Wawasan: explain a flagged mover; the management pack carries it", async ({ page }) => {
+test("Wawasan: explain a flagged mover; the management pack carries it", async ({ page, browser, baseURL }) => {
   await page.goto("/");
   await page.getByRole("link", { name: "PT Jasa Kreatif Digital", exact: true }).first().click();
   await page.waitForURL(/\/clients\/[^/]+/);
@@ -104,6 +121,31 @@ test("Wawasan: explain a flagged mover; the management pack carries it", async (
   const rows: unknown[][] = [];
   wb.getWorksheet("Perubahan Akun")!.eachRow((r) => rows.push([r.getCell(1).value, r.getCell(7).value]));
   expect(rows).toContainEqual(["6170", text]);
+
+  // Next month the same account offers July's text with *Pakai lagi*; nothing is approved until the accountant acts.
+  await page.goto(`${base}/analysis?period=2026-08&tab=wawasan`);
+  const august = page.getByTestId("mover-6170").getByTestId("flux-explanation");
+  await expect(august.getByTestId("flux-explanation-previous")).toContainText(text);
+  await expect(august.getByTestId("flux-explanation-approved")).toHaveCount(0);
+  await august.getByRole("button", { name: "Pakai lagi" }).click();
+  await expect(august.getByLabel("Penjelasan akun 6170")).toHaveValue(text);
+  await expect(august.getByTestId("flux-explanation-approved")).toHaveCount(0);
+  await august.getByRole("button", { name: "Batal" }).click();
+  await page.reload();
+  await expect(page.getByTestId("mover-6170").getByTestId("flux-explanation-approved")).toHaveCount(0);
+
+  // A Peninjau reads the approved explanation, with no button to write, approve, reuse or remove one.
+  const path = new URL(base).pathname;
+  await asPeninjau(page, browser, baseURL, null, async (viewer) => {
+    await viewer.goto(`${path}/analysis?period=2026-07&tab=wawasan`);
+    const theirs = viewer.getByTestId("mover-6170").getByTestId("flux-explanation");
+    await expect(theirs.getByTestId("flux-explanation-approved")).toContainText(text);
+    await expect(theirs.getByRole("button")).toHaveCount(0);
+    await viewer.goto(`${path}/analysis?period=2026-08&tab=wawasan`);
+    await expect(viewer.getByTestId("mover-6170")).toBeVisible();
+    await expect(viewer.getByTestId("mover-6170").getByTestId("flux-explanation-previous")).toHaveCount(0);
+    await expect(viewer.getByTestId("mover-6170").getByRole("button")).toHaveCount(0);
+  });
 
   await page.goto(`${base}/analysis?period=2026-07&tab=wawasan`);
   await page.getByTestId("mover-6170").getByRole("button", { name: "Hapus penjelasan" }).click();

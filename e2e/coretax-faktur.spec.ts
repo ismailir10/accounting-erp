@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
-import { addClient } from "./qa-helpers";
+import { addClient, noSideScroll } from "./qa-helpers";
 
 /**
  * Faktur keluaran untuk Coretax (cycle docs/cycles/2026-10-17-coretax-files.md), flows 1 and 3: three sales invoices with PPN in August,
@@ -73,13 +73,14 @@ test("faktur keluaran for Coretax: block reasons, fixed in place, XML of the Sia
   await expect(card.getByTestId("coretax-count-ready")).toHaveText("2");
   await expect(card.getByTestId("coretax-count-blocked")).toHaveText("1");
 
-  if (process.env.E2E_SCREENSHOTS) {
-    await page.locator("#faktur-coretax").screenshot({ path: `${process.env.E2E_SCREENSHOTS}/coretax-1440.png` });
-    await page.setViewportSize({ width: 390, height: 844 });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-    await page.locator("#faktur-coretax").screenshot({ path: `${process.env.E2E_SCREENSHOTS}/coretax-390.png` });
-    await page.setViewportSize({ width: 1440, height: 900 });
-  }
+  // 390 px: Pajak Masa with the faktur card does not scroll sideways.
+  const shots = process.env.E2E_SCREENSHOTS;
+  if (shots) await page.locator("#faktur-coretax").screenshot({ path: `${shots}/coretax-1440.png` });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(card.getByTestId("coretax-count-ready")).toHaveText("2");
+  await noSideScroll(page);
+  if (shots) await page.locator("#faktur-coretax").screenshot({ path: `${shots}/coretax-390.png` });
+  await page.setViewportSize({ width: 1440, height: 900 });
 
   const [download] = await Promise.all([page.waitForEvent("download"), card.getByRole("link", { name: "Unduh XML (2 faktur)" }).click()]);
   expect(download.suggestedFilename()).toMatch(/^faktur-keluaran-.*-2026-08\.xml$/);

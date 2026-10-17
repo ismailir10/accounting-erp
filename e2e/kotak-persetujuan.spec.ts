@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { addClient, uploadStatement } from "./qa-helpers";
+import { addClient, asPeninjau, noSideScroll, uploadStatement } from "./qa-helpers";
 
 /**
  * Kotak persetujuan (cycle 2026-10-17): every proposal of the month in one queue per client, counted on the firm board. On the demo
@@ -28,8 +28,6 @@ async function boardCell(page: Page, client: string) {
   return { link, text: (await link.textContent())!.trim() };
 }
 
-const noSideScroll = (page: Page) => expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-
 test("demo: the board's Persetujuan cell equals the client's Kotak; a sure AI line is offered in bulk; Ubah opens Review on the line", async ({ page }) => {
   const { link, text } = await boardCell(page, "CV Sinar Retail");
   const n = Number(text.match(/^(\d+) usulan$/)![1]);
@@ -47,6 +45,19 @@ test("demo: the board's Persetujuan cell equals the client's Kotak; a sure AI li
   await expect(page.getByRole("heading", { name: "Review transaksi" })).toBeVisible();
   await expect(page).toHaveURL(/tx=/);
   await expect(page.getByTestId("review-item").filter({ hasText: "RAK DISPLAY" })).toHaveClass(/ring-2/);
+});
+
+test("demo: a Peninjau sees CV Sinar's queue without a single action", async ({ page, browser, baseURL }) => {
+  const { link, text } = await boardCell(page, "CV Sinar Retail");
+  const href = (await link.getAttribute("href"))!;
+  await asPeninjau(page, browser, baseURL, null, async (viewer) => {
+    await viewer.goto(href);
+    await expect(viewer.getByRole("heading", { name: "Kotak persetujuan" })).toBeVisible();
+    await expect(viewer.getByTestId("next-step")).toContainText(`${text} menunggu persetujuan akuntan. Anda dapat melihatnya tanpa mengubah buku.`);
+    await expect(viewer.getByTestId("approval-bank")).toHaveCount(2);
+    await expect(viewer.locator("main").getByRole("button", { name: /Setujui|Tolak|Catat semua/ })).toHaveCount(0);
+    await expect(viewer.locator("main").getByRole("link", { name: /^Ubah/ })).toHaveCount(0);
+  });
 });
 
 test("demo: a closed month shows its queue read-only", async ({ page }) => {
@@ -118,6 +129,13 @@ test("approve bank lines, scheduled journals and a Coretax faktur from Kotak; ea
   const scheduled = page.getByTestId("approval-scheduled");
   await expect(scheduled).toHaveCount(3);
   await expect(scheduled.first()).toContainText("terlambat");
+  // Ubah: a schedule is never edited here; Jurnal Penyesuaian opens on the same month.
+  await scheduled.first().getByRole("link", { name: /Ubah di Jurnal Penyesuaian/ }).click();
+  await expect(page.getByRole("heading", { name: "Jurnal Penyesuaian" })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/clients/${id}/journals/new\\?.*period=2026-08`));
+  await expect(page.getByTestId("schedules")).toContainText("Penyusutan mesin uji");
+  await page.goBack();
+  await expect(scheduled).toHaveCount(3);
   await scheduled.first().getByRole("button", { name: "Setujui" }).click();
   await expect(scheduled).toHaveCount(2);
   await page.getByTestId("approvals-scheduled").getByRole("button", { name: "Catat semua 2" }).click();
@@ -143,4 +161,15 @@ test("approve bank lines, scheduled journals and a Coretax faktur from Kotak; ea
 
   const after = await boardCell(page, "QA Kotak Persetujuan");
   expect(after.text).toBe("1 usulan");
+
+  // The last line approved: the queue says it is empty and Tutup buku is the next step; the board reads Selesai.
+  await after.link.click();
+  await page.getByTestId("approval-bank").filter({ hasText: "CAHAYA BARU" }).getByRole("button", { name: "Setujui" }).click();
+  await expect(next).toContainText("Tidak ada usulan menunggu persetujuan untuk Agustus 2026.");
+  await expect(page.getByTestId("approval-bank")).toHaveCount(0);
+  const close = next.getByRole("link", { name: "Tutup buku" });
+  await expect(close).toHaveAttribute("href", new RegExp(`/clients/${id}/close\\?.*period=2026-08`));
+  await close.click();
+  await expect(page).toHaveURL(new RegExp(`/clients/${id}/close`));
+  expect((await boardCell(page, "QA Kotak Persetujuan")).text).toBe("Selesai");
 });
