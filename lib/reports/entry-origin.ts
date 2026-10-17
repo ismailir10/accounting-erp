@@ -79,7 +79,7 @@ export async function entryOrigins(db: Db, entryIds: string[]): Promise<Map<stri
     if (!titles.has(k)) titles.set(k, new Map((await runControls(db, d.clientId, d.year, d.month)).map((c) => [c.key, c.title])));
   }
   for (const d of drafts) {
-    if (!d.entryId) continue;
+    if (!d.entryId || d.source === "ACCRUAL") continue;
     const control = d.controlKey ? (titles.get(`${d.clientId}|${d.year}|${d.month}`)?.get(d.controlKey) ?? null) : null;
     out.set(d.entryId, originText({ kind: "draft", source: d.source, control }));
   }

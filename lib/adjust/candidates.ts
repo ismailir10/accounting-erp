@@ -1,21 +1,18 @@
 import type { Db } from "@/lib/db";
 import type { ScheduleKind } from "@/lib/generated/prisma/enums";
-import { ACCOUNT_CODES } from "@/lib/coa/template";
 import { formatDate, periodBounds } from "@/lib/format";
 import { scanLedger } from "@/lib/controls/anomaly";
-import { installments } from "@/lib/adjust/schedules";
 
 /**
  * Candidates for new adjustment schedules, read from the period's ledger (deterministic, cycle adjustment-schedules).
  * Shown as suggestions with a prefilled form; nothing is created until the accountant clicks, and they never block the
- * close. A candidate disappears once a schedule covers its source line (accruals: once an accrual for that account starts
- * this month).
+ * close. A candidate disappears once a schedule covers its source line. Accruals are not candidates: a recurring cost missing this
+ * month is proposed per counterparty in Kotak persetujuan (lib/adjust/accruals.ts, cycle 2026-10-18-usulan-akrual).
  */
 
 export const DEFAULT_MONTHS: Record<ScheduleKind, number> = { DEPRECIATION: 48, AMORTIZATION: 12, ACCRUAL: 1 };
 const DEPRECIATION_EXPENSE = "6180";
 const ACCUMULATED_DEPRECIATION = "1219";
-const ACCRUED_EXPENSES = "2150";
 const DEFERRED_REVENUE = "2160";
 const SERVICE_REVENUE = "4110";
 const DEFERRED_NAME = /diterima di muka|unearned|deferred revenue/i;
@@ -133,27 +130,6 @@ export async function scheduleCandidates(db: Db, clientId: string, year: number,
         out.push({ ...base, key: `AMORTIZATION:${e.id}:${l.entry.id}:${l.account.code}`, kind: "AMORTIZATION", reason: `Dibayar di muka ke ${l.account.code} ${when}: ${what}`, memo: `Amortisasi ${label}`.slice(0, 80), debitCode: null, creditCode: l.account.code, amount: net, months: DEFAULT_MONTHS.AMORTIZATION });
       } else if (l.account.type === "LIABILITAS" && (l.account.code === DEFERRED_REVENUE || DEFERRED_NAME.test(l.account.name)) && -net >= floor && codes.has(SERVICE_REVENUE)) {
         out.push({ ...base, key: `AMORTIZATION:${e.id}:${l.entry.id}:${l.account.code}`, kind: "AMORTIZATION", reason: `Diterima di muka ke ${l.account.code} ${when}: ${what}`, memo: `Pengakuan ${label}`.slice(0, 80), debitCode: l.account.code, creditCode: SERVICE_REVENUE, amount: -net, months: DEFAULT_MONTHS.AMORTIZATION });
-      }
-    }
-
-    // A recurring cost missing this month: movement in each of the 3 baseline months, none now → accrue the average.
-    if (scan.baseline.length === 3 && codes.has(ACCRUED_EXPENSES)) {
-      // Accounts a running schedule already covers, and accruals already started for this month.
-      // Only schedules with an installment in this very month cover the account (not finished or stopped ones).
-      const scheduled = new Set(
-        (await db.adjustmentSchedule.findMany({ where: { entityId: e.id, stoppedAt: null } }))
-          .filter((s) => installments(s).some((i) => !i.reversal && i.year === year && i.month === month))
-          .map((s) => s.debitAccountId),
-      );
-      const accounts = await db.account.findMany({ where: { clientId, type: "BEBAN", code: { notIn: [ACCOUNT_CODES.ROUNDING, ACCOUNT_CODES.FX_GAIN_LOSS] } } });
-      for (const a of accounts) {
-        const series = scan.series.get(a.id);
-        if (!series || scheduled.has(a.id)) continue;
-        const prior = series.slice(0, 3);
-        if (series[3] !== 0n || prior.some((v) => v <= 0n)) continue;
-        const average = prior.reduce((s, v) => s + v, 0n) / 3n;
-        if (average < floor) continue;
-        out.push({ key: `ACCRUAL:${e.id}:${a.code}`, kind: "ACCRUAL", entity: ent, reason: `${a.code} ${a.name} tercatat tiap bulan (${scan.baseline.join(", ")}), bulan ini belum`, memo: `Akrual ${a.name}`.slice(0, 80), debitCode: a.code, creditCode: ACCRUED_EXPENSES, amount: average, months: 1, startYear: year, startMonth: month, sourceEntryId: null });
       }
     }
   }

@@ -286,7 +286,7 @@ If the stored dismissal needs more than a `ProposedEntry` row (for example a "ne
 migration: stop and ask.
 
 ## Tasks
-- [ ] T1 `ProposalSource.ACCRUAL` + migration; `lib/adjust/accruals.ts`: buckets, the pure rule, arrival, coverage, warning,
+- [x] T1 `ProposalSource.ACCRUAL` + migration; `lib/adjust/accruals.ts`: buckets, the pure rule, arrival, coverage, warning,
       rationale and refs; remove the recurring-cost branch from the ledger candidates. Accept: unit + DB tests for the rule and every
       "no card" case; schedule-candidates suite green. (reuse: `scanLedger` materiality, `statementCoverage`, `isGenericKey`,
       `formatMoney`)
@@ -302,6 +302,17 @@ migration: stop and ask.
       ALL PASS, investor walk unchanged). (deps: T3, T4)
 
 ## Implementation
+- Plan: T1 → T2 → T3 → T4 → T5 sequential, inline by one build worker: each task builds on the previous one's module (the read model,
+  then its writer, then the queue, the control and the e2e), so a fan-out would share every file. T5's e2e spec is written here; the
+  walk on the dev server and the Playwright runs that need the shared `buku` database are left to the driver.
+- T1: `prisma/migrations/20261018140000_accrual_proposals` (`ALTER TYPE "ProposalSource" ADD VALUE 'ACCRUAL'`, nothing else in it
+  uses the value), `lib/adjust/accruals.ts` (pure `accrualRule` / `medianOf` / `accrualRationale`, keys, `accrualProposals`,
+  `arrivals`), `lib/adjust/candidates.ts` (the recurring-cost branch removed), `lib/format.ts` (`formatMonthYear`) — the rule,
+  buckets, arrival, coverage, warning, rationale and refs. Tests: `tests/unit/accrual-rule.test.ts`,
+  `tests/db/accrual-proposals.test.ts`, `tests/db/accrual-regression.test.ts` (the removed candidate kept as an oracle: every case
+  it proposed for ledger-fed books over six seeded rounds is proposed again unless it falls in a decided exclusion — account, band,
+  refund or materiality; at least 15 kept), `tests/db/schedule-candidates.test.ts` (accrual cases moved out; no candidate is
+  ACCRUAL), `tests/db/demo.test.ts` (no accrual proposal in any demo month).
 
 ## Verification
 

@@ -194,8 +194,8 @@ export async function dismissProposal(db: Db, input: { clientId: string; proposa
 
 /** Plain JSON for the proposals card (bigint as strings). */
 export async function proposalViews(db: Db, clientId: string, year: number, month: number) {
-  // 1999 corrections are shown from their source line (lib/adjust/suspense), never twice.
-  const rows = (await openProposals(db, clientId, year, month)).filter((p) => p.source !== "SUSPENSE");
+  // 1999 corrections are shown from their source line (lib/adjust/suspense), never twice; accruals are never stored open (Kotak's own kind).
+  const rows = (await openProposals(db, clientId, year, month)).flatMap((p) => (p.source === "AI_CONTROL" ? [{ ...p, source: p.source }] : []));
   const txs = new Map((await db.bankTransaction.findMany({ where: { id: { in: rows.flatMap((p) => (p.bankTransactionId ? [p.bankTransactionId] : [])) } }, select: { id: true, entityId: true, date: true, amount: true, accountCode: true, taxTag: true } })).map((t) => [t.id, t]));
   const end = periodBounds(year, month).end;
   const blocked = new Map<string, string>();

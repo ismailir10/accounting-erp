@@ -36,6 +36,11 @@ export function formatMonthShort(year: number, month: number): string {
 
 export const monthName = (m: number) => MONTHS[m - 1];
 
+/** "Agu 2026": a month in running text (a memo, a rationale). */
+export function formatMonthYear(year: number, month: number): string {
+  return `${MONTHS_SHORT[month - 1]} ${year}`;
+}
+
 export function dateOnly(y: number, m: number, d: number): Date {
   return new Date(Date.UTC(y, m - 1, d));
 }

@@ -1,0 +1,293 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import ExcelJS from "exceljs";
+import { db, makeGroup, resetDb } from "../helpers";
+import { accrualProposals, NO_CREDIT } from "@/lib/adjust/accruals";
+import { importStatement } from "@/lib/import/pipeline";
+import { isGenericKey } from "@/lib/import/normalize";
+import { reviewTransaction } from "@/lib/review";
+import { createInvoice, voidInvoice } from "@/lib/receivables/invoices";
+import { createSchedule } from "@/lib/adjust/schedules";
+import { postAdjustment } from "@/lib/ledger/adjustment";
+import { acceptCheck, importSourceAccounts, postImport, stageImport } from "@/lib/ledger-import/post";
+import { acceptMappings, suggestMappings } from "@/lib/ledger-import/mapping";
+import { dateOnly } from "@/lib/format";
+
+// Usulan akrual (cycle 2026-10-18-usulan-akrual): proposals per counterparty, read from the books built through the real pipeline.
+type G = Awaited<ReturnType<typeof makeGroup>>;
+/** 17 Okt 2026, 10.00 WIB: every month up to September has ended. */
+const NOW = new Date("2026-10-17T03:00:00Z");
+const pad = (n: number) => String(n).padStart(2, "0");
+const day = (y: number, m: number, d: number) => `${pad(d)}/${pad(m)}/${y}`;
+const lastDay = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+
+/** Running balance per bank account, so each month's statement continues the last one. */
+const balances = new Map<string, bigint>();
+type Row = [d: number, text: string, amount: bigint];
+
+/** A generic CSV statement with a declared period (coverage needs one, rule 22c): money out positive, money in negative. */
+async function statement(bankAccountId: string, y: number, m: number, rows: Row[], until = lastDay(y, m), from = 1) {
+  let bal = balances.get(bankAccountId) ?? 1_000_000_000n;
+  const lines = [`Periode : ${day(y, m, from)} - ${day(y, m, until)}`, "Tanggal;Keterangan;Debet;Kredit;Saldo", `${day(y, m, from)};SALDO AWAL;;;${bal}`];
+  for (const [d, text, amount] of [...rows].sort((a, b) => a[0] - b[0])) {
+    bal -= amount;
+    lines.push(`${day(y, m, d)};${text};${amount > 0n ? amount : 0n};${amount < 0n ? -amount : 0n};${bal}`);
+  }
+  balances.set(bankAccountId, bal);
+  return importStatement(db, { bankAccountId, fileName: `mutasi-${y}-${m}-${from}-${until}-${bankAccountId.slice(-4)}.csv`, data: Buffer.from(`${lines.join("\n")}\n`), provider: null });
+}
+
+const BERSIH = "PT BERSIH PRIMA JASA KEBERSIHAN";
+const PLN = "PLN POSTPAID";
+const TELKOM = "TELKOM INDIHOME";
+const ANDALAS = "KANTOR KONSULTAN ANDALAS";
+const jt = (n: number) => BigInt(Math.round(n * 1_000_000));
+
+/**
+ * The QA client of the verify flows: one BCA account, April–August 2026. Bersih Prima pays 4,2 / 4,2 / 4,35 / 4,2 jt to 6190 April–July;
+ * PLN and Telkom both pay to 6130, only PLN in August; Andalas pays 7,5 jt to 6170 May–July (its first line reviewed by hand, a RECLASS;
+ * later ones by Memory). Materiality ≈ Rp 145.000 (no revenue: 1 % of the expenses).
+ */
+async function qaBooks(opts: { august?: Row[] } = {}) {
+  balances.clear();
+  const g = await makeGroup();
+  await db.rule.createMany({
+    data: [
+      { pattern: "BERSIH PRIMA", direction: "OUT" as const, accountCode: "6190" },
+      { pattern: "PLN POSTPAID", direction: "OUT" as const, accountCode: "6130" },
+      { pattern: "TELKOM", direction: "OUT" as const, accountCode: "6130" },
+    ].map((r) => ({ ...r, firmId: g.firm.id, clientId: g.client.id, priority: 50 })),
+  });
+  const bca = g.pt.banks[0].id;
+  const months: [number, Row[]][] = [
+    [4, [[10, BERSIH, jt(4.2)], [12, PLN, jt(2.1)], [14, TELKOM, jt(0.5)]]],
+    [5, [[10, BERSIH, jt(4.2)], [12, PLN, jt(2.3)], [14, TELKOM, jt(0.5)], [20, ANDALAS, jt(7.5)]]],
+    [6, [[10, BERSIH, jt(4.35)], [12, PLN, jt(2.2)], [14, TELKOM, jt(0.5)], [20, ANDALAS, jt(7.5)]]],
+    [7, [[10, BERSIH, jt(4.2)], [12, PLN, jt(2.25)], [14, TELKOM, jt(0.5)], [20, ANDALAS, jt(7.5)]]],
+    [8, opts.august ?? [[12, PLN, jt(2.4)]]],
+  ];
+  for (const [m, rows] of months) {
+    await statement(bca, 2026, m, rows);
+    // Andalas has no rule: the accountant files the first one, Memory files the rest.
+    for (const t of await db.bankTransaction.findMany({ where: { entityId: g.pt.entity.id, description: ANDALAS, status: "NEEDS_REVIEW" } })) {
+      await reviewTransaction(db, { bankTxId: t.id, accountCode: "6170", taxTag: null });
+    }
+  }
+  return { g, bca };
+}
+
+const august = (g: G, over: Partial<{ now: Date; entityIds: string[] }> = {}) => accrualProposals(db, g.client.id, 2026, 8, { now: NOW, ...over });
+const cards = async (g: G, over?: Parameters<typeof august>[1]) => (await august(g, over)).map((p) => [p.counterparty, p.account.code, p.amount]);
+
+describe("accrual proposals", () => {
+  beforeEach(resetDb);
+
+  it("proposes a recurring payee missing from an ended, covered month: Dr the account / Cr 2150, the median, the rationale and refs to every history row", async () => {
+    const { g } = await qaBooks();
+    const found = await august(g);
+    // Telkom is missing while PLN, on the same account, paid; Andalas recurs 3 of 4 months.
+    expect(found.map((p) => [p.counterparty, p.account.code, p.amount, `${p.medianMonth.year}-${p.medianMonth.month}`])).toEqual([
+      [TELKOM, "6130", jt(0.5), "2026-7"],
+      [ANDALAS, "6170", jt(7.5), "2026-7"],
+      [BERSIH, "6190", jt(4.2), "2026-7"],
+    ]);
+    const bersih = found[2];
+    expect(bersih).toMatchObject({
+      key: `ACCRUAL:${g.pt.entity.id}:2026-08:6190:bank:${BERSIH}`,
+      bucket: { kind: "bank", merchantKey: BERSIH },
+      credit: { code: "2150" },
+      memo: `Akrual ${BERSIH} Agu 2026`,
+      date: dateOnly(2026, 8, 31),
+      reversalDate: dateOnly(2026, 9, 1),
+      banks: ["BCA Giro"],
+      warning: null,
+      blocked: null,
+    });
+    expect(bersih.rationale).toBe(
+      `${BERSIH} dibayar ke 6190 Beban Umum Lain-lain pada Apr, Mei, Jun dan Jul 2026 (Rp 4.200.000 – Rp 4.350.000). Agustus belum ada sampai 31 Agu 2026, dan rekening koran BCA Giro sudah lengkap sampai tanggal itu. Usulan: Rp 4.200.000, nilai tengah riwayat (Jul 2026).`,
+    );
+    expect(bersih.history.map((h) => [h.month, h.amount])).toEqual([[4, jt(4.2)], [5, jt(4.2)], [6, jt(4.35)], [7, jt(4.2)]]);
+    // Each ref is a journal line that drills to its bank row (rule 15).
+    expect(bersih.refs).toHaveLength(4);
+    for (const ref of bersih.refs) {
+      const line = await db.journalLine.findUniqueOrThrow({ where: { id: ref.slice(3) }, include: { account: true, entry: { include: { bankTransaction: true } } } });
+      expect([ref.startsWith("jl:"), line.account.code, line.entry.bankTransaction?.description, (line.entry.bankTransaction?.rowNumber ?? 0) > 0]).toEqual([true, "6190", BERSIH, true]);
+    }
+    expect(bersih.history[3].lines[0]).toMatchObject({ text: BERSIH, source: expect.stringMatching(/^BCA Giro baris \d+$/), amount: jt(4.2) });
+    // Andalas: May was filed by the accountant (a RECLASS out of 1999), June and July by Memory; all three count.
+    const andalas = found[1];
+    expect(andalas.history.map((h) => h.amount)).toEqual([0n, jt(7.5), jt(7.5), jt(7.5)]);
+    expect(andalas.rationale).toContain("pada Mei, Jun dan Jul 2026 (Rp 7.500.000 tiap bulan)");
+    // Scoped to a company: the owner has none.
+    expect(await august(g, { entityIds: [g.owner.entity.id] })).toEqual([]);
+  });
+
+  it("no card for 2 of 4 months, a refund month, a month outside the 25 % band (exactly 25 % qualifies) or below materiality", async () => {
+    const { g, bca } = await qaBooks({
+      august: [[12, PLN, jt(2.4)]],
+    });
+    // Extra payees, imported as a second BCA statement per month would overlap: add them on Mandiri, covered every month too.
+    const mandiri = g.pt.banks[1].id;
+    await db.rule.createMany({ data: ["DUA BULAN", "PAS BATAS", "LEWAT BATAS", "KECIL SEKALI", "REFUND JASA"].map((p) => ({ pattern: p, direction: "OUT" as const, accountCode: "6160", firmId: g.firm.id, clientId: g.client.id, priority: 40 })) });
+    const plan: Record<number, Row[]> = {
+      4: [[3, "CV PAS BATAS", jt(1)], [4, "CV LEWAT BATAS", jt(1)], [5, "CV KECIL SEKALI", 100_000n], [6, "CV REFUND JASA", jt(2)]],
+      5: [[3, "CV PAS BATAS", jt(1)], [4, "CV LEWAT BATAS", jt(1)], [5, "CV KECIL SEKALI", 100_000n], [6, "CV REFUND JASA", jt(2)]],
+      6: [[2, "CV DUA BULAN", jt(3)], [3, "CV PAS BATAS", jt(1)], [4, "CV LEWAT BATAS", jt(1)], [5, "CV KECIL SEKALI", 100_000n], [6, "CV REFUND JASA", jt(2)]],
+      7: [[2, "CV DUA BULAN", jt(3)], [3, "CV PAS BATAS", jt(1.25)], [4, "CV LEWAT BATAS", 1_250_001n], [5, "CV KECIL SEKALI", 100_000n], [6, "CV REFUND JASA", jt(2)], [7, "CV REFUND JASA", -jt(2.5)]],
+      8: [[1, "BIAYA LAIN", 1000n]],
+    };
+    for (const m of [4, 5, 6, 7, 8]) await statement(mandiri, 2026, m, plan[m]);
+    // The refund came in: filed back to the expense, it makes July negative for that payee.
+    const refund = await db.bankTransaction.findFirstOrThrow({ where: { description: "CV REFUND JASA", direction: "IN" } });
+    await reviewTransaction(db, { bankTxId: refund.id, accountCode: "6160", taxTag: null });
+    void bca;
+    const names = (await august(g)).map((p) => p.counterparty);
+    expect(names).toContain("CV PAS BATAS"); // 1,25 jt against a median of 1 jt: exactly 25 %
+    for (const no of ["CV DUA BULAN", "CV LEWAT BATAS", "CV KECIL SEKALI", "CV REFUND JASA"]) expect(names).not.toContain(no);
+  });
+
+  it("no card for a generic key, or on HPP, tax, 7190, 7200 or 7300", async () => {
+    const { g } = await qaBooks();
+    const mandiri = g.pt.banks[1].id;
+    const rows: Row[] = [[2, "BI FAST OUTGOING 0108/FTSCY/WS95051", jt(3)], [3, "PT PAKAN JAYA", jt(11.1)], [4, "PT LELANG ASET", jt(3)], [5, "KANTOR PAJAK PRATAMA", jt(3)], [6, "CV BULAT", jt(3)], [7, "BANK KURS", jt(3)]];
+    for (const m of [4, 5, 6, 7]) await statement(mandiri, 2026, m, rows);
+    await statement(mandiri, 2026, 8, [[1, "BIAYA LAIN", 1000n]]);
+    const to: Record<string, string> = { "BI FAST": "6190", "LELANG": "7300", "PAJAK PRATAMA": "8200", "BULAT": "7190", "KURS": "7200" };
+    for (const t of await db.bankTransaction.findMany({ where: { bankAccountId: mandiri, status: "NEEDS_REVIEW" } })) {
+      const code = Object.entries(to).find(([w]) => t.description.includes(w))?.[1];
+      if (code) await reviewTransaction(db, { bankTxId: t.id, accountCode: code, taxTag: null });
+    }
+    // PAKAN posts by the group's rule to 5100 (HPP); the rest were filed by hand above.
+    const count = (code: string) => db.journalLine.count({ where: { entityId: g.pt.entity.id, account: { code }, debit: { gt: 0n } } });
+    expect(await Promise.all(["5100", "7300", "8200", "7190", "7200"].map(count))).toEqual([4, 4, 4, 4, 4]);
+    const fast = await db.bankTransaction.findMany({ where: { description: { startsWith: "BI FAST" }, accountCode: "6190" } });
+    expect([fast.length, fast.every((t) => isGenericKey(t.merchantKey))]).toEqual([4, true]);
+    expect((await august(g)).map((p) => p.account.code).sort()).toEqual(["6130", "6170", "6190"]);
+  });
+
+  it("no card before the month has ended (Asia/Jakarta), when a bank account of the history isn't covered through its last day, or in a locked month", async () => {
+    const { g } = await qaBooks();
+    // 31 Aug 23.59 WIB: not ended; 1 Sep 00.00 WIB (31 Aug 17.00 UTC): ended.
+    expect(await cards(g, { now: new Date("2026-08-31T16:59:00Z") })).toEqual([]);
+    expect(await cards(g, { now: new Date("2026-08-31T17:00:00Z") })).toHaveLength(3);
+    // A locked month has nothing to approve.
+    await db.period.update({ where: { clientId_year_month: { clientId: g.client.id, year: 2026, month: 8 } }, data: { status: "LOCKED" } });
+    expect(await august(g)).toEqual([]);
+  });
+
+  it("a statement ending 25 Aug is no missing vendor: no card; nor when the payee was also paid from an account without August", async () => {
+    balances.clear();
+    const g = await makeGroup();
+    await db.rule.create({ data: { pattern: "BERSIH PRIMA", direction: "OUT", accountCode: "6190", firmId: g.firm.id, clientId: g.client.id } });
+    const [bca, mandiri] = [g.pt.banks[0].id, g.pt.banks[1].id];
+    for (const m of [4, 5, 6, 7]) await statement(bca, 2026, m, [[10, BERSIH, jt(4.2)]]);
+    await statement(bca, 2026, 8, [[5, "BIAYA LAIN", 1000n]], 25);
+    expect(await august(g)).toEqual([]);
+    // The rest of August arrives: the card appears.
+    await statement(bca, 2026, 8, [[27, "BIAYA LAIN", 1000n]], 31, 26);
+    expect(await cards(g)).toEqual([[BERSIH, "6190", jt(4.2)]]);
+    // The same payee paid once from Mandiri, which has no August statement: no card until it does.
+    await statement(mandiri, 2026, 4, [[11, BERSIH, 1n]]);
+    expect(await august(g)).toEqual([]);
+  });
+
+  it("the card vanishes when the payee's August line is imported, posted or still in Review", async () => {
+    const { g, bca } = await qaBooks();
+    expect((await august(g)).map((p) => p.counterparty)).toContain(BERSIH);
+    // A late line held in Review (the firm's dial sends rule matches to Review): it has arrived all the same.
+    await db.firm.update({ where: { id: g.firm.id }, data: { autoPostRules: false } });
+    await statement(bca, 2026, 8, [[30, BERSIH, jt(4.2)]], 31, 30);
+    const late = await db.bankTransaction.findFirstOrThrow({ where: { description: BERSIH, date: dateOnly(2026, 8, 30) } });
+    expect(late.status).toBe("NEEDS_REVIEW");
+    expect((await august(g)).map((p) => p.counterparty)).toEqual([TELKOM, ANDALAS]);
+    // Posted: still gone.
+    await reviewTransaction(db, { bankTxId: late.id, accountCode: "6190", taxTag: null });
+    expect((await august(g)).map((p) => p.counterparty)).toEqual([TELKOM, ANDALAS]);
+  });
+
+  it("a supplier bucket from purchase invoices: proposed while missing, gone once an August invoice or a matched bank line arrives", async () => {
+    const g = await makeGroup();
+    const pt = g.pt.entity.id;
+    const bill = (m: number, number: string, dpp = "6.000.000") => createInvoice(db, { clientId: g.client.id, entityId: pt, direction: "PURCHASE", contactName: "CV Andalas Konsultan", number, issueDate: `2026-${pad(m)}-25`, dpp, counterCode: "6170" });
+    for (const m of [4, 5, 6, 7]) await bill(m, `ADL-${m}`);
+    // A voided bill never counts (June would double and leave the band).
+    const voided = await bill(6, "ADL-6B");
+    await voidInvoice(db, { clientId: g.client.id, invoiceId: voided.id, reason: "dokumen ganda dari pemasok" });
+    const found = await august(g);
+    expect(found.map((p) => [p.bucket.kind, p.counterparty, p.account.code, p.amount])).toEqual([["contact", "CV Andalas Konsultan", "6170", jt(6)]]);
+    expect(found[0].rationale).toBe(
+      "Tagihan CV Andalas Konsultan dicatat ke 6170 Beban Jasa Profesional pada Apr, Mei, Jun dan Jul 2026 (Rp 6.000.000 tiap bulan). Agustus belum ada tagihan atau pembayarannya sampai 31 Agu 2026. Usulan: Rp 6.000.000, nilai tengah riwayat (Jul 2026).",
+    );
+    expect(found[0].history[3].lines[0]).toMatchObject({ text: "ADL-7 · CV Andalas Konsultan", source: "Tagihan pembelian ADL-7" });
+    // A bank line matched to the contact in August (a payment of an earlier bill) has arrived.
+    balances.clear();
+    await statement(g.pt.banks[0].id, 2026, 8, [[28, "TRSF DB CV ANDALAS", jt(6)]]);
+    const paid = await db.bankTransaction.findFirstOrThrow({ where: { description: "TRSF DB CV ANDALAS" } });
+    await db.bankTransaction.update({ where: { id: paid.id }, data: { contactId: found[0].bucket.kind === "contact" ? found[0].bucket.contactId : null } });
+    expect(await august(g)).toEqual([]);
+    await db.bankTransaction.update({ where: { id: paid.id }, data: { contactId: null } });
+    expect(await august(g)).toHaveLength(1);
+    // An August bill: gone.
+    await bill(8, "ADL-8");
+    expect(await august(g)).toEqual([]);
+  });
+
+  it("a ledger-fed company gets the per-account proposal under the same rule, only once its August ledger is imported; a manual accrual hides it", async () => {
+    const g = await makeGroup();
+    const gl = async (name: string, rows: [Date, string, string, number, number][]) => {
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet("GL");
+      ws.addRow(["Entity", "Entry Date", "Account Code", "Account Name", "Description", "Debit", "Credit"]);
+      for (const [date, code, accName, dr, cr] of rows) ws.addRow(["PT Uji", date, code, accName, `${accName} ${date.toISOString().slice(0, 7)}`, dr, cr]);
+      const st = await stageImport(db, { firmId: g.firm.id, clientId: g.client.id, fileName: name, data: Buffer.from(await wb.xlsx.writeBuffer()) });
+      if (st.status !== "STAGED") throw new Error(`not staged: ${JSON.stringify(st)}`);
+      for (const c of await db.importCheck.findMany({ where: { ledgerImportId: st.importId, severity: "BLOCK" } })) await acceptCheck(db, g.client.id, c.id);
+      await suggestMappings(db, { firmId: g.firm.id, clientId: g.client.id, provider: null, useAi: false });
+      const src = await importSourceAccounts(db, st.importId);
+      await acceptMappings(db, g.client.id, src.map((s) => ({ sourceAccountId: s.id, accountCode: s.suggestedCode!, method: s.suggestedBy! })));
+      await postImport(db, g.client.id, st.importId);
+    };
+    const rent = (m: number, amount: number): [Date, string, string, number, number][] => [
+      [new Date(Date.UTC(2026, m - 1, 25)), "6120", "Beban Sewa", amount, 0],
+      [new Date(Date.UTC(2026, m - 1, 25)), "2110", "Utang Usaha", 0, amount],
+    ];
+    const sales = (m: number): [Date, string, string, number, number][] => [
+      [new Date(Date.UTC(2026, m - 1, 10)), "1130", "Piutang Usaha", 20_000_000, 0],
+      [new Date(Date.UTC(2026, m - 1, 10)), "4100", "Penjualan", 0, 20_000_000],
+    ];
+    await gl("gl-apr-jul.xlsx", [4, 5, 6, 7].flatMap((m) => [...rent(m, 3_000_000), ...sales(m)]));
+    // August's ledger isn't imported yet: the month isn't complete.
+    expect(await august(g)).toEqual([]);
+    await gl("gl-agu.xlsx", sales(8));
+    const found = await august(g);
+    expect(found.map((p) => [p.bucket.kind, p.counterparty, p.account.code, p.amount, p.memo])).toEqual([["ledger", "6120 Beban Sewa", "6120", jt(3), "Akrual 6120 Beban Sewa Agu 2026"]]);
+    expect(found[0].rationale).toContain("6120 Beban Sewa tercatat di buku besar yang diimpor pada Apr, Mei, Jun dan Jul 2026 (Rp 3.000.000 tiap bulan)");
+    expect(found[0].history[3].lines[0].source).toMatch(/^gl-apr-jul\.xlsx GL!\d+/);
+    // The accountant accrued it by hand: the account is the bucket, so it is hidden.
+    await postAdjustment(db, { clientId: g.client.id, entityId: g.pt.entity.id, date: dateOnly(2026, 8, 31), memo: "Akrual sewa Agustus", lines: [{ accountCode: "6120", debit: "3.000.000", credit: "" }, { accountCode: "2150", debit: "", credit: "3.000.000" }], reverseNextMonth: true });
+    expect(await august(g)).toEqual([]);
+  });
+
+  it("a manual accrual on the account puts a warning on a payee card (it stays); an ACCRUAL schedule does the same", async () => {
+    const { g } = await qaBooks();
+    await postAdjustment(db, { clientId: g.client.id, entityId: g.pt.entity.id, date: dateOnly(2026, 8, 31), memo: "Akrual kebersihan Agustus", lines: [{ accountCode: "6190", debit: "4.000.000", credit: "" }, { accountCode: "2150", debit: "", credit: "4.000.000" }], reverseNextMonth: true });
+    await createSchedule(db, { clientId: g.client.id, entityId: g.pt.entity.id, kind: "ACCRUAL", memo: "Akrual internet Agustus", debitCode: "6130", creditCode: "2150", amount: "500.000", months: 1, startYear: 2026, startMonth: 8 });
+    const found = await august(g);
+    // Warned cards lead (problems first).
+    expect(found.map((p) => [p.counterparty, p.warning])).toEqual([
+      [TELKOM, `Sudah ada akrual 6130 bulan ini: “Akrual internet Agustus” Rp 500.000. Pastikan bukan untuk ${TELKOM} sebelum menyetujui.`],
+      [BERSIH, `Sudah ada akrual 6190 bulan ini: “Akrual kebersihan Agustus” Rp 4.000.000. Pastikan bukan untuk ${BERSIH} sebelum menyetujui.`],
+      [ANDALAS, null],
+    ]);
+  });
+
+  it("a locked next month blocks the card first; a chart without 2150 leaves the credit to the accountant", async () => {
+    const { g } = await qaBooks();
+    await db.period.upsert({ where: { clientId_year_month: { clientId: g.client.id, year: 2026, month: 9 } }, update: { status: "LOCKED" }, create: { firmId: g.firm.id, clientId: g.client.id, year: 2026, month: 9, status: "LOCKED" } });
+    expect((await august(g)).map((p) => p.blocked)).toEqual(Array(3).fill("1 Sep 2026 sudah dikunci, jadi pembaliknya tidak bisa dicatat."));
+    await db.period.update({ where: { clientId_year_month: { clientId: g.client.id, year: 2026, month: 9 } }, data: { status: "OPEN" } });
+    await db.account.delete({ where: { clientId_code: { clientId: g.client.id, code: "2150" } } });
+    const found = await august(g);
+    expect(found.map((p) => [p.credit, p.blocked])).toEqual(Array(3).fill([null, null]));
+    expect(NO_CREDIT).toBe("Pilih akun kredit (liabilitas): bagan akun klien tidak punya 2150.");
+  });
+});
