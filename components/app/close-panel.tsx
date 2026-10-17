@@ -39,6 +39,11 @@ export function ClosePanel(props: {
   unlockBlocker: string | null;
   /** The last reopenings of this client, newest first. */
   unlocks: { label: string; reason: string; by: string }[];
+  /** Persetujuan kedua: "request" when another admin must confirm a reopen; a request already waiting hides the button. */
+  reopenMode?: "direct" | "request";
+  reopenPending?: boolean;
+  /** Journals of the month waiting for a second approver hold the lock: where to decide them. */
+  secondHref?: string | null;
 }) {
   const { clientId, year, month } = props;
   const router = useRouter();
@@ -59,12 +64,13 @@ export function ClosePanel(props: {
     setExplained((x) => ({ ...x, [c.key]: r.explanation }));
     if (r.explanation.proposal) router.refresh();
   };
-  const run = (fn: () => Promise<{ ok: boolean; error?: string }>, success?: string) =>
+  const asks = props.reopenMode === "request";
+  const run = <R extends { ok: boolean; error?: string }>(fn: () => Promise<R>, success?: string | ((r: R) => string)) =>
     start(async () => {
       const r = await fn();
       if (!r.ok) toast.error((r as { error: string }).error);
       else {
-        if (success) toast.success(success);
+        if (success) toast.success(typeof success === "string" ? success : success(r));
         router.refresh();
       }
     });
@@ -193,6 +199,11 @@ export function ClosePanel(props: {
                 {props.blockers.map((b) => <li key={b}>• {b}</li>)}
               </ul>
             )}
+            {!props.locked && props.secondHref && (
+              <Link href={props.secondHref} className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline" data-testid="lock-second">
+                Putuskan di Kotak persetujuan <ChevronRight className="size-3.5" />
+              </Link>
+            )}
             {/* A warning, not a blocker: the checklist never holds the lock (accounting-rules 23). */}
             {!props.locked && props.checklist && props.checklist.open > 0 && (
               <p className="text-sm text-muted-foreground" data-testid="checklist-warning">
@@ -200,10 +211,12 @@ export function ClosePanel(props: {
               </p>
             )}
             {props.locked ? (
-              props.isAdmin ? (
+              props.reopenPending ? (
+                <p className="text-sm text-muted-foreground">Permintaan membuka kembali menunggu konfirmasi admin lain (lihat di atas).</p>
+              ) : props.isAdmin ? (
                 <>
                   <Button variant="outline" className="w-full" disabled={pending || props.unlockBlocker !== null} onClick={() => { setReason(""); setConfirm("unlock"); }} data-testid="unlock">
-                    <LockOpen /> Buka kembali periode
+                    <LockOpen /> {asks ? "Minta buka kembali" : "Buka kembali periode"}
                   </Button>
                   {props.unlockBlocker && <p className="text-sm text-muted-foreground">{props.unlockBlocker}</p>}
                 </>
@@ -239,11 +252,13 @@ export function ClosePanel(props: {
       <Dialog open={confirm !== null} onOpenChange={(o) => !o && setConfirm(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{confirm === "lock" ? `Tutup buku ${props.periodLabel}?` : `Buka kembali ${props.periodLabel}?`}</DialogTitle>
+            <DialogTitle>{confirm === "lock" ? `Tutup buku ${props.periodLabel}?` : asks ? `Minta buka kembali ${props.periodLabel}?` : `Buka kembali ${props.periodLabel}?`}</DialogTitle>
             <DialogDescription>
               {confirm === "lock"
                 ? `Setelah ditutup, impor mutasi, reklasifikasi dan jurnal ke ${props.periodLabel} ditolak sampai periodenya dibuka kembali. Catatan kontrol dan daftar periksa ikut tersimpan.${props.checklist?.open ? ` ${props.checklist.open} tugas checklist belum selesai; buku tetap bisa ditutup.` : ""}`
-                : `Periode ${props.periodLabel} bisa diubah lagi. Laporan yang sudah dikirim ke klien bisa berbeda setelah ada perubahan.`}
+                : asks
+                  ? `Admin lain mengonfirmasi sebelum ${props.periodLabel} dibuka. Sampai itu, buku tetap ditutup.`
+                  : `Periode ${props.periodLabel} bisa diubah lagi. Laporan yang sudah dikirim ke klien bisa berbeda setelah ada perubahan.`}
             </DialogDescription>
           </DialogHeader>
           {confirm === "unlock" && (
@@ -262,10 +277,14 @@ export function ClosePanel(props: {
                 const which = confirm;
                 setConfirm(null);
                 if (which === "lock") run(() => lockAction(clientId, year, month), `Buku ${props.periodLabel} ditutup`);
-                else run(() => unlockAction(clientId, year, month, reason), "Periode dibuka kembali");
+                else
+                  run(
+                    () => unlockAction(clientId, year, month, reason),
+                    (r) => ("pending" in r && r.pending ? "Permintaan buka kembali dikirim" : "fallback" in r && r.fallback ? "Periode dibuka kembali tanpa konfirmasi kedua: hanya satu admin aktif" : "Periode dibuka kembali"),
+                  );
               }}
             >
-              {confirm === "lock" ? `Tutup buku ${props.periodLabel}` : "Buka kembali"}
+              {confirm === "lock" ? `Tutup buku ${props.periodLabel}` : asks ? "Minta buka kembali" : "Buka kembali"}
             </Button>
           </DialogFooter>
         </DialogContent>

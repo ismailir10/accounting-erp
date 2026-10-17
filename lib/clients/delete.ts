@@ -33,6 +33,8 @@ export async function deleteClient(db: Db, input: { firmId: string; clientId: st
       await tx.closeSignoff.deleteMany({ where: { periodId: { in: periodIds } } });
       await tx.checklistMark.deleteMany({ where: { task: { clientId } } }); // Checklist tutup buku: the month marks, then the template
       await tx.checklistTask.deleteMany({ where: { clientId } });
+      await tx.journalApproval.deleteMany({ where: { clientId } }); // Persetujuan kedua: points at drafts and entries
+      await tx.reopenRequest.deleteMany({ where: { clientId } });
       await tx.proposedEntry.deleteMany({ where: { clientId } });
       await tx.withholdingSlip.deleteMany({ where: { clientId } }); // points at bank lines and contacts
       await tx.invoiceSettlement.deleteMany({ where: { invoice: { clientId } } });

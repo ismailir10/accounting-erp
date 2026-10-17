@@ -16,6 +16,8 @@ import { ocrEnabled } from "@/lib/ocr/draft";
 import { OcrSettingCard } from "@/components/app/ocr-setting";
 import { AutomationCard } from "@/components/app/automation-card";
 import { lastAutomationChange, readAutomation } from "@/lib/settings/automation";
+import { ApprovalsCard } from "@/components/app/approvals-card";
+import { activeAdminCount, lastApprovalsChange, readApprovals } from "@/lib/settings/approvals";
 import { isAdminRole } from "@/lib/auth/permissions";
 import { LinkTabs } from "@/components/app/link-tabs";
 import { TeamCard } from "@/components/app/team-card";
@@ -69,6 +71,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Sea
     );
   }
   const [cfg, lastCall, plans, ocr, automation, automationChange] = await Promise.all([resolveAiConfig(prisma), prisma.aiUsage.findFirst({ where: { firmId: firm.id, model: { not: "demo-seed" } }, orderBy: { at: "desc" } }), planRejections(prisma, firm.id), ocrEnabled(prisma), readAutomation(prisma, firm.id), lastAutomationChange(prisma, firm.id)]);
+  const [approvals, approvalsChange, admins] = await Promise.all([readApprovals(prisma, firm.id), lastApprovalsChange(prisma, firm.id), activeAdminCount(prisma, firm.id)]);
   const live = Boolean(cfg.apiKey && cfg.model);
   const use = await monthlyAiUse(prisma, firm.id);
 
@@ -88,6 +91,14 @@ export default async function SettingsPage({ searchParams }: { searchParams: Sea
         settings={{ ...automation, cap: automation.cap?.toString() ?? null, fluxFloor: automation.fluxFloor?.toString() ?? null }}
         canSave={isAdmin}
         lastChange={automationChange && { at: formatDateTime(automationChange.at), actor: automationChange.actor }}
+      />
+      {/* Otomasi decides what may skip you; Persetujuan kedua decides what needs two of you. */}
+      <ApprovalsCard
+        key={[approvals.manual, approvals.manualAbove, approvals.aiDraft, approvals.aiDraftAbove, approvals.reopen].join("|")}
+        settings={{ ...approvals, manualAbove: approvals.manualAbove?.toString() ?? null, aiDraftAbove: approvals.aiDraftAbove?.toString() ?? null }}
+        canSave={isAdmin}
+        singleAdmin={admins < 2}
+        lastChange={approvalsChange && { at: formatDateTime(approvalsChange.at), actor: approvalsChange.actor }}
       />
       <OcrSettingCard enabled={ocr} canSave={false} aiLive={live} />
       <Card>

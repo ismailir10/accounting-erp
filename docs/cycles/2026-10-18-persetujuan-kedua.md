@@ -381,22 +381,22 @@ If approving a draft needs a new `ProposalStatus` value, or attribution needs a 
 migration: stop and ask.
 
 ## Tasks
-- [ ] T1 Migration + schema: the `Firm` columns, `JournalApproval`, `ReopenRequest`, `PeriodUnlockLog.requestedById`. Then
+- [x] T1 Migration + schema: the `Firm` columns, `JournalApproval`, `ReopenRequest`, `PeriodUnlockLog.requestedById`. Then
       `lib/settings/approvals.ts` (read with defaults, validate, save with one `APPROVAL` event per client), the `AuditKind` +
       label, and `deleteClient`. Accept: DB tests for save, no-op, validation, events, delete. (reuse: `lib/settings/automation.ts`
       shape, `recordEvent`, `parseMoney`)
-- [ ] T2 The pure rules in `lib/approvals/second.ts`: routing, approver tier, fallback, reopen confirm, texts. Accept: unit tests.
+- [x] T2 The pure rules in `lib/approvals/second.ts`: routing, approver tier, fallback, reopen confirm, texts. Accept: unit tests.
       (parallel with T1)
-- [ ] T3 Journals:
+- [x] T3 Journals:
       - submit / approve / reject / withdraw for manual journals, *Balik otomatis* and *Balik jurnal*;
       - the adjustment writer split into parse + post, so approval posts stored minor units in one transaction with the status change;
       - the AI draft path around `postProposal`;
       - the lock refusal;
       - accounting-rules 3a, 20b, 23 and the new rule.
       Accept: `second-approval` and `period-lock` DB tests; existing `adjustment`, `reverse-entry`, `proposals` unchanged. (deps: T1, T2)
-- [ ] T4 Reopen: request / confirm / reject / cancel around `unlockPeriod`, the fallback, the log's requester, accounting-rules 4.
+- [x] T4 Reopen: request / confirm / reject / cancel around `unlockPeriod`, the fallback, the log's requester, accounting-rules 4.
       Accept: `period-lock` reopen tests. (deps: T1, T2; parallel with T3)
-- [ ] T5 Kotak *Persetujuan kedua* (queue, counts, firm board, checklist proof), the Jurnal Penyesuaian form and *Terakhir dicatat*,
+- [x] T5 Kotak *Persetujuan kedua* (queue, counts, firm board, checklist proof), the Jurnal Penyesuaian form and *Terakhir dicatat*,
       the *Balik jurnal* dialog, the draft card, the Tutup Buku panel, the Jurnal Umum drawer line, and the card on Pengaturan kantor
       with its actions; README (settings, actions). Accept: `approvals` DB test; flows 1–5 on the dev server. (deps: T3, T4; reuse:
       the `AutomationCard` layout, `StatusPill`, `NextStep`, the approval-queue rows)
@@ -407,6 +407,79 @@ migration: stop and ask.
       (deps: T5)
 
 ## Implementation
+- Plan: T1–T5 sequential, inline, by one build worker (each task builds on the previous one's schema and writers; T2 is small enough
+  that a parallel worker would cost more than it saves). T6's e2e spec is written here; its Playwright run and the app walk are the driver's.
+- T1: `prisma/migrations/20261018150000_second_approver`, `prisma/schema.prisma`, `lib/settings/approvals.ts`, `lib/audit.ts`,
+  `lib/clients/delete.ts`, `lib/imports/remove.ts`, `app/firm-settings-actions.ts` — the five `Firm` columns (CHECK > 0), `JournalApproval`
+  and `ReopenRequest` (CHECKs: amount, entry iff APPROVED, decided iff not PENDING, a note on REJECTED, source fields; partial unique
+  PENDING per draft, per reversed entry, per client-month), `PeriodUnlockLog.requestedById`; the card's read/parse/save with one
+  `APPROVAL` ("Persetujuan kedua") event per client; `saveApprovalsAction` behind `org.settings`; client deletion and import removal drop
+  the new rows. Otomasi's threshold parser is exported (`rupiahThreshold`) and reused.
+- T2: `lib/approvals/second.ts`, `tests/unit/second-approval.test.ts` — routing (off, empty threshold, equal posts / above waits,
+  non-Rupiah routes all), the approver rule (never the maker; Admin and Pemilik one tier; Peninjau never), the fallback tests
+  (`hasApprover`, `hasSecondAdmin`), the reopen decider rule, the wait reasons and event heads.
+- T3: `lib/approvals/journals.ts`, `lib/approvals/pending.ts`, `lib/ledger/post.ts` (`checkJournal`: postJournal's checks without the
+  write; postJournal itself unchanged in behaviour and still the only writer), `lib/ledger/adjustment.ts` (`prepareAdjustment` +
+  `postPreparedAdjustment`), `lib/ledger/reverse.ts` (`checkReversal` + `reverseEntryTx`), `lib/adjust/proposals.ts` (`chosenAccounts`,
+  `onPosted` hook, dismiss refused while waiting, Draf jurnal hides waiting drafts and shows "Ditolak …"), `lib/controls/index.ts` (lock
+  refusal, checked again under the client lock), `app/actions.ts` (`adjustmentAction`, `reverseEntryAction`, `postProposalAction` route
+  through the submit functions and return `pending`; new `approveJournalAction`, `rejectJournalAction`, `withdrawJournalAction`, each
+  behind `requireCapability("books.write", { clientId })`), accounting-rules 2a (new), 3a, 20b, 23, 25. Submits take the client's close
+  lock so a lock either sees the request or refuses it; approvals lock the row (`FOR UPDATE`) so a double click or an approve racing a
+  reject decides once.
+- T4: `lib/approvals/reopen.ts` (request / confirm / reject / cancel, the one-admin fallback, `pendingReopens`), `lib/controls/index.ts`
+  (`unlockReason`, `reopenablePeriod`, `unlockPeriodTx` with the requester on the log; a direct unlock closes a waiting request as
+  "dibuka langsung" via `closeReopenRequests` in `lib/approvals/pending.ts`), `app/actions.ts` (`unlockAction` through `requestReopen`,
+  returning `{ ok: true }` exactly as before on a direct reopen, `pending` / `fallback` otherwise; new `confirmReopenAction`,
+  `rejectReopenAction`, `cancelReopenAction`, each behind `requireCapability("period.unlock", { clientId })`), accounting-rules 4.
+- T5: `lib/approvals/queue.ts` (kind `second` first, `?jenis=kedua`: journals through the month end with "bulan lalu", reopen requests up
+  to the month even when it is closed; `approvalCounts(…, { reopen: false })` for the checklist proof), `lib/checklist/view.ts`,
+  `lib/approvals/pending.ts` (`approvalLines`: "Diajukan … · Disetujui …"), `lib/reports/journal-register.ts` + `account-ledger.ts`,
+  `lib/approvals/second.ts` (`sourceRoute`, `formNotice`: the forms' line and *Ajukan persetujuan*), `components/app/approvals-card.tsx`
+  (the firm card, read-only for Akuntan/Peninjau, one-admin warning), `components/app/second-approval.tsx` (*Setujui & catat*, *Tolak* with
+  *Alasan menolak*, *Tarik kembali*; *Konfirmasi buka kembali*, *Tolak*, *Batalkan permintaan*; Tutup Buku's request panel),
+  `components/app/approval-queue.tsx`, `journal-form.tsx`, `proposals-card.tsx` ("Ditolak …" and the notice), `ledger-table.tsx` (*Balik
+  jurnal*'s notice, the drawer's approval line), `close-panel.tsx` (*Minta buka kembali*, the lock blocker linking to Kotak, *Riwayat buka
+  kembali* naming requester and confirmer), the pages (settings, approvals, journals/new with *Menunggu persetujuan* first, journals,
+  ledger, close), README. Eligibility shown on a row is computed on the server from the same pure rule the actions enforce.
+- T6 (worker part): `scripts/e2e-setup.ts` gives *KAP Uji Lain* a second ADMIN ("Admin kedua lain") and an AKUNTAN ("Akuntan firma
+  lain"); `e2e/persetujuan-kedua.spec.ts` walks flows 1–5 on a QA client of its own (deleted in `finally`, the card put back to all
+  off), 390 px on the card, Kotak and Tutup Buku. Its Playwright run, the walk with screenshots and the full gate (`demo:reset`,
+  `verify:books`, the investor walk) are the driver's (they need the shared `buku` DB).
+- Acceptance criteria → tests:
+  - Defaults change nothing → `tests/db/second-approval.test.ts` "defaults change nothing" (submit/reversal deep-equal the plain writers,
+    no request, no event; the action returns the entry); existing `adjustment`, `reverse-entry`, `proposals`, `close-explain`,
+    `period-lock` (incl. `unlockAction` → `{ ok: true }` exactly) green unchanged; full gate (driver).
+  - Rp 150.000.000 waits / Rp 100.000.000 posts → unit `routing` "equal posts, strictly above waits"; DB "a Rp 150.000.000 journal waits
+    with no entry and an unchanged trial balance"; e2e flow 2.
+  - Approve posts the stored lines and notes, with the reversal, `postedById` = approver, row APPROVED → DB "approval by another eligible
+    member …" (deep-equal lines, reversal date, Jurnal Umum's "Diajukan … · Disetujui …"); e2e flow 2.
+  - Self-approval (admin too), Akuntan on Admin's/Pemilik's, Admin on Pemilik's allowed, Peninjau, unassigned → unit 4 × 4 matrix; DB
+    "refusals through the actions" (each refusal's sentence, nothing written); e2e flow 4 (no buttons for the Akuntan).
+  - Tolak note ≥ 5, Tarik kembali maker only, double approve / approve vs reject once → DB "Tolak needs a note …", "a double approve, or an
+    approve racing a reject, decides once"; e2e flow 5.
+  - Refused approvals stay pending → DB "the Balik otomatis month closed meanwhile" and "a stale draft's approval is refused".
+  - Balik jurnal waits, duplicate refused (also after the card is turned off) → DB "Balik jurnal above the threshold waits …".
+  - Draf AI above Rp 50.000.000 (MockProvider) → DB "Catat jurnal waits: the draft leaves Draf jurnal …", "a rejection returns the draft
+    …", "below the threshold, or with Draf AI off …", and import removal dropping the requests.
+  - Kotak shows *Persetujuan kedua* first; board count = page; checklist proof counts journals not reopens → `tests/db/approvals.test.ts`
+    "Persetujuan kedua leads the queue …"; e2e flows 2–4.
+  - Lock refused with the count, and after approval/rejection it locks; the *Balik otomatis* month too; *Tutup bulan-bulan sebelumnya* →
+    `tests/db/period-lock.test.ts` "Persetujuan kedua: a month can't be locked …" (3 cases); e2e flow 4.
+  - Reopen with two admins (request keeps it locked, confirm opens + deletes sign-offs + logs requester/confirmer, requester can't confirm,
+    Akuntan refused, one pending per month, reject and cancel), one-admin fallback, setting off + direct unlock cancels → `period-lock`
+    "Persetujuan kedua: reopening with Buka kembali bulan on" (5 cases); e2e flow 3.
+  - Card: Pemilik/Admin save, Akuntan/Peninjau refused "Hanya admin kantor yang dapat mengubah ini.", invalid amounts → field message →
+    `tests/db/settings-actions.test.ts` (4 cases), `tests/db/firm-approvals.test.ts`; e2e flows 1 and 5.
+  - Every step one "Persetujuan kedua" event → DB events asserted in `second-approval` (diajukan, disetujui, ditolak, ditarik, fallback),
+    `period-lock` (diminta, dikonfirmasi, ditolak, dibatalkan, dibuka langsung, fallback), `firm-approvals` / `settings-actions` (card).
+  - Every new action calls `requireCapability` → `tests/unit/action-guards.test.ts` (unchanged).
+  - Deleting a client removes its rows → `tests/db/delete-client.test.ts` "deletes its Persetujuan kedua rows".
+  - 390 px → e2e (card, Kotak, Tutup Buku).
+  - The forms' line and button → unit "the forms' notice"; e2e flow 2.
+- Worker gate (isolated `buku_test_c`): lint and typecheck clean; full `npm test` 313/314 files, 2888/2888 tests passed — the one file
+  failing was `db-drift.test.ts`'s `afterAll` (DROP DATABASE timed out under concurrent worktrees; it shares a fixed DB name), green re-run
+  alone (3/3); `npm run build` exit 0. Deck claims (`kantor.html`, `perusahaan.html`) and `docs/roadmap.md` §3 are left to ship's deck review.
 
 ## Verification
 

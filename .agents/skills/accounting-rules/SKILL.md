@@ -40,6 +40,17 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
    A bank GL account belongs to one entity (`BankAccount.entityId`): another entity's entry may not use it — money between
    entities goes through 1190 in each entity's own books (rule 10). The only exception clears what older books left there (a
    line moving that entity's balance on the account toward zero); close control `bank-entity:` (REVIEW) shows such leftovers.
+2a. **Persetujuan kedua: a waiting journal is a request, never an entry** (`lib/approvals/journals.ts`, cycle 2026-10-18-persetujuan-kedua).
+   When the firm's card routes a journal (*Jurnal manual* — Jurnal Penyesuaian with or without *Balik otomatis*, and *Balik jurnal* — or a
+   *Draf AI*, each strictly above its whole-Rupiah threshold; a company kept in another currency routes every journal of a switched-on
+   source), the save stores a `JournalApproval` (lines as account code + minor-unit strings + note, the maker and the maker's role) and
+   writes **no** `JournalEntry`: no report, control or ledger view sees it. Every check the post would make runs at submission
+   (`checkJournal`). Another member with `books.write` on the client, never the maker, of a tier at least the maker's (Admin and Pemilik
+   one tier; Peninjau never) approves it; the maker's own writer then posts it through `postJournal()` in **one transaction** with the
+   status change (`APPROVED` + `entryId`), every check made again; a refusal leaves it `PENDING`. `postedById` is the approver; the request
+   keeps the maker. Reject needs a note (≥ 5 characters); only the maker withdraws. When no other member may approve (the only admin's own
+   journal), it posts at once and Riwayat says "Dicatat tanpa persetujuan kedua". The deterministic writers (schedules, registers, tax,
+   revaluation, invoices, Saldo Awal, Temuan, ledger import, 1999 corrections) are never routed. Card off = every writer as before.
 3. **Posted entries are immutable.** Corrections = new entry. The database refuses changing a line's amounts, account, entity, date or
    entry and an entry's entity, period, date or kind (memo, source refs and links may change). Two named exceptions, both admin only and logged: deleting a client (rule 25)
    and **removing a whole import** (ADR 0013, `lib/imports/remove.ts`: open months only, a written reason, refused while an invoice
@@ -63,11 +74,19 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     same accounts and source accounts), dated by the accountant on or after the original, through `postJournal()`; `reversesId` (unique) points
     at the original, so an entry is reversed once and a reversal is never reversed. An entry a schedule, register, pack, stock count or lease
     owns, a foreign-currency or revaluation entry, and every non-adjustment are refused with where to change them instead.
+    Above the firm's *Jurnal manual* threshold (by the original's Σdebit) the reversal waits for a second approver (rule 2a); while one
+    reversal request of an entry waits, no other reversal of it is taken (a partial unique index keeps one PENDING per entry).
 4. **Locked periods reject every write** — imports, reclasses, adjustments. The database refuses inserting or deleting a journal entry
    or line dated in a LOCKED month; only `deleteClient` passes, through `set_config('buku.client_delete', 'on', true)` in its own transaction. Closing goes in order: a month can't be locked while an earlier
    month with entries other than the Saldo Awal is open (`lockPeriod`, checked again under the client lock). Unlock (`unlockPeriod`) is
    explicit, **ADMIN only**, needs a reason (≥ 5 characters), runs in reverse order (refused while a later month is locked) and writes a
-   `PeriodUnlockLog` row in the same transaction.
+   `PeriodUnlockLog` row in the same transaction. With the firm's *Buka kembali bulan* on (Persetujuan kedua, `lib/approvals/reopen.ts`)
+   the admin's reason creates a `ReopenRequest` (checked like the unlock; one PENDING per client-month) and the month **stays locked**
+   until another active Pemilik or Admin confirms it — the confirm runs the same unlock in the same transaction as the decision, and the
+   log keeps `requestedById` (the requester) beside `unlockedById` (the confirmer). Reject (another admin, a note ≥ 5 characters) and
+   cancel (the requester) leave it locked. With a single active admin the reopen happens at once and the log and Riwayat say "Dibuka tanpa
+   konfirmasi kedua: hanya satu admin aktif"; with the setting off it is exactly the direct unlock, which also closes a waiting request
+   of the month as "dibuka langsung".
 5. **Opening balances** are `OPENING` entries. **No plug** (ADR 0012): a difference between the typed lines posts to **3290 Selisih Saldo
    Awal** and opens a **Temuan** (`Finding`, `T-<n>` per client) in the same transaction — never to 3200. Saldo Laba is typed (or copied
    from the difference by an explicit click). A Temuan is resolved once: a written decision (≥ 10 characters) and one `OPENING` entry dated the
@@ -432,7 +451,10 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
 20b. **Close copilot / proposed entries** (`lib/controls/explain.ts`, `lib/adjust/proposals.ts`): *Jelaskan* sends one flagged control's
     rows (20a caps) and gets an explanation, an optional note (a prefill the accountant saves) and an optional draft journal —
     kept only if every account is in the chart (never a bank account), it balances, and **every amount equals the amount of a row the answer cites** (checked again when it posts).
-    Drafts are `ProposedEntry` rows, posted only by the accountant's click (accounts editable, amounts never) through `postJournal()`;
+    Drafts are `ProposedEntry` rows, posted only by the accountant's click (accounts editable, amounts never) through `postJournal()`
+    — and above the firm's *Draf AI* threshold that click is the first approval: the chosen accounts wait in a `JournalApproval` (rule 2a),
+    the draft stays PROPOSED and refuses a direct post or dismiss, and a second member's approval runs `postProposal` with every re-check;
+    a rejection returns the draft with the note. AI still never posts: a draft needs one or two human clicks;
     a draft that moves one cited **bank line** posts through the reviewer's writer instead (RECLASS + Memory, rule 3); one that moves
     cited bank lines any other way (several lines at once) gets no draft, never a free journal. A cited journal line or entry
     (`jl:`/`je:`, as the ledger anomaly scans cite) counts as its bank line when it came from one, and every account that line posts
@@ -504,7 +526,9 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     typed fields, never stored, never added to a locked month (reopening shows it). A note clears it like any REVIEW control while the
     list is unchanged; *Matikan* removes it from open months and its old notes stay, unused. The AI close review and *Jelaskan* may send
     its listed lines like any flagged control's rows (rule 20a caps). Deterministic: no model decides it.
-23. Tutup Buku requires: no FAIL, every REVIEW acknowledged with a note, all sign-offs ticked.
+23. Tutup Buku requires: no FAIL, every REVIEW acknowledged with a note, all sign-offs ticked, and **no journal waiting for a second
+    approver** that would post into the month (dated in it, or a *Balik otomatis* request of the month before; `pendingJournalCount`,
+    checked again under the client lock): "Belum bisa tutup buku: 2 jurnal menunggu persetujuan kedua."
     *Tutup bulan-bulan sebelumnya* (`lib/controls/history.ts`, admin only) closes the open months before the selected one in order, one
     month per call: the same rule per month, with one note written on each REVIEW still without a note and the sign-offs given by the
     admin once for the run; a month whose open controls differ from what was previewed, or that fails, stops the run.
@@ -513,6 +537,6 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
 24. Every row has `firmId`. Server actions resolve the client through `getClientForFirm()` before any write.
 25. **Deleting a client** (`lib/clients/delete.ts`) is not a ledger correction: an admin removes a client entered by mistake or a test
     copy after typing its exact name. Everything that is its books (entities, accounts, periods, journals, bank and ledger imports,
-    memories, client rules and its Instruksi kantor, proposals, invoices, assets, schedules, leases, employee benefits, tax records, stock counts, evidence, Temuan, close checklist, change log) goes in one
+    memories, client rules and its Instruksi kantor, proposals, second-approval and reopen requests, invoices, assets, schedules, leases, employee benefits, tax records, stock counts, evidence, Temuan, close checklist, change log) goes in one
     transaction; firm rules, *Semua klien* instructions, rates, mortality tables and
     AI caches stay. A new table that references a client or entity must be added to that function.

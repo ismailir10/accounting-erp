@@ -115,8 +115,8 @@ export default async function JournalsPage({ params, searchParams }: { params: P
                       </p>
                       <p className="font-medium break-words">{e.memo}</p>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      {e.postedBy} · {formatDateTime(e.postedAt)}
+                    <p className="text-xs text-muted-foreground" data-testid="entry-posted-by">
+                      {e.approval ?? e.postedBy} · {formatDateTime(e.postedAt)}
                     </p>
                   </div>
                   {e.source && <p className="text-xs break-words text-muted-foreground">Sumber: {e.source}</p>}

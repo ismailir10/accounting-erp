@@ -30,6 +30,12 @@ import { checklistMonth, sumberOf, unfinishedBeforeLock } from "@/lib/checklist/
 import { tickProblem } from "@/lib/checklist/rules";
 import { LOCKED_SIGNOFF } from "@/lib/checklist/write";
 import { withParams } from "@/lib/scope";
+import { pendingJournalCount } from "@/lib/approvals/pending";
+import { pendingReopens } from "@/lib/approvals/reopen";
+import { routeFor } from "@/lib/approvals/journals";
+import { activeAdminCount, readApprovals } from "@/lib/settings/approvals";
+import { can } from "@/lib/auth/permissions";
+import { ReopenRequestPanel } from "@/components/app/second-approval";
 
 export const metadata = { title: "Tutup Buku" };
 
@@ -52,13 +58,23 @@ export default async function ClosePage({ params, searchParams }: { params: Prom
     earlierOpenMonth(prisma, client.id, period.year, period.month),
     laterLockedMonth(prisma, client.id, period.year, period.month),
     requireWorkspaceSession(),
-    prisma.periodUnlockLog.findMany({ where: { clientId: client.id }, orderBy: { createdAt: "desc" }, take: 5, include: { unlockedBy: { select: { name: true } } } }),
+    prisma.periodUnlockLog.findMany({ where: { clientId: client.id }, orderBy: { createdAt: "desc" }, take: 5, include: { unlockedBy: { select: { name: true } }, requestedBy: { select: { name: true } } } }),
   ]);
   const { member } = session;
   if (before) blockers.unshift(`Tutup buku ${formatPeriod(before.year, before.month)} dulu, bulan sebelumnya masih terbuka`);
   const open = controls.find((c) => c.key === "suspense" && c.status === "REVIEW");
   const missing = controls.find((c) => c.key.startsWith("bank:") && c.detail.includes("belum diimpor"));
   const locked = p?.status === "LOCKED";
+  // Persetujuan kedua: a journal waiting for a second approver holds the lock (accounting-rules 23); a reopen request of this month is
+  // decided here by another admin; with *Buka kembali bulan* on and two admins the unlock button asks instead of opening.
+  const [waitingJournals, reopenAsked, approvals, admins] = await Promise.all([
+    locked ? 0 : pendingJournalCount(prisma, client.id, period.year, period.month),
+    locked ? pendingReopens(prisma, client.id, period).then((rs) => rs.find((r) => r.year === period.year && r.month === period.month) ?? null) : null,
+    readApprovals(prisma, client.firmId),
+    activeAdminCount(prisma, client.firmId),
+  ]);
+  if (waitingJournals) blockers.push(`${waitingJournals} jurnal menunggu persetujuan kedua`);
+  const secondHref = withParams(`${base}/approvals`, { period: period.key, jenis: "kedua" });
   const reval = await revaluationProposals(prisma, client.id, period.year, period.month);
   const scheduled = locked ? [] : await proposalViews(prisma, client.id, period.year, period.month);
   const drafts = locked ? [] : await draftViews(prisma, client.id, period.year, period.month);
@@ -86,6 +102,8 @@ export default async function ClosePage({ params, searchParams }: { params: Prom
   const checklistHref = withParams(`${base}/checklist`, { period: period.key });
   const checklistOpen = unfinishedBeforeLock(checklist.rows);
   const access = accessView({ access: session.access, member, support: session.support });
+  const canReopen = access.canWrite && can(member.role, "period.unlock");
+  const draftRoute = drafts.some((d) => d.source === "AI_CONTROL") ? await routeFor(prisma, client.id, { id: member.id, role: member.role }, "AI_DRAFT") : undefined;
   const signoffTask = (key: string) => checklist.rows.find((r) => r.kind === "SIGNOFF" && r.key === key);
   const signoffBlock = (key: string): string | null => {
     const task = signoffTask(key);
@@ -99,7 +117,9 @@ export default async function ClosePage({ params, searchParams }: { params: Prom
   return (
     <div className="space-y-6">
       <PageHeader title="Tutup Buku" description={`${label}`} actions={<ScopeBar entities={[]} periods={periodOptions} period={period.key} />} />
-      {locked ? (
+      {locked && reopenAsked ? (
+        <ReopenRequestPanel clientId={client.id} id={reopenAsked.id} label={reopenAsked.label} requestedBy={reopenAsked.requestedBy} reason={reopenAsked.reason} canDecide={canReopen && reopenAsked.requestedById !== member.id} isRequester={canReopen && reopenAsked.requestedById === member.id} />
+      ) : locked ? (
         <NextStep tone="done">Buku {label} sudah ditutup. Laporan siap dikirim ke klien.</NextStep>
       ) : before ? (
         <NextStep href={`${base}/close?period=${monthKey(before)}`} cta={`Buka ${formatPeriod(before.year, before.month)}`}>Tutup buku {formatPeriod(before.year, before.month)} dulu. Penutupan berurutan dari bulan paling awal{history.length >= HISTORY_MIN_MONTHS ? `; ${history.length} bulan sebelumnya bisa ditutup sekaligus di bawah` : ""}.</NextStep>
@@ -172,7 +192,7 @@ export default async function ClosePage({ params, searchParams }: { params: Prom
           }))}
         />
       )}
-      {drafts.length > 0 && <ProposalsCard clientId={client.id} periodLabel={label} items={drafts} accounts={chart} locked={locked} />}
+      {drafts.length > 0 && <ProposalsCard clientId={client.id} periodLabel={label} items={drafts} accounts={chart} locked={locked} route={draftRoute} />}
       {scheduled.length > 0 && <ScheduleProposals clientId={client.id} year={period.year} month={period.month} periodLabel={label} items={scheduled} locked={locked} />}
       {!locked && flagged > 0 && aiModel !== null && <CloseReviewCard key={`${period.key}:${reviewKey}`} clientId={client.id} year={period.year} month={period.month} flagged={flagged} aiReady={aiModel !== null} initial={review} />}
       <ClosePanel
@@ -189,7 +209,10 @@ export default async function ClosePage({ params, searchParams }: { params: Prom
         aiReady={aiModel !== null}
         isAdmin={isAdminRole(member.role)}
         unlockBlocker={after ? `Buka kembali ${formatPeriod(after.year, after.month)} dulu: bulan setelahnya masih ditutup.` : null}
-        unlocks={unlockRows.map((u) => ({ label: `${formatPeriod(u.year, u.month)} dibuka kembali`, reason: u.reason, by: `${u.unlockedBy.name} · ${formatDateTime(u.createdAt)}` }))}
+        unlocks={unlockRows.map((u) => ({ label: `${formatPeriod(u.year, u.month)} dibuka kembali`, reason: u.reason, by: `${u.requestedBy ? `Diminta ${u.requestedBy.name} · dikonfirmasi ${u.unlockedBy.name}` : u.unlockedBy.name} · ${formatDateTime(u.createdAt)}` }))}
+        reopenMode={approvals.reopen && admins > 1 ? "request" : "direct"}
+        reopenPending={reopenAsked !== null}
+        secondHref={waitingJournals ? secondHref : null}
       />
     </div>
   );

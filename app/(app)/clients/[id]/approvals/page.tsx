@@ -5,7 +5,10 @@ import { formatDate, formatPeriod } from "@/lib/format";
 import { NextStep, PageHeader } from "@/components/app/page-header";
 import { ScopeBar } from "@/components/app/scope-bar";
 import { LinkTabs } from "@/components/app/link-tabs";
-import { ApprovalQueue } from "@/components/app/approval-queue";
+import { ApprovalQueue, type SecondView } from "@/components/app/approval-queue";
+import { approverProblem } from "@/lib/approvals/second";
+import { routeFor } from "@/lib/approvals/journals";
+import { can } from "@/lib/auth/permissions";
 import { APPROVAL_KINDS, approvalQueue, type ApprovalKind } from "@/lib/approvals/queue";
 import { accessView, requireWorkspaceSession } from "@/lib/auth/session";
 
@@ -24,6 +27,17 @@ export default async function ApprovalsPage({ params, searchParams }: { params: 
   ]);
   const { canWrite } = accessView(session);
   const label = formatPeriod(period.year, period.month);
+  // Persetujuan kedua: what this member may do on each request (every action checks it again). A journal is decided by another writer
+  // of a tier at least the maker's, never in a closed month; a reopen by another admin — the one card a closed month's queue acts on.
+  const me = { id: session.member.id, role: session.member.role };
+  const canReopen = canWrite && can(me.role, "period.unlock");
+  const second: SecondView[] = q.second.map((s) =>
+    s.type === "journal"
+      ? { ...s, canDecide: canWrite && !q.locked && approverProblem(me, s) === null, mine: canWrite && s.makerId === me.id }
+      : { ...s, canDecide: canReopen && s.requestedById !== me.id, mine: canReopen && s.requestedById === me.id },
+  );
+  const draftRoute = q.drafts.some((d) => d.source === "AI_CONTROL") ? await routeFor(prisma, client.id, me, "AI_DRAFT") : undefined;
+  const reopenOnly =q.locked && q.counts.total === q.counts.second && second.some((s) => s.type === "reopen");
   const query = { entity: scope.value, period: period.key };
   // A kind with nothing waiting has no tab; an unknown or empty `?jenis=` falls back to Semua (ui-rules 13a).
   const present = APPROVAL_KINDS.filter((k) => q.counts[k.key] > 0);
@@ -36,7 +50,11 @@ export default async function ApprovalsPage({ params, searchParams }: { params: 
   return (
     <div className="space-y-6">
       <PageHeader title="Kotak persetujuan" description={`${scopeLabel} · usulan sampai ${formatDate(period.end)}`} actions={<ScopeBar entities={entityOptions} periods={periodOptions} entity={scope.value} period={period.key} />} />
-      {q.locked ? (
+      {reopenOnly ? (
+        <NextStep href={closeHref} cta="Buka Tutup Buku">
+          Buku {label} sudah ditutup. Admin kantor memutuskan permintaan membuka kembali di bawah.
+        </NextStep>
+      ) : q.locked ? (
         <NextStep href={closeHref} cta="Buka Tutup Buku">
           Buku {label} sudah ditutup, jadi usulan{n ? " di bawah" : ""} hanya bisa dilihat. Minta admin membuka kembali {label} (dengan alasan) untuk mengubahnya.
         </NextStep>
@@ -70,6 +88,8 @@ export default async function ApprovalsPage({ params, searchParams }: { params: 
           drafts={q.drafts}
           scheduled={q.scheduled}
           faktur={q.faktur}
+          second={second}
+          draftRoute={draftRoute}
           fakturAccounts={q.fakturAccounts}
           draftAccounts={draftAccounts}
           reviewHref={withParams(`${base}/review`, query)}
