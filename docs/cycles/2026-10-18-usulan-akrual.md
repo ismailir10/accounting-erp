@@ -296,7 +296,7 @@ migration: stop and ask.
 - [x] T3 Kotak *Usulan akrual*: queue kind and counts, the card with *Setujui* / *Ubah* / *Tolak*, blocked and warning lines; Jurnal
       Penyesuaian NextStep; *Lihat alasan* accrual panel + CSV. Accept: approvals and reasoning DB tests; flows 1, 2 and 5 on the dev
       server. (deps: T2; parallel with T4)
-- [ ] T4 The REVIEW control *Akrual dan pembayaran di bulan yang sama* (if question 3 is accepted). Accept: DB test; flow 4. (deps: T2;
+- [x] T4 The REVIEW control *Akrual dan pembayaran di bulan yang sama* (if question 3 is accepted). Accept: DB test; flow 4. (deps: T2;
       parallel with T3)
 - [ ] T5 verify-local: `e2e/usulan-akrual.spec.ts`; walk flows 1–5 at 1440 and 390 px; the full gate (`demo:reset`, `verify:books`
       ALL PASS, investor walk unchanged). (deps: T3, T4)
@@ -331,6 +331,11 @@ migration: stop and ask.
   every other Kotak card (ui-rules 2: one primary per view), not the primary the UX note named. Tests: `tests/db/approvals.test.ts`
   (the kind, counts = queue, the firm board and the checklist's Kotak proof), `tests/db/reasoning-accrual.test.ts`; the fixture is
   shared in `tests/accrual-books.ts`.
+- T4: `lib/adjust/accruals.ts` (`paidAfterAccrual`: POSTED accruals of the company-month whose counterparty has a line in the month
+  now), `lib/controls/index.ts` (REVIEW `accrual-paid:<proposal>` *Akrual dan pembayaran di bulan yang sama*: the accrual and the
+  payment in its detail, `href` to Jurnal Penyesuaian with `salin=<the reversal>`), accounting-rules 5a, README (Close). Test:
+  `tests/db/accrual-proposals.test.ts` (no control before the payment; raised after a late statement; the copied reversal with
+  *Balik otomatis* nets August to the payment alone and 2150 to zero; a note acknowledges it, status stays REVIEW).
 
 ## Verification
 

@@ -9,6 +9,7 @@ import { balanceSheet, combinedWorksheet, trialBalance } from "@/lib/reports/led
 import { sanityControls } from "@/lib/controls/sanity";
 import { anomalyControls } from "@/lib/controls/anomaly";
 import { closeLock, dueProposals, schedulesDueBy } from "@/lib/adjust/schedules";
+import { paidAfterAccrual } from "@/lib/adjust/accruals";
 import { registerVsLedger } from "@/lib/assets/register";
 import { subledgerVsLedger } from "@/lib/receivables/aging";
 import { ckpn, settingAt } from "@/lib/receivables/ckpn";
@@ -259,6 +260,22 @@ async function collectControls(db: Db, clientId: string, year: number, month: nu
         detail: `${due.length} angsuran: ${list.join("; ")}${due.length > 3 ? `; +${due.length - 3} lainnya` : ""}`,
         href: `${base}/journals/new?period=${year}-${String(month).padStart(2, "0")}`,
         ack: acks.get(sKey),
+      });
+    }
+
+    // Usulan akrual (rule 5a): an approved accrual whose counterparty then got a line in the month counts the expense twice. The way out
+    // is the accrual's own reversal copied into the month with *Balik otomatis*; a note acknowledges it like any REVIEW, never a FAIL.
+    for (const d of await paidAfterAccrual(db, clientId, e.id, year, month)) {
+      const aKey = `accrual-paid:${d.proposalId}`;
+      const ym = `${year}-${String(month).padStart(2, "0")}`;
+      controls.push({
+        key: aKey,
+        title: "Akrual dan pembayaran di bulan yang sama",
+        scope: e.shortName,
+        status: "REVIEW",
+        detail: `Akrual ${formatDate(d.entry.date)} “${d.entry.memo}” ${fmt(d.entry.amount)} dan ${d.arrival.text} ${formatDate(d.arrival.date)} ${fmt(d.arrival.amount)}: beban ${d.counterparty} tercatat dua kali. Salin jurnal pembalik akrualnya ke ${formatPeriod(year, month)} dengan Balik otomatis, lalu tulis catatan.`,
+        href: d.reversalId ? `${base}/journals/new?period=${ym}&salin=${d.reversalId}` : `${base}/journals/new?period=${ym}`,
+        ack: acks.get(aKey),
       });
     }
 

@@ -524,6 +524,35 @@ export async function postAccrual(db: Db, input: { firmId: string; clientId: str
   }
 }
 
+/**
+ * Approved accruals of the company-month whose counterparty got a line in the month afterwards (a late statement, a bill entered late):
+ * the expense is then in the books twice. Each with the accrual entry, its reversal (what *Salin* copies to cancel it) and the first
+ * arrival. Feeds the REVIEW control *Akrual dan pembayaran di bulan yang sama*.
+ */
+export async function paidAfterAccrual(db: Db | Tx, clientId: string, entityId: string, year: number, month: number) {
+  const posted = await db.proposedEntry.findMany({
+    where: { clientId, entityId, year, month, source: "ACCRUAL", status: "POSTED", entryId: { not: null } },
+    select: { id: true, key: true, entry: { select: { id: true, date: true, memo: true, reversedBy: { select: { id: true } }, lines: { select: { debit: true } } } } },
+    orderBy: [{ decidedAt: "asc" }, { id: "asc" }],
+  });
+  const out = [];
+  for (const p of posted) {
+    const k = parseAccrualKey(p.key);
+    const account = k ? await db.account.findFirst({ where: { clientId, code: k.code }, select: { id: true } }) : null;
+    if (!k || !account || !p.entry) continue;
+    const [first] = await arrivals(db, entityId, account.id, k.bucket, year, month);
+    if (!first) continue;
+    out.push({
+      proposalId: p.id,
+      counterparty: await labelOf(db, clientId, k.code, k.bucket),
+      entry: { date: p.entry.date, memo: p.entry.memo, amount: p.entry.lines.reduce((s, l) => s + l.debit, 0n) },
+      reversalId: p.entry.reversedBy?.id ?? null,
+      arrival: first,
+    });
+  }
+  return out;
+}
+
 /** *Tolak*: the decision is stored DISMISSED for that month; the counterparty is evaluated afresh next month. */
 export async function dismissAccrual(db: Db, input: { firmId: string; clientId: string; key: string; actorId?: string | null; now?: Date }) {
   const p = await currentAccrual(db, input.clientId, input.key, input.now);

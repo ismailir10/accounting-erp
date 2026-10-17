@@ -102,6 +102,9 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
       undecided and still missing, posts Dr the account / Cr 2150 on M's last day and its mirror on the 1st of M+1 (`reversesId` set)
       through Jurnal Penyesuaian's own writer (`postAdjustmentTx`, *Balik otomatis*; a locked M+1 refuses both), and stores the
       `ProposedEntry` (source ACCRUAL) POSTED with its entry. *Tolak* stores it DISMISSED, for M only. Nothing else proposes accruals.
+    - A POSTED accrual whose counterparty then gets a line in M (a late statement) counts the expense twice: REVIEW control
+      `accrual-paid:` *Akrual dan pembayaran di bulan yang sama* lists both and points to *Salin* of the accrual's reversal into M with
+      *Balik otomatis*; acknowledged with a note like any REVIEW, never FAIL.
 
 ## Money
 5b. **Fixed-asset register** (`lib/assets`): a `FixedAsset` per entity (fiscal group, fiscal method, acquisition date, cost, residual,

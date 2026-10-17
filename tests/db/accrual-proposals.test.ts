@@ -3,6 +3,8 @@ import ExcelJS from "exceljs";
 import { db, makeGroup, resetDb } from "../helpers";
 import { AccrualFieldError, accrualProposals, DECIDED, dismissAccrual, NO_CREDIT, postAccrual } from "@/lib/adjust/accruals";
 import { trialBalance } from "@/lib/reports/ledger";
+import { runControls } from "@/lib/controls";
+import { saveControlNote } from "@/lib/controls/ack";
 import { journalRegister } from "@/lib/reports/journal-register";
 import { accountLedger } from "@/lib/reports/account-ledger";
 import { generalLedger } from "@/lib/reports/general-ledger";
@@ -334,6 +336,35 @@ describe("deciding an accrual proposal", () => {
     const other = await makeGroup();
     await expect(postAccrual(db, { firmId: other.firm.id, clientId: other.client.id, key: andalas.key, now: NOW })).rejects.toThrow("Usulan akrual ini tidak berlaku lagi. Muat ulang halaman.");
     await expect(decide(g, `ACCRUAL:${g.pt.entity.id}:2026-08:6120:bank:SIAPA SAJA`)).rejects.toThrow("Usulan akrual ini tidak berlaku lagi. Muat ulang halaman.");
+  });
+
+  it("a payment after approval raises the REVIEW control with both rows; Salin of the reversal with Balik otomatis cancels the accrual", async () => {
+    const { g, bca } = await qaBooks();
+    const bersih = (await august(g)).find((p) => p.counterparty === BERSIH)!;
+    const entry = await decide(g, bersih.key);
+    const reversal = await db.journalEntry.findUniqueOrThrow({ where: { reversesId: entry.id }, include: { lines: { include: { account: true } } } });
+    const stored = await db.proposedEntry.findUniqueOrThrow({ where: { key: bersih.key } });
+    const control = async () => (await runControls(db, g.client.id, 2026, 8)).find((c) => c.key === `accrual-paid:${stored.id}`);
+    expect(await control()).toBeUndefined();
+    // A late statement brings the 30 Aug payment: the expense is now there twice.
+    await statement(bca, 2026, 8, [[30, BERSIH, jt(4.2)]], 31, 30);
+    expect(await control()).toMatchObject({
+      title: "Akrual dan pembayaran di bulan yang sama",
+      scope: "PT Uji",
+      status: "REVIEW",
+      detail: `Akrual 31 Agu 2026 “Akrual ${BERSIH} Agu 2026” Rp 4.200.000 dan ${BERSIH} 30 Agu 2026 Rp 4.200.000: beban ${BERSIH} tercatat dua kali. Salin jurnal pembalik akrualnya ke Agustus 2026 dengan Balik otomatis, lalu tulis catatan.`,
+      href: `/clients/${g.client.id}/journals/new?period=2026-08&salin=${reversal.id}`,
+    });
+    expect(await tb(g, 8, "6190") - (await tb(g, 7, "6190"))).toBe(jt(8.4)); // August: the payment and the accrual
+    // The way out the control names: the reversal's lines copied into August with Balik otomatis.
+    const copy = reversal.lines.sort((a, b) => Number(b.debit - a.debit)).map((l) => ({ accountCode: l.account.code, debit: l.debit ? "4.200.000" : "", credit: l.credit ? "4.200.000" : "" }));
+    await postAdjustment(db, { clientId: g.client.id, entityId: g.pt.entity.id, date: dateOnly(2026, 8, 31), memo: reversal.memo, lines: copy, reverseNextMonth: true });
+    expect([await tb(g, 8, "6190") - (await tb(g, 7, "6190")), await tb(g, 8, "2150"), await tb(g, 9, "2150")]).toEqual([jt(4.2), 0n, 0n]);
+    // Still a REVIEW until a note acknowledges it, never a FAIL.
+    const flagged = (await control())!;
+    const period = await db.period.findUniqueOrThrow({ where: { clientId_year_month: { clientId: g.client.id, year: 2026, month: 8 } } });
+    await saveControlNote(db, { clientId: g.client.id, periodId: period.id, year: 2026, month: 8, controlKey: flagged.key, note: "Akrual dibatalkan dengan salinan pembaliknya", detail: flagged.detail });
+    expect(await control()).toMatchObject({ status: "REVIEW", ack: "Akrual dibatalkan dengan salinan pembaliknya" });
   });
 
   it("a payee card with a manual-accrual warning still approves; a chart without 2150 needs a liability picked", async () => {
