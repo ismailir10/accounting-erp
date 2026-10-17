@@ -5,8 +5,6 @@ used, and the values can be downloaded. The data exists already: 'cited or dropp
 pattern (§2): *View reasoning* shows the steps an answer took (retrieve → validate → calculate), links to the source records and a CSV
 snapshot of the exact values used.
 
-**Approval:** pending.
-
 **Approval:** after #173 merged, the owner said to merge on green and keep going (2026-10-17, "merge on green then keep going",
 "make sure you have regression test"). That covers the next roadmap cycles, built together: [BPPU files](2026-10-17-bppu-files.md), [Lihat alasan](2026-10-17-lihat-alasan.md), [Otomasi](2026-10-17-otomasi.md) and
 [Checklist tutup buku](2026-10-17-checklist-tutup-buku.md). The schema and

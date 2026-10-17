@@ -5,8 +5,6 @@ a PJAP uploads"). Also firm-lens parity with Mekari Jurnal's *Tax & Coretax* box
 [the faktur keluaran cycle](2026-10-17-coretax-files.md) deferred. Buku prepares the file and never files it (ADR 0014; roadmap §6,
 *Becoming a PJAP*).
 
-**Approval:** waiting for the owner's go-ahead on this record.
-
 **Approval:** after #173 merged, the owner said to merge on green and keep going (2026-10-17, "merge on green then keep going",
 "make sure you have regression test"). That covers the next roadmap cycles, built together: [BPPU files](2026-10-17-bppu-files.md), [Lihat alasan](2026-10-17-lihat-alasan.md), [Otomasi](2026-10-17-otomasi.md) and
 [Checklist tutup buku](2026-10-17-checklist-tutup-buku.md). The schema and

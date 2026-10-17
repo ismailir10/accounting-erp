@@ -5,8 +5,6 @@ partner) and a due date, carried forward each month and rolled up on the firm bo
 the gap against Rillet ("checklist with owners and reviewers, admin-only reopen"; Buku: "Par; **Gap**: tasks with owner, reviewer and
 due date").
 
-**Approval:** pending.
-
 **Approval:** after #173 merged, the owner said to merge on green and keep going (2026-10-17, "merge on green then keep going",
 "make sure you have regression test"). That covers the next roadmap cycles, built together: [BPPU files](2026-10-17-bppu-files.md), [Lihat alasan](2026-10-17-lihat-alasan.md), [Otomasi](2026-10-17-otomasi.md) and
 [Checklist tutup buku](2026-10-17-checklist-tutup-buku.md). The schema and
