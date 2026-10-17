@@ -11,6 +11,8 @@ import { dateOnly } from "@/lib/format";
 import { postAdjustment } from "@/lib/ledger/adjustment";
 import { runControls } from "@/lib/controls";
 import { MockProvider, parseControlExplain, type AiProvider } from "@/lib/ai/provider";
+import { draftReasoning, draftSteps, NOT_FOUND, reasoningCsv, reasoningFor, STALE } from "@/lib/approvals/reasoning";
+import { createClient } from "@/lib/setup";
 
 const statement = makePdf([
   [
@@ -280,6 +282,97 @@ describe("close copilot — Jelaskan", () => {
     // Asked again: the cached answer, no call, the same count.
     await explainControl(db, g.firm.id, g.client.id, 2026, 8, key, provider);
     expect([provider.calls, await db.evidenceAiCache.count(), (await db.evidenceAiCache.findFirstOrThrow()).payload]).toEqual([1, 1, cached.payload]);
+  });
+});
+
+/** Two loan drawdowns booked to revenue; a recorded answer cites the first and one row that was never sent (Lihat alasan, flow 3). */
+async function draftCitingOneRowNotSent() {
+  const g = await makeGroup();
+  const twin = makePdf([
+    [
+      ...table(800, [[[40, "PT Bank Mandiri (Persero) Tbk"]], [[40, "Nomor Rekening : 2222222222"]], [[40, "Periode : 01/08/2026 - 31/08/2026"]]]),
+      ...table(740, [
+        [[40, "Tanggal"], [130, "Keterangan"], [360, "Debit"], [440, "Kredit"], [520, "Saldo"]],
+        [[40, "01/08/2026"], [130, "SALDO AWAL"], [500, "0,00"]],
+        [[40, "04/08/2026"], [130, "PENCAIRAN PINJAMAN KMK"], [430, "100.000.000,00"], [510, "100.000.000,00"]],
+        [[40, "06/08/2026"], [130, "PENCAIRAN PINJAMAN INVESTASI"], [430, "40.000.000,00"], [510, "140.000.000,00"]],
+      ]),
+    ],
+  ]);
+  await importStatement(db, { bankAccountId: g.pt.banks[1].id, fileName: "m.pdf", data: twin, provider: null });
+  const [first, second] = await db.bankTransaction.findMany({ where: { entityId: g.pt.entity.id }, orderBy: { date: "asc" } });
+  for (const t of [first, second]) await reviewTransaction(db, { bankTxId: t.id, accountCode: "4100", taxTag: null });
+  const key = `pl-financing:${g.pt.entity.id}`;
+  const provider = new MockProvider();
+  const entry = { memo: "Reklasifikasi pencairan KMK", lines: [{ accountCode: "4100", side: "D", amount: "Rp 100.000.000" }, { accountCode: "2210", side: "K", amount: "Rp 100.000.000" }] };
+  provider.explainAnswer = JSON.stringify({ explanation: "Pinjaman KMK di pendapatan.", suggestion: "Reklasifikasi.", refs: [first.id, "baris-tak-dikirim"], note: "", entry });
+  const r = await explainControl(db, g.firm.id, g.client.id, 2026, 8, key, provider);
+  return { g, first, second, provider, proposalId: r.proposal!.id, scope: { firmId: g.firm.id, clientId: g.client.id } };
+}
+
+describe("Lihat alasan — an AI draft", () => {
+  beforeEach(resetDb);
+
+  it("shows the control, the rows sent with the cited one marked, the dropped count and the checks; reading calls no model and writes nothing", async () => {
+    const { first, second, provider, proposalId, scope } = await draftCitingOneRowNotSent();
+    const before = [provider.calls, await db.aiUsage.count(), await db.evidenceAiCache.count(), await db.journalEntry.count(), JSON.stringify(await db.proposedEntry.findMany())];
+    const f = await draftReasoning(db, scope, proposalId);
+    expect([provider.calls, await db.aiUsage.count(), await db.evidenceAiCache.count(), await db.journalEntry.count(), JSON.stringify(await db.proposedEntry.findMany())]).toEqual(before);
+    expect(f.control).toMatchObject({ title: "Pinjaman / modal / pindah dana tercatat di Laba Rugi", scope: "PT Uji", status: "REVIEW" });
+    expect([f.fresh, f.dropped, f.proven?.model]).toEqual([true, 1, "mock"]);
+    expect(f.rows!.map((r) => [r.id, r.text, r.amount, r.account, r.cited])).toEqual([
+      [first.id, "PENCAIRAN PINJAMAN KMK", "Rp 100.000.000", "4100", true],
+      [second.id, "PENCAIRAN PINJAMAN INVESTASI", "Rp 40.000.000", "4100", false],
+    ]);
+    const steps = draftSteps(f);
+    expect(steps.map((s) => s.label)).toEqual(["Kontrol menandai", "Dikirim ke AI", "Jawaban AI", "Diperiksa Buku", "Belum dicatat"]);
+    expect(steps[0].lines[0]).toBe("Pinjaman / modal / pindah dana tercatat di Laba Rugi · PT Uji · Perlu dicek");
+    expect(steps[1].rows!.map((r) => [r.date, r.cited])).toEqual([["2026-08-04", true], ["2026-08-06", false]]);
+    expect(steps[1].note).toBe(`Juga nama klien, periode, mata uang, daftar ${f.proven!.accounts} akun (tanpa akun bank, 1190 dan 1199) dan perusahaan grup.`);
+    expect(steps[2].lines.slice(0, 3)).toEqual(["Penjelasan dan draf jurnal di atas.", "Mengutip 1 dari 2 baris.", "1 kutipan di luar baris yang dikirim dibuang."]);
+    expect(steps[3].checks).toEqual([
+      { ok: true, text: "Setiap akun ada di bagan akun dan bukan akun bank." },
+      { ok: true, text: "Debit sama dengan kredit." },
+      { ok: true, text: "Setiap jumlah sama dengan jumlah baris yang dikutip." },
+      { ok: true, text: "Memindahkan satu baris bank: dicatat lewat Review." },
+      { ok: true, text: "Buku belum berubah sejak draf dibuat." },
+    ]);
+    // The download: the rows sent as sent and as integers, cited or not; the dropped strings are never in it.
+    const csv = reasoningCsv(f);
+    expect(csv).toContain(`Dikirim ke AI;Baris;PENCAIRAN PINJAMAN KMK;2026-08-04;Rp 100.000.000;100000000;IDR;4100;MANUAL 0.50;ya;${first.id}`);
+    expect(csv).toContain(`Dikirim ke AI;Baris;PENCAIRAN PINJAMAN INVESTASI;2026-08-06;Rp 40.000.000;40000000;IDR;4100;MANUAL 0.50;tidak;${second.id}`);
+    expect(csv).toContain("Jawaban AI;Kutipan dibuang;1;");
+    expect(csv).not.toContain("baris-tak-dikirim");
+  });
+
+  it("goes stale when the cited line is reclassified: the existing message and no row values", async () => {
+    const { first, proposalId, scope } = await draftCitingOneRowNotSent();
+    await reviewTransaction(db, { bankTxId: first.id, accountCode: "2210", taxTag: null }); // fixed in Review instead
+    const f = await draftReasoning(db, scope, proposalId);
+    expect([f.fresh, f.rows]).toEqual([false, null]);
+    const steps = draftSteps(f);
+    expect(steps[1].rows).toBeUndefined();
+    expect(steps[3].checks!.at(-1)).toEqual({ ok: false, text: STALE });
+    const csv = reasoningCsv(f);
+    expect(csv).not.toContain("PENCAIRAN PINJAMAN KMK"); // the control's detail is today's, the rows sent are not shown
+    expect(csv).not.toMatch(/;Baris;/);
+  });
+
+  it("says tidak tercatat for an answer cached before the count, and refuses another client's proposal or a non-AI item", async () => {
+    const { g, proposalId, scope } = await draftCitingOneRowNotSent();
+    const cached = await db.evidenceAiCache.findFirstOrThrow();
+    const older = { ...(cached.payload as Record<string, unknown>) };
+    delete older.dropped;
+    await db.evidenceAiCache.update({ where: { key: cached.key }, data: { payload: older as object } });
+    const f = await reasoningFor(db, scope, proposalId);
+    expect(f.kind === "draft" && f.dropped).toBe(null);
+    expect(draftSteps(f as Awaited<ReturnType<typeof draftReasoning>>)[2].lines[2]).toBe("Kutipan yang dibuang: tidak tercatat.");
+    const other = await db.$transaction((tx) => createClient(tx, g.firm.id, { name: "Klien Lain", industry: "jasa", entities: [{ name: "PT Lain", shortName: "PT Lain", kind: "PT", banks: [{ bank: "BCA", number: "9999999999", label: "BCA Lain" }] }], rules: [] }));
+    await expect(reasoningFor(db, { firmId: g.firm.id, clientId: other.client.id }, proposalId)).rejects.toThrow(NOT_FOUND);
+    await expect(reasoningFor(db, { firmId: "firma-lain", clientId: g.client.id }, proposalId)).rejects.toThrow(NOT_FOUND);
+    // The line behind the draft was reviewed by hand: no AI suggestion, no panel.
+    const line = await db.bankTransaction.findFirstOrThrow({ where: { entityId: g.pt.entity.id } });
+    await expect(reasoningFor(db, scope, line.id)).rejects.toThrow(NOT_FOUND);
   });
 });
 

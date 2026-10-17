@@ -1,12 +1,16 @@
 import type { Db } from "@/lib/db";
 import type { Direction } from "@/lib/generated/prisma/enums";
 import { aiAccounts, aiCacheKey, aiScope } from "@/lib/ai/classify";
-import { DEMO_AI_MODEL } from "@/lib/ai/provider";
+import { amountOf, DEMO_AI_MODEL, type CloseReviewRow } from "@/lib/ai/provider";
 import { UNBACKED_CONFIDENCE } from "@/lib/ai/unbacked";
 import { accountGroup } from "@/lib/coa/options";
 import { isClassifiable, TAX_TAG_LABEL } from "@/lib/coa/template";
 import { accountantHints, isSureSuggestion, SURE_CONFIDENCE } from "@/lib/classify/hints";
-import { formatDate } from "@/lib/format";
+import { runControls } from "@/lib/controls";
+import { bankLineState, gather, snapshotOf } from "@/lib/controls/ai-review";
+import { explainInput, explainKey, storedDropped } from "@/lib/controls/explain";
+import { priorCorrection, readLines, type ProposalLine } from "@/lib/adjust/proposals";
+import { formatDate, periodBounds } from "@/lib/format";
 import { formatMoney } from "@/lib/money";
 import { resolveAiConfig } from "@/lib/settings/ai";
 import { toCsv } from "@/lib/csv";
@@ -217,4 +221,168 @@ export function bankCsvRows(f: BankFacts): CsvRow[] {
   return out;
 }
 
-export const bankCsv = (f: BankFacts) => toCsv(CSV_HEADER, bankCsvRows(f));
+// ---- an AI draft (*Jelaskan*, Kotak's *Draf jurnal*) ----
+
+/** The message *Setujui* refuses a stale draft with (lib/adjust/proposals.ts). */
+export const STALE = "Buku berubah sejak draf ini dibuat. Minta Jelaskan lagi, atau abaikan draf ini.";
+
+export type DraftFacts = {
+  kind: "draft";
+  id: string;
+  currency: string;
+  /** The control as it flags today; null when it passes now or no longer exists. */
+  control: { key: string; title: string; scope: string; status: "REVIEW" | "FAIL"; detail: string } | null;
+  /** The control's rows today equal the rows sent (the draft's snapshot, *Setujui*'s own proof). */
+  fresh: boolean;
+  /** The rows sent, each marked cited or not; null when the books changed (nothing unproven is shown). */
+  rows: (CloseReviewRow & { cited: boolean })[] | null;
+  cited: number;
+  /** Proven by recomputing the answer's cache key: the chart sent (its size) and the model; null when it can't be proven. */
+  proven: { accounts: number; model: string; at: string | null } | null;
+  /** Citations the answer had outside the rows sent; null for an answer cached before they were counted. */
+  dropped: number | null;
+  memo: string;
+  explanation: string;
+  lines: ProposalLine[];
+  checks: { chart: string[]; balanced: boolean; grounded: boolean | null; bankLine: boolean; blocked: string | null };
+};
+
+/** A row's amount as sent ("-Rp 4.000.000", "(US$ 1,00)") as signed minor units, or null. */
+export function signedMinor(text: string, currency: string): bigint | null {
+  const v = amountOf(text, currency);
+  return v === null ? null : /^\s*[-(]/.test(text) ? -v : v;
+}
+
+/**
+ * The reasoning behind one AI draft of the client (`ProposedEntry`, source AI_CONTROL). The rows sent are the control's rows today,
+ * shown only while the draft's snapshot still matches them. Throws `ReasoningError(NOT_FOUND)` for another client's proposal.
+ */
+export async function draftReasoning(db: Db, scope: { firmId: string; clientId: string }, id: string): Promise<DraftFacts> {
+  const p = await db.proposedEntry.findFirst({ where: { id, firmId: scope.firmId, clientId: scope.clientId, source: "AI_CONTROL" }, include: { entity: { select: { functionalCurrency: true } } } });
+  if (!p || !p.controlKey) throw new ReasoningError(NOT_FOUND);
+  const currency = p.entity.functionalCurrency;
+  const lines = readLines(p.lines);
+  const cacheKey = p.key.startsWith("AI:") ? p.key.slice(3) : null;
+  const flagged = (await runControls(db, scope.clientId, p.year, p.month)).find((c) => c.key === p.controlKey && c.status !== "PASS");
+  let fresh = false;
+  let rows: DraftFacts["rows"] = null;
+  let proven: DraftFacts["proven"] = null;
+  if (flagged) {
+    const g = await gather(db, scope.clientId, p.year, p.month, [flagged]);
+    const reviewed = g.input.controls[0];
+    fresh = p.snapshot !== null && snapshotOf(reviewed.rows, await bankLineState(db, p.bankTransactionId)) === p.snapshot;
+    if (fresh) {
+      rows = reviewed.rows.map((r) => ({ ...r, cited: p.refs.includes(r.id) }));
+      const { input } = await explainInput(db, scope.clientId, p.year, p.month, reviewed, g.input.entities);
+      const model = (await candidateModels(db, scope.firmId)).find((m) => explainKey(scope.firmId, scope.clientId, input, m) === cacheKey);
+      if (model) proven = { accounts: input.accounts.length, model, at: null };
+    }
+  }
+  const cached = cacheKey ? await db.evidenceAiCache.findFirst({ where: { key: cacheKey, firmId: scope.firmId } }) : null;
+  if (proven && cached) proven.at = cached.createdAt.toISOString();
+
+  const chart = new Map((await db.account.findMany({ where: { clientId: scope.clientId, code: { in: lines.map((l) => l.accountCode) } }, select: { code: true, isBank: true } })).map((a) => [a.code, a]));
+  const debit = lines.reduce((s, l) => s + BigInt(l.debit), 0n);
+  const credit = lines.reduce((s, l) => s + BigInt(l.credit), 0n);
+  // As *Setujui* re-checks it: every amount equals a cited row's amount (rule 20b).
+  const citedAmounts = new Set(rows?.filter((r) => r.cited).map((r) => amountOf(r.amount, currency)));
+  const line = p.bankTransactionId ? await db.bankTransaction.findFirst({ where: { id: p.bankTransactionId, entityId: p.entityId } }) : null;
+  return {
+    kind: "draft",
+    id: p.id,
+    currency,
+    control: flagged ? { key: flagged.key, title: flagged.title, scope: flagged.scope, status: flagged.status as "REVIEW" | "FAIL", detail: flagged.detail } : null,
+    fresh,
+    rows,
+    cited: p.refs.length,
+    proven,
+    dropped: cached ? storedDropped(cached.payload) : null,
+    memo: p.memo,
+    explanation: p.reason,
+    lines,
+    checks: {
+      chart: lines.filter((l) => !chart.get(l.accountCode) || chart.get(l.accountCode)!.isBank).map((l) => l.accountCode),
+      balanced: debit === credit && debit > 0n,
+      grounded: rows ? lines.every((l) => citedAmounts.has(BigInt(l.debit) || BigInt(l.credit))) : null,
+      bankLine: Boolean(p.bankTransactionId),
+      blocked: line ? await priorCorrection(db, line, periodBounds(p.year, p.month).end) : null,
+    },
+  };
+}
+
+const STATUS_TEXT = { REVIEW: "Perlu dicek", FAIL: "Gagal" } as const;
+const contextNote = (accounts: number | null) =>
+  `Juga nama klien, periode, mata uang, daftar ${accounts === null ? "akun" : `${accounts} akun`} (tanpa akun bank, 1190 dan 1199) dan perusahaan grup.`;
+const droppedText = (n: number | null) => (n === null ? "Kutipan yang dibuang: tidak tercatat." : n === 0 ? "Tidak ada kutipan di luar baris yang dikirim." : `${n} kutipan di luar baris yang dikirim dibuang.`);
+
+function draftChecks(f: DraftFacts): Check[] {
+  const c = f.checks;
+  const out: Check[] = [
+    c.chart.length ? { ok: false, text: `Akun ${c.chart.join(", ")} tidak ada di bagan akun atau adalah akun bank.` } : { ok: true, text: "Setiap akun ada di bagan akun dan bukan akun bank." },
+    c.balanced ? { ok: true, text: "Debit sama dengan kredit." } : { ok: false, text: "Debit tidak sama dengan kredit." },
+  ];
+  if (c.grounded !== null) out.push(c.grounded ? { ok: true, text: "Setiap jumlah sama dengan jumlah baris yang dikutip." } : { ok: false, text: "Ada jumlah yang tidak berasal dari baris yang dikutip." });
+  if (c.bankLine) out.push({ ok: true, text: "Memindahkan satu baris bank: dicatat lewat Review." });
+  if (c.blocked) out.push({ ok: false, text: c.blocked });
+  out.push(f.fresh ? { ok: true, text: "Buku belum berubah sejak draf dibuat." } : { ok: false, text: STALE });
+  return out;
+}
+
+/** The draft's five steps, in the panel's words. */
+export function draftSteps(f: DraftFacts): ReasoningStep[] {
+  return [
+    {
+      label: "Kontrol menandai",
+      lines: f.control ? [`${f.control.title} · ${f.control.scope} · ${STATUS_TEXT[f.control.status]}`, f.control.detail] : ["Kontrol yang menandai draf ini sudah lolos atau tidak ada lagi."],
+    },
+    f.rows
+      ? { label: "Dikirim ke AI", lines: [], rows: f.rows.map((r) => ({ date: r.date, text: r.text, amount: r.amount, account: r.account, how: r.how ?? "", cited: r.cited })), note: contextNote(f.proven?.accounts ?? null) }
+      : { label: "Dikirim ke AI", lines: ["Baris yang dikirim tidak ditampilkan karena buku berubah sejak draf ini dibuat."] },
+    {
+      label: "Jawaban AI",
+      lines: [
+        "Penjelasan dan draf jurnal di atas.",
+        f.rows ? `Mengutip ${f.rows.filter((r) => r.cited).length} dari ${f.rows.length} baris.` : `Mengutip ${f.cited} baris.`,
+        droppedText(f.dropped),
+        ...(f.proven ? [f.proven.at ? `${f.proven.model}, ${formatDate(new Date(f.proven.at))}` : f.proven.model] : []),
+      ],
+    },
+    { label: "Diperiksa Buku", lines: [], checks: draftChecks(f) },
+    { label: "Belum dicatat", lines: ["Tidak ada yang dicatat sampai Anda menyetujui draf ini."] },
+  ];
+}
+
+export function draftCsvRows(f: DraftFacts): CsvRow[] {
+  const control = f.control ? `Kontrol tutup buku ${f.control.key}` : "Kontrol tutup buku";
+  const out: CsvRow[] = f.control
+    ? [row("Kontrol menandai", "Judul", f.control.title, control), row("Kontrol menandai", "Perusahaan", f.control.scope, control), row("Kontrol menandai", "Status", STATUS_TEXT[f.control.status], control), row("Kontrol menandai", "Detail", f.control.detail, control)]
+    : [row("Kontrol menandai", "Status", "Lolos atau tidak ada lagi", control)];
+  if (f.rows) {
+    for (const r of f.rows) out.push(["Dikirim ke AI", "Baris", r.text, r.date, r.amount, signedMinor(r.amount, f.currency)?.toString() ?? null, f.currency, r.account, r.how ?? null, r.cited ? "ya" : "tidak", r.id]);
+    out.push(row("Dikirim ke AI", "Juga dikirim", contextNote(f.proven?.accounts ?? null), "Konteks klien"));
+  } else out.push(row("Dikirim ke AI", "Tidak ditampilkan", STALE, "Cuplikan baris draf"));
+  const source = f.proven ? `Cache jawaban AI, ${f.proven.model}` : "Draf tersimpan";
+  out.push(row("Jawaban AI", "Penjelasan", f.explanation, source), row("Jawaban AI", "Memo", f.memo, source));
+  f.lines.forEach((l, i) => {
+    const debit = BigInt(l.debit);
+    const amount = debit || BigInt(l.credit);
+    out.push(["Jawaban AI", `Baris jurnal ${i + 1}`, debit ? "Debit" : "Kredit", null, formatMoney(amount, f.currency), amount.toString(), f.currency, l.accountCode, null, null, source]);
+  });
+  out.push(row("Jawaban AI", "Kutipan dibuang", f.dropped ?? "tidak tercatat", source));
+  if (f.proven) out.push(row("Jawaban AI", "Model", f.proven.model, source));
+  out.push(...checkRows(draftChecks(f)));
+  return out;
+}
+
+// ---- one entry point for the action and the download ----
+
+export type ReasoningFacts = BankFacts | DraftFacts;
+
+/** A Kotak or Review item of the client by id: an AI bank line or an AI draft. Anything else is NOT_FOUND. */
+export async function reasoningFor(db: Db, scope: { firmId: string; clientId: string }, id: string): Promise<ReasoningFacts> {
+  const isLine = (await db.bankTransaction.count({ where: { id } })) > 0;
+  return isLine ? bankReasoning(db, scope, id) : draftReasoning(db, scope, id);
+}
+
+export const reasoningSteps = (f: ReasoningFacts) => (f.kind === "bank" ? bankSteps(f) : draftSteps(f));
+export const reasoningCsv = (f: ReasoningFacts) => toCsv(CSV_HEADER, f.kind === "bank" ? bankCsvRows(f) : draftCsvRows(f));

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { csvCell, toCsv } from "@/lib/csv";
-import { bankCsv, bankCsvRows, bankSteps, CHECKED_FIRST, CSV_HEADER, DEMO_ANSWER, NO_MATCH, NOT_SENT, type BankFacts } from "@/lib/approvals/reasoning";
+import { bankCsvRows, bankSteps, draftSteps, reasoningCsv, CHECKED_FIRST, CSV_HEADER, DEMO_ANSWER, NO_MATCH, NOT_SENT, STALE, type BankFacts, type DraftFacts } from "@/lib/approvals/reasoning";
 
 const bank = (over: Partial<BankFacts> = {}): BankFacts => ({
   kind: "bank",
@@ -86,7 +86,7 @@ describe("a bank line's steps", () => {
 
 describe("a bank line's CSV", () => {
   it("holds the panel's values; the amount only in a tidak dikirim row, as text and as an integer; no cell runs as a formula", () => {
-    const rows = parse(bankCsv(bank({ line: { ...bank().line, amount: "-8400000" } })).replace(/^﻿/, ""));
+    const rows = parse(reasoningCsv(bank({ line: { ...bank().line, amount: "-8400000" } })).replace(/^﻿/, ""));
     expect(rows[0]).toEqual(CSV_HEADER);
     const at = (part: string, item: string) => rows.filter((r) => r[0] === part && r[1] === item);
     expect(at("Dikirim ke AI", "Klien")[0][2]).toBe("CV Sinar Retail (ritel minimarket)");
@@ -104,5 +104,46 @@ describe("a bank line's CSV", () => {
     const rows = bankCsvRows(bank({ sent: null, answer: null }));
     expect(rows.filter((r) => r[0] === "Dikirim ke AI").map((r) => r[2])).toEqual([NO_MATCH]);
     expect(rows.filter((r) => r[0] === "Jawaban AI").map((r) => r[1])).toEqual(["Akun", "Keyakinan", "Pajak", "Alasan"]);
+  });
+});
+
+const draft = (over: Partial<DraftFacts> = {}): DraftFacts => ({
+  kind: "draft",
+  id: "p1",
+  currency: "IDR",
+  control: { key: "pl-financing:e1", title: "Pinjaman / modal / pindah dana tercatat di Laba Rugi", scope: "PT Uji", status: "FAIL", detail: "1 transaksi" },
+  fresh: true,
+  rows: [{ id: "tx-1", date: "2026-08-04", text: "=PENCAIRAN", amount: "-Rp 4.000.000", account: "4100", how: "MANUAL 0.50", cited: true }],
+  cited: 1,
+  proven: null,
+  dropped: 0,
+  memo: "Reklasifikasi",
+  explanation: "Pinjaman di pendapatan.",
+  lines: [{ accountCode: "4100", debit: "4000000", credit: "0" }, { accountCode: "2210", debit: "0", credit: "4000000" }],
+  checks: { chart: [], balanced: true, grounded: true, bankLine: false, blocked: null },
+  ...over,
+});
+
+describe("a draft's steps", () => {
+  it("names a failed control, an unproven chart, no dropped citation, and each failed check with the double correction before the freshness", () => {
+    const s = draftSteps(draft({ checks: { chart: ["1101"], balanced: false, grounded: false, bankLine: false, blocked: "Sudah ada Jurnal Penyesuaian 31 Agu 2026." } }));
+    expect(s[0].lines).toEqual(["Pinjaman / modal / pindah dana tercatat di Laba Rugi · PT Uji · Gagal", "1 transaksi"]);
+    expect(s[1].note).toBe("Juga nama klien, periode, mata uang, daftar akun (tanpa akun bank, 1190 dan 1199) dan perusahaan grup.");
+    expect(s[2].lines).toEqual(["Penjelasan dan draf jurnal di atas.", "Mengutip 1 dari 1 baris.", "Tidak ada kutipan di luar baris yang dikirim."]);
+    expect(s[3].checks).toEqual([
+      { ok: false, text: "Akun 1101 tidak ada di bagan akun atau adalah akun bank." },
+      { ok: false, text: "Debit tidak sama dengan kredit." },
+      { ok: false, text: "Ada jumlah yang tidak berasal dari baris yang dikutip." },
+      { ok: false, text: "Sudah ada Jurnal Penyesuaian 31 Agu 2026." },
+      { ok: true, text: "Buku belum berubah sejak draf dibuat." },
+    ]);
+  });
+
+  it("stale or passed: no rows, the existing message last; the CSV neutralises the row text and keeps the signed integer", () => {
+    const s = draftSteps(draft({ control: null, fresh: false, rows: null, cited: 2, dropped: null, checks: { ...draft().checks, grounded: null } }));
+    expect(s[0].lines).toEqual(["Kontrol yang menandai draf ini sudah lolos atau tidak ada lagi."]);
+    expect([s[1].rows, s[2].lines[1], s[2].lines[2]]).toEqual([undefined, "Mengutip 2 baris.", "Kutipan yang dibuang: tidak tercatat."]);
+    expect(s[3].checks!.at(-1)).toEqual({ ok: false, text: STALE });
+    expect(reasoningCsv(draft())).toContain("Dikirim ke AI;Baris;'=PENCAIRAN;2026-08-04;'-Rp 4.000.000;-4000000;IDR;4100;MANUAL 0.50;ya;tx-1\r\n");
   });
 });

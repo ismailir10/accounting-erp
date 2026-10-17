@@ -277,7 +277,7 @@ and ask.
       - `MockProvider` gets a recorded explain answer (as `fluxAnswer`).
       - accounting-rules 20b line, ADR 0009 note.
       - Accept: the parse unit test and the DB cache test. (Parallel with T1.)
-- [ ] T3 Draft reasoning, in the same module.
+- [x] T3 Draft reasoning, in the same module.
       - The control, `controlSnapshot` against the stored snapshot, rows with cited marks, the dropped count from the cache row, the
         checks and the blocked or stale state.
       - Accept: the draft seams pass. (deps: T2)
@@ -306,6 +306,13 @@ and ask.
   accounting-rules 20b, ADR 0009 note — `parseControlExplain` returns `dropped` (distinct citations outside the rows sent, or not an
   id); `explainControl` adds the provider's count to its own re-check's, stores it in the cached answer's JSON and keeps the stored
   count on a cache hit (re-reading filtered refs can't recount it). `MockProvider.explainAnswer` replays a recorded answer.
+- T3: `lib/approvals/reasoning.ts`, `lib/controls/explain.ts`, `tests/db/close-explain.test.ts`, `tests/unit/reasoning.test.ts` — the
+  draft read model: the control as it flags today, its rows rebuilt by `gather` and shown (cited marked) only while `snapshotOf` equals
+  the draft's snapshot (*Setujui*'s proof), the dropped count from the cached answer (`storedDropped`; null → "tidak tercatat"), and the
+  checks (chart and no bank account, debit = kredit, every amount a cited row's, a bank line through Review, `priorCorrection`, fresh or
+  the existing stale message). `explainInput` / `explainKey` are extracted from `explainControl` (same input, same key) so the panel can
+  recompute the answer's key over the candidate models: a match proves the chart size sent and the model, else the note names no count.
+  `reasoningFor` routes an item id to the bank line or the draft of the client; anything else is "Usulan tidak ditemukan."
 
 ## Verification
 
