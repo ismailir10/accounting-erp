@@ -716,6 +716,8 @@ model BankTransaction {
   /// The customer/supplier this line was matched for (UC-B5): what stays unmatched on a receivable/payable account is their advance.
   contactId     String?
   contact       Contact?            @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  /// The bukti potong detail of a payment the company withheld from (cycle 2026-10-17-bppu-files): metadata, never posted.
+  slip          WithholdingSlip?
   createdAt     DateTime            @default(now())
 
   @@unique([bankAccountId, hash])
@@ -1568,6 +1570,8 @@ model Contact {
   invoices         Invoice[]
   /// Bank lines matched to this contact (their unmatched rest is the contact's advance).
   bankTransactions BankTransaction[]
+  /// Bukti potong whose recipient was picked on the slip (the bank line itself has no contact).
+  withholdingSlips WithholdingSlip[]
 
   @@unique([clientId, name])
 }
@@ -2127,6 +2131,37 @@ model CoretaxBupot {
   @@unique([entityId, direction, number])
   @@index([clientId])
   @@index([entityId, year, month])
+}
+
+/// The bukti potong (BPPU, Unifikasi) detail of one outgoing bank line the company withheld PPh 23 / 4(2) / 22 from (cycle
+/// 2026-10-17-bppu-files): what Coretax's XML import needs and the books don't hold. Metadata only: it never posts and never changes the
+/// line's `whtKind` / `whtAmount` (rule 5h); it may be set in a locked month. Deleted with its bank line. CHECKs in the migration:
+/// dpp NULL or > 0; rate NULL or 0 < rate <= 10000; kop and rate both set or both NULL.
+model WithholdingSlip {
+  id                String          @id @default(cuid())
+  firmId            String
+  clientId          String
+  entityId          String
+  bankTransactionId String          @unique
+  bankTransaction   BankTransaction @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+  /// The recipient, only when the bank line has no contact of its own (withheld in Review).
+  contactId         String?
+  contact           Contact?        @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  /// Kode Objek Pajak, NN-NNN-NN.
+  kop               String?
+  /// Tarif in hundredths of a percent (2 % = 200, 1,75 % = 175).
+  rate              Int?
+  /// DPP in whole Rupiah.
+  dpp               BigInt?
+  /// CommercialInvoice | TaxInvoice | Contract | PaymentProof (DJP's DocType).
+  documentType      String?
+  documentNumber    String?
+  documentDate      DateTime?       @db.Date
+  updatedById       String?
+  updatedAt         DateTime        @updatedAt
+
+  @@index([clientId])
+  @@index([contactId])
 }
 
 /// PPh 25 angsuran per bulan from a masa onward (rule 5j): the instalment of a masa is the latest `from` on or before it. Set by the

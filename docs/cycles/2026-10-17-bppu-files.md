@@ -254,7 +254,7 @@ construction) every month before the SPT Masa PPh Unifikasi. Also the partner, w
   app flow).
 
 ## Tasks
-- [ ] T1 Migration + `lib/tax/bppu-codes.ts` (the short KOP list with DJP REF rates, document types, rate parse/format in hundredths) +
+- [x] T1 Migration + `lib/tax/bppu-codes.ts` (the short KOP list with DJP REF rates, document types, rate parse/format in hundredths) +
       `setWithholdingSlip` (recipient pick or new name, KOP, rate, DPP, document; audited `BUKTI_POTONG`) — accept: DB
       tests for validation, scoping, locked month allowed, cascade with the bank line. (Reuse: `kindOf`, `upsert` of invoices' contacts.)
 - [ ] T2 `lib/tax/coretax-bppu-xml.ts`, a pure builder (company + rows → `BpuBulk` XML) with the rate formatting and the bigint tax check;
@@ -269,6 +269,20 @@ construction) every month before the SPT Masa PPh Unifikasi. Also the partner, w
 - [ ] T6 verify-local: walk flows 1–4, open the XML against DJP's sample, screenshots at 1440 and 390 px, full gate.
 
 ## Implementation
+- Plan: T1–T5 sequential, inline in one build worker (the driver gave this worker the whole cycle; T3–T5 share `lib/tax`, `app/actions.ts`
+  and the Pajak Masa page, and T2's builder is small). T6 (verify-local, the Playwright run) by the driver.
+- T1: `prisma/migrations/20261018100000_withholding_slip`, `prisma/schema.prisma`, `lib/tax/bppu-codes.ts`, `lib/tax/withholding-slip.ts`,
+  `lib/tax/bupot-read.ts`, `lib/clients/delete.ts`, `tests/db/withholding-slip.test.ts`, `tests/unit/bppu-codes.test.ts` — the
+  `WithholdingSlip` table (one row per bank line, cascade with it; CHECKs `dpp > 0`, `0 < rate <= 10000`, KOP and rate paired), DJP's
+  short KOP list with REF v.3 rates, the four document types, rate parse/format in hundredths, the bigint tax check (`taxTies`) and the
+  exact-division DPP (`exactDpp`); `setWithholdingSlip` (recipient picked or a new name upserted, KOP with DJP's rate or *Kode lain* with
+  a typed one, DPP, document; audited `BUKTI_POTONG`, subject `slip:<line>`); client deletion removes the slips.
+  - Decision: every slip field may be saved empty (a partial save is allowed); the pre-flight names what is still missing. A KOP of
+    another kind is stored and blocked by the pre-flight with the kind reason (flow 4), not refused at save.
+  - Decision: the KOP-group → kind mapping moved into `bppu-codes.ts` (`kopKind`, pure, safe for the client form); `kindOf` of the slip
+    reader calls it, so the reader and the export read a code the same way.
+  - Decision: a line already tied to a contact keeps it as the recipient; naming another on the slip is refused (change it in Piutang &
+    Utang), and the slip stores no contact then.
 
 ## Verification
 
