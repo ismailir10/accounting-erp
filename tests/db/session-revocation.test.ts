@@ -35,6 +35,7 @@ import { GET as masa } from "@/app/(app)/clients/[id]/tax/masa/export/route";
 import { GET as coretax } from "@/app/(app)/clients/[id]/tax/masa/coretax/route";
 import { GET as coretaxBppu } from "@/app/(app)/clients/[id]/tax/masa/coretax-bppu/route";
 import { GET as review } from "@/app/(app)/clients/[id]/review/export/route";
+import { GET as budget } from "@/app/(app)/clients/[id]/budget/export/route";
 import { GET as journals } from "@/app/(app)/clients/[id]/journals/export/route";
 import { GET as ledger } from "@/app/(app)/clients/[id]/ledger/export/route";
 import { GET as trialBalance } from "@/app/(app)/clients/[id]/trial-balance/export/route";
@@ -47,6 +48,7 @@ const downloads = [
   ["tax/export", tax], ["tax/masa/export", masa], ["tax/masa/coretax", coretax], ["tax/masa/coretax-bppu", coretaxBppu], ["review/export", review],
   ["journals/export", journals], ["ledger/export", ledger], ["trial-balance/export", trialBalance],
   ["receivables/statement", receivableStatement],
+  ["budget/export", budget],
 ] as const;
 
 async function openSession(role: "ADMIN" | "AKUNTAN" = "AKUNTAN") {
