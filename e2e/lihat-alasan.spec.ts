@@ -123,9 +123,11 @@ test("a Peninjau opens Lihat alasan and downloads its CSV; another client's item
   const ayam = new URL(page.url()).pathname.match(/\/clients\/[^/]+/)![0];
   expect((await page.request.get(csvHref.replace(base, ayam))).status()).toBe(404);
   expect((await page.request.get(`${base}/approvals/alasan?item=tidak-ada`)).status()).toBe(404);
-  // Grup Ayam's August queue holds deterministic cards too (the due depreciation, Coretax faktur not in the books): no toggle on those.
-  await page.goto(`${ayam}/approvals?period=2026-08`);
+  // Grup Ayam's September queue holds deterministic cards (the depreciation instalments due): no toggle on those. Not August: the
+  // investor walk, which runs earlier, decides that month's queue (its Review lines, the instalment, the faktur) and locks it.
+  await page.goto(`${ayam}/approvals?period=2026-09`);
   await expect(page.getByRole("heading", { name: "Kotak persetujuan" })).toBeVisible();
+  await expect(page.getByTestId("approval-scheduled").first()).toBeVisible();
   await toggleOnlyOnAi(page.locator('li[data-testid^="approval-"]'));
 
   await asPeninjau(page, browser, baseURL, null, async (viewer) => {
@@ -141,8 +143,10 @@ test("a Peninjau opens Lihat alasan and downloads its CSV; another client's item
 });
 
 test("Lihat alasan works at 390 px without sideways scroll, in Kotak and in Review", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  // The board link is found at desktop width (a phone gets the board as a list, without its rows' test ids), then the phone width.
   const { base } = await sinarKotak(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
   for (const text of ["BELANJA GROSIR", "RAK DISPLAY"]) await page.getByTestId("approval-bank").filter({ hasText: text }).getByTestId("reasoning-toggle").click();
   await expect(page.getByTestId("reasoning-panel")).toHaveCount(2);
   await expect(page.getByTestId("reasoning-step")).toHaveCount(10);
