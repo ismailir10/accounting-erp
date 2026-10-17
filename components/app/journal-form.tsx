@@ -7,14 +7,18 @@ import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AccountPicker } from "@/components/app/account-picker";
 import { StatusPill } from "@/components/app/status";
 import { adjustmentAction } from "@/app/actions";
 import { formatMoney, parseMoney } from "@/lib/money";
+import { formatPeriod } from "@/lib/format";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-type Line = { accountCode: string; debit: string; credit: string };
+type Line = { accountCode: string; debit: string; credit: string; memo?: string };
+/** A journal to start from (*Salin*): its company, memo and lines, amounts as typed text. */
+export type JournalCopy = { entityId: string; memo: string; lines: Line[]; /** The source was an accrual reversed on the 1st of its next month. */ reverse: boolean };
 /** Typed amount → minor units, or the Bahasa reason it can't be read. */
 const read = (s: string, currency: string): { value: bigint; error?: undefined } | { value: 0n; error: string } => {
   try {
@@ -31,14 +35,21 @@ const TEMPLATES: { label: string; memo: string; lines: Line[] }[] = [
 ];
 
 /** `lockedMonths` ("YYYY-MM"): closed months; a date in one is refused by the server, so the form says so before anything is typed. */
-export function JournalForm({ clientId, entities, accounts, defaultDate, lockedMonths = [], closeHref }: { clientId: string; entities: { id: string; name: string; currency: string }[]; accounts: { code: string; name: string; group: string; entityId: string | null }[]; defaultDate: string; lockedMonths?: string[]; closeHref?: string }) {
+export function JournalForm({ clientId, entities, accounts, defaultDate, lockedMonths = [], closeHref, copy }: { clientId: string; entities: { id: string; name: string; currency: string }[]; accounts: { code: string; name: string; group: string; entityId: string | null }[]; defaultDate: string; lockedMonths?: string[]; closeHref?: string; copy?: JournalCopy }) {
   const router = useRouter();
-  const [entityId, setEntityId] = useState(entities[0]?.id ?? "");
+  const [entityId, setEntityId] = useState(copy && entities.some((e) => e.id === copy.entityId) ? copy.entityId : (entities[0]?.id ?? ""));
   const [date, setDate] = useState(defaultDate);
-  const [memo, setMemo] = useState("");
-  const [lines, setLines] = useState<Line[]>([{ accountCode: "", debit: "", credit: "" }, { accountCode: "", debit: "", credit: "" }]);
+  const [memo, setMemo] = useState(copy?.memo ?? "");
+  const [lines, setLines] = useState<Line[]>(copy?.lines.length ? copy.lines.map((l) => ({ ...l })) : [{ accountCode: "", debit: "", credit: "" }, { accountCode: "", debit: "", credit: "" }]);
+  const [reverse, setReverse] = useState(copy?.reverse ?? false);
   const [pending, start] = useTransition();
   const lockedMonth = lockedMonths.includes(date.slice(0, 7));
+  // An accrual's reversal goes on the first of the next month; a closed month there refuses the whole journal, so say it first.
+  const [y, m] = date.split("-").map(Number);
+  const nextKey = y && m ? (m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`) : "";
+  const nextMonth = nextKey ? formatPeriod(Number(nextKey.slice(0, 4)), Number(nextKey.slice(5))) : "";
+  const nextLabel = nextMonth ? `1 ${nextMonth}` : "awal bulan berikutnya";
+  const nextLocked = reverse && lockedMonths.includes(nextKey);
   // Amounts are typed in the selected entity's own currency; the server parses them the same way.
   const currency = entities.find((e) => e.id === entityId)?.currency ?? "IDR";
   const cur = currency === "IDR" ? "" : ` (${currency})`;
@@ -94,11 +105,12 @@ export function JournalForm({ clientId, entities, accounts, defaultDate, lockedM
           <TableBody>
             {lines.map((l, i) => (
               <TableRow key={i} className="border-t">
-                <TableCell className="p-2 pl-3">
+                <TableCell className="p-2 pl-3 align-top">
                   <AccountPicker value={l.accountCode} onChange={(v) => setLine(i, { accountCode: v })} options={usable} ariaLabel={`Akun baris ${i + 1}`} className="min-w-64" />
+                  <Input aria-label={`Catatan baris ${i + 1}`} value={l.memo ?? ""} onChange={(e) => setLine(i, { memo: e.target.value })} placeholder="Catatan baris (opsional)" maxLength={200} className="mt-1.5 h-8 min-w-64 text-xs" />
                 </TableCell>
-                <TableCell className="p-2"><Input aria-label={`Debit baris ${i + 1}`} aria-invalid={!!parsed[i].debit.error || undefined} inputMode="decimal" className="num text-right" value={l.debit} onBlur={() => tidy(i, "debit")} onChange={(e) => setLine(i, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} placeholder={formatMoney(0n, currency, { bare: true })} /></TableCell>
-                <TableCell className="p-2"><Input aria-label={`Kredit baris ${i + 1}`} aria-invalid={!!parsed[i].credit.error || undefined} inputMode="decimal" className="num text-right" value={l.credit} onBlur={() => tidy(i, "credit")} onChange={(e) => setLine(i, { credit: e.target.value, debit: e.target.value ? "" : l.debit })} placeholder={formatMoney(0n, currency, { bare: true })} /></TableCell>
+                <TableCell className="p-2 align-top"><Input aria-label={`Debit baris ${i + 1}`} aria-invalid={!!parsed[i].debit.error || undefined} inputMode="decimal" className="num text-right" value={l.debit} onBlur={() => tidy(i, "debit")} onChange={(e) => setLine(i, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} placeholder={formatMoney(0n, currency, { bare: true })} /></TableCell>
+                <TableCell className="p-2 align-top"><Input aria-label={`Kredit baris ${i + 1}`} aria-invalid={!!parsed[i].credit.error || undefined} inputMode="decimal" className="num text-right" value={l.credit} onBlur={() => tidy(i, "credit")} onChange={(e) => setLine(i, { credit: e.target.value, debit: e.target.value ? "" : l.debit })} placeholder={formatMoney(0n, currency, { bare: true })} /></TableCell>
                 <TableCell className="p-2">{lines.length > 2 && <Button variant="ghost" size="icon-sm" aria-label="Hapus baris" onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}><Trash2 /></Button>}</TableCell>
               </TableRow>
             ))}
@@ -113,7 +125,19 @@ export function JournalForm({ clientId, entities, accounts, defaultDate, lockedM
           </TableFooter>
         </Table>
       </div>
+      <div className="flex items-start gap-2 text-sm">
+        <Checkbox id="journal-reverse" checked={reverse} onCheckedChange={(v) => setReverse(v === true)} className="mt-0.5" />
+        <label htmlFor="journal-reverse">
+          Balik otomatis pada {nextLabel}
+          <span className="block text-xs text-muted-foreground">Untuk akrual: Buku mencatat jurnal pembaliknya sekaligus, dengan debit dan kredit ditukar.</span>
+        </label>
+      </div>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {nextLocked && !lockedMonth && (
+        <p role="alert" className="rounded-md border border-fail/30 bg-fail-subtle px-3 py-2 text-sm text-fail" data-testid="journal-reverse-locked">
+          {nextMonth} sudah ditutup, jadi jurnal pembaliknya ditolak. Hilangkan centang, atau minta admin membuka kembali bulan itu.
+        </p>
+      )}
       {lockedMonth && (
         <p role="alert" className="rounded-md border border-fail/30 bg-fail-subtle px-3 py-2 text-sm text-fail" data-testid="journal-locked">
           Bulan tanggal ini sudah ditutup, jadi jurnalnya akan ditolak. Pilih tanggal di bulan yang masih terbuka, atau minta admin membuka kembali bulan itu di{" "}
@@ -123,13 +147,14 @@ export function JournalForm({ clientId, entities, accounts, defaultDate, lockedM
       <div className="flex flex-wrap items-center justify-between gap-3">
         <StatusPill status={balanced ? "PASS" : "REVIEW"} label={error ? "Periksa nominal" : balanced ? "Seimbang" : dr === cr ? "Isi nominal" : `Selisih ${formatMoney(dr - cr, currency)}`} />
         <Button
-          disabled={!balanced || pending || lockedMonth}
+          disabled={!balanced || pending || lockedMonth || nextLocked}
           onClick={() =>
             start(async () => {
-              const r = await adjustmentAction({ clientId, entityId, date, memo, lines });
+              const r = await adjustmentAction({ clientId, entityId, date, memo, lines, reverseNextMonth: reverse });
               if (!r.ok) return void toast.error(r.error);
-              toast.success("Jurnal penyesuaian tersimpan");
+              toast.success(reverse ? `Jurnal penyesuaian tersimpan, dibalik pada ${nextLabel}` : "Jurnal penyesuaian tersimpan");
               setMemo("");
+              setReverse(false);
               setLines([{ accountCode: "", debit: "", credit: "" }, { accountCode: "", debit: "", credit: "" }]);
               router.refresh();
             })

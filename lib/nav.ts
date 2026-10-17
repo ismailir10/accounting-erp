@@ -16,6 +16,7 @@ export const MODULE_SECTIONS: (NavSection & { key: string })[] = [
 ];
 
 export const SETUP_SECTIONS: NavSection[] = [
+  { href: "/accounts", label: "Bagan akun" },
   { href: "/rates", label: "Kurs" },
   { href: "/settings", label: "Perusahaan & aturan" },
   { href: "/history", label: "Riwayat perubahan" },
@@ -32,13 +33,14 @@ export function clientStages(modules: string[]): NavStage[] {
       items: [
         { href: "/review", label: "Review transaksi" },
         { href: "/ledger", label: "Buku Besar" },
+        { href: "/journals", label: "Jurnal Umum" },
         { href: "/trial-balance", label: "Neraca Saldo" },
         { href: "/journals/new", label: "Jurnal Penyesuaian" },
         ...MODULE_SECTIONS.filter((m) => modules.includes(m.key)),
         { href: "/close", label: "Tutup Buku" },
       ],
     },
-    { label: "3 · Laporan", items: [{ href: "/reports", label: "Laporan Keuangan" }, { href: "/tax/masa", label: "Pajak Masa" }, { href: "/tax", label: "Pajak Badan" }, { href: "/budget", label: "Anggaran" }] },
+    { label: "3 · Laporan", items: [{ href: "/reports", label: "Laporan Keuangan" }, { href: "/analysis", label: "Analisis keuangan" }, { href: "/tax/masa", label: "Pajak Masa" }, { href: "/tax", label: "Pajak Badan" }, { href: "/budget", label: "Anggaran" }] },
   ];
 }
 

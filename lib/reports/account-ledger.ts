@@ -81,7 +81,7 @@ export async function accountLedger(
       debit: l.debit.toString(),
       credit: l.credit.toString(),
       balance: balances[idx].toString(),
-      entry: { lines: l.entry.lines.map((x) => ({ code: x.account.code, name: x.account.name, debit: x.debit.toString(), credit: x.credit.toString() })) },
+      entry: { lines: l.entry.lines.map((x) => ({ code: x.account.code, name: x.account.name, debit: x.debit.toString(), credit: x.credit.toString(), memo: x.memo })) },
       reversal: l.entry.kind === "ADJUSTMENT" ? { entryId: l.entry.id, blocker: reversalBlocker(l.entry), date: toIsoDate(l.entry.date) } : undefined,
       source: t
         ? { bankTxId: t.id, accountCode: t.accountCode, taxTag: t.taxTag, whtKind: t.whtKind, whtAmount: t.whtAmount.toString(), fileName: t.import.fileName, sheet: t.sourceSheet, rowNumber: t.rowNumber, rawRow: t.rawRow, description: t.description, amount: t.amount.toString(), bank: `${t.bankAccount.label} · ${t.bankAccount.number}`, method: t.method, reason: t.reason, status: t.status, pairedWith: t.matchedTxId ? (pairs.get(t.matchedTxId) ?? null) : null, history: history.get(t.id) ?? [], splits: t.splits.map((p) => ({ accountCode: p.accountCode, amount: p.amount.toString(), memo: p.memo })) }

@@ -2,6 +2,9 @@ import type { Direction, EntityKind } from "@/lib/generated/prisma/enums";
 import type { Classification } from "@/lib/classify/types";
 import { financingSuggestion, taxPaymentSuggestion } from "@/lib/classify/financing";
 
+/** The accounts the simple guess files to: a company's sale and expense, a person's other income and Prive. Never removable (lib/coa/manage.ts). */
+export const GUESS_CODES = { SALE: "4100", EXPENSE: "6190", PERSONAL_IN: "4910", PRIVE: "3300" } as const;
+
 /**
  * The simple guess when nothing else suggests an account (last in rule 13's order): low confidence, always to review.
  * A company's money in is most often a sale and money out an expense. A person's own books aren't a business: money in is
@@ -13,12 +16,12 @@ export function simpleGuess(direction: Direction, kind: EntityKind, nameless = f
   const guess = (accountCode: string, reason: string): Classification => ({ method: "HEURISTIC", accountCode, taxTag: null, confidence: 0.3, reason: `${ask}${reason}` });
   if (kind === "PERORANGAN") {
     return direction === "IN"
-      ? guess("4910", "Tebakan sederhana: uang masuk pribadi — pastikan sumbernya (dari PT, pinjaman, atau penghasilan)")
-      : guess("3300", "Tebakan sederhana: uang keluar pribadi dianggap pemakaian pemilik (Prive)");
+      ? guess(GUESS_CODES.PERSONAL_IN, "Tebakan sederhana: uang masuk pribadi — pastikan sumbernya (dari PT, pinjaman, atau penghasilan)")
+      : guess(GUESS_CODES.PRIVE, "Tebakan sederhana: uang keluar pribadi dianggap pemakaian pemilik (Prive)");
   }
   return direction === "IN"
-    ? guess("4100", "Tebakan sederhana: uang masuk dianggap penjualan")
-    : guess("6190", "Tebakan sederhana: uang keluar dianggap beban umum");
+    ? guess(GUESS_CODES.SALE, "Tebakan sederhana: uang masuk dianggap penjualan")
+    : guess(GUESS_CODES.EXPENSE, "Tebakan sederhana: uang keluar dianggap beban umum");
 }
 
 /**

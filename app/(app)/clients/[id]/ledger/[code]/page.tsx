@@ -14,6 +14,7 @@ import { accountLedger } from "@/lib/reports/account-ledger";
 import { Card, CardContent } from "@/components/ui/card";
 import { NextStep } from "@/components/app/page-header";
 import { currencyNote } from "@/components/app/fx-missing";
+import { LedgerDownloads } from "@/components/app/ledger-downloads";
 
 export const metadata = { title: "Buku Besar" };
 
@@ -47,7 +48,7 @@ export default async function AccountLedger({ params, searchParams }: { params: 
       <PageHeader
         title={`${account.code} ${account.name}`}
         description={`${scopeLabel} · ${formatPeriod(period.year, period.month)}${currencyNote(currency, false) ? ` · ${currencyNote(currency, false)}` : ""} · klik baris untuk melihat sumbernya`}
-        actions={<ScopeBar entities={entityOptions} periods={periodOptions} entity={scope.value} period={period.key} />}
+        actions={<><ScopeBar entities={entityOptions} periods={periodOptions} entity={scope.value} period={period.key} />{currency === "IDR" && <LedgerDownloads href={`${base}/ledger/export`} query={{ period: period.key, entity: scope.value, account: account.code }} testId="account-ledger-download" />}</>}
       />
       <Card>
         <CardContent className="px-0">

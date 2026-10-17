@@ -10,6 +10,7 @@ import { formatPeriod } from "@/lib/format";
 import { NextStep, PageHeader } from "@/components/app/page-header";
 import { ScopeBar } from "@/components/app/scope-bar";
 import { Money } from "@/components/app/money";
+import { LedgerDownloads } from "@/components/app/ledger-downloads";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { currencyNote, FxMissing, withFx } from "@/components/app/fx-missing";
 import { FxMissingError } from "@/lib/reports/fx";
@@ -32,7 +33,7 @@ export default async function LedgerIndex({ params, searchParams }: { params: Pr
   const q = { period: period.key, entity: scope.value };
   const header = (
     <>
-      <PageHeader title="Buku Besar" description={`${scopeLabel} · saldo per ${formatPeriod(period.year, period.month)}${note ? ` · ${note}` : ""}`} actions={<ScopeBar entities={entityOptions} periods={periodOptions} entity={scope.value} period={period.key} />} />
+      <PageHeader title="Buku Besar" description={`${scopeLabel} · saldo per ${formatPeriod(period.year, period.month)}${note ? ` · ${note}` : ""}`} actions={<><ScopeBar entities={entityOptions} periods={periodOptions} entity={scope.value} period={period.key} />{!mixed && !view.active && currency === "IDR" && <LedgerDownloads href={`${base}/ledger/export`} query={q} testId="ledger-download" />}</>} />
       {view.available && <AccountViewTabs clientView={view.active} href={(v) => withParams(`${base}/ledger`, { ...q, view: v })} />}
     </>
   );

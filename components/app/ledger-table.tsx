@@ -16,6 +16,7 @@ import { SimpleSelect } from "@/components/app/simple-select";
 import { formatMoney } from "@/lib/money";
 import { RECEIPT_KINDS, WITHHOLDING_KINDS, WITHHOLDING_LABEL } from "@/lib/tax/withholding";
 import type { WithholdingKind } from "@/lib/generated/prisma/enums";
+import { ENTRY_KIND_LABEL } from "@/lib/reports/entry-source";
 
 export type LedgerRow = {
   id: string;
@@ -28,7 +29,7 @@ export type LedgerRow = {
   debit: string;
   credit: string;
   balance: string;
-  entry: { lines: { code: string; name: string; debit: string; credit: string }[] };
+  entry: { lines: { code: string; name: string; debit: string; credit: string; memo?: string | null }[] };
   /** Adjustments: whether *Balik jurnal* applies (blocker = why not, and where it is changed instead), and the entry's date. */
   reversal?: { entryId: string; blocker: string | null; date: string };
   source: null | { bankTxId: string; accountCode: string | null; taxTag: string | null; whtKind: string | null; whtAmount: string; fileName: string; sheet: string | null; rowNumber: number; rawRow: string; description: string; amount: string; bank: string; method: string; reason: string; status: string; /** The other half of a transfer pair, when it has one. */ pairedWith?: string | null; /** A split line's parts (pecah transaksi). */ splits?: SplitPartView[]; /** Who changed this line, newest first (ADR 0013). */ history?: { at: string; actor: string; summary: string }[] };
@@ -36,7 +37,7 @@ export type LedgerRow = {
   fileSource?: null | { fileName: string; entryRef: string; lineRef: string | null; sourceAccount: string | null; lineMemo: string | null; fx: string | null };
 };
 
-const KIND: Record<string, string> = { OPENING: "Saldo awal", BANK: "Mutasi bank", RECLASS: "Reklasifikasi", ADJUSTMENT: "Penyesuaian", IMPORTED: "Impor buku besar", INVOICE: "Faktur" };
+const KIND: Record<string, string> = ENTRY_KIND_LABEL;
 
 /** Every GL line opens its source: the full journal and — for bank lines — the original statement row, for imports the file row. */
 export function LedgerTable({ rows, opening, currency = "IDR", accounts }: { rows: LedgerRow[]; opening: string; currency?: string; accounts?: AccountOption[] }) {
@@ -241,7 +242,7 @@ export function LedgerTable({ rows, opening, currency = "IDR", accounts }: { row
                     <TableBody>
                       {open.entry.lines.map((l, i) => (
                         <TableRow key={i}>
-                          <TableCell className="truncate"><span className="num text-muted-foreground">{l.code}</span> {l.name}</TableCell>
+                          <TableCell className="truncate"><span className="num text-muted-foreground">{l.code}</span> {l.name}{l.memo && l.memo !== open.memo && <span className="block truncate text-xs text-muted-foreground">{l.memo}</span>}</TableCell>
                           <TableCell className="num text-right">{m(l.debit)}</TableCell>
                           <TableCell className="num text-right">{m(l.credit)}</TableCell>
                         </TableRow>

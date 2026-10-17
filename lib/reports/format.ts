@@ -217,7 +217,16 @@ export type FormatSection = { title?: string; items: FormatItem[][]; total?: { k
 const REVIEW_LINES = new Set(["SUSPENSE", "UNMAPPED_INCOME", "UNMAPPED_EXPENSE", "UNMAPPED_ASSET", "UNMAPPED_LIABILITY", "UNMAPPED_EQUITY"]);
 
 /** Thousands: half away from zero, per line (published statements round each line). */
-export const toUnit = (v: bigint, unit: ReportFormat["unit"]) => (unit === "RUPIAH" ? v : (v < 0n ? -1n : 1n) * (((v < 0n ? -v : v) + 500n) / 1000n));
+/**
+ * A value in the format's unit, still in minor units of the currency: unchanged for whole amounts; for *ribuan*, rounded half up to whole
+ * thousands of the major unit and divided by a thousand (IDR 1.234.567 → 1.235; S$ 12.345,67 = 1234567 sen → 12,00, i.e. 1200 sen).
+ */
+export const toUnit = (v: bigint, unit: ReportFormat["unit"], exponent = 0) => {
+  if (unit === "RUPIAH") return v;
+  const minor = 10n ** BigInt(exponent);
+  const q = 1000n * minor;
+  return (v < 0n ? -1n : 1n) * (((v < 0n ? -v : v) + q / 2n) / q) * minor;
+};
 
 export const incomeItems = (is: IncomeStatement): FsItem[] => [...is.revenue, ...is.cogs, ...is.opex, ...is.other, ...is.tax];
 export const balanceItems = (bs: BalanceSheet): FsItem[] => [...bs.currentAssets, ...bs.nonCurrentAssets, ...bs.liabilities, ...bs.equity];
@@ -227,7 +236,7 @@ export const balanceItems = (bs: BalanceSheet): FsItem[] => [...bs.currentAssets
  * beneath), each total closes the section. One column per statement given (current period first). Totals are computed from the rendered
  * lines (in the format's unit), so a printed total always equals the sum of the lines printed above it.
  */
-export function renderFormat(lines: FormatLine[], columns: FsItem[][], unit: ReportFormat["unit"] = "RUPIAH"): FormatSection[] {
+export function renderFormat(lines: FormatLine[], columns: FsItem[][], unit: ReportFormat["unit"] = "RUPIAH", exponent = 0): FormatSection[] {
   const sections: FormatSection[] = [];
   let current: FormatSection = { items: columns.map(() => []) };
   const values = new Map<string, bigint[]>();
@@ -242,8 +251,8 @@ export function renderFormat(lines: FormatLine[], columns: FsItem[][], unit: Rep
       const amounts = columns.map((col, ci) => {
         const parts = col.filter((i) => l.lines.includes(i.fsLine));
         if (!parts.length) return 0n;
-        const accounts = parts.flatMap((p) => p.accounts.map((a) => ({ ...a, amount: toUnit(a.amount * sign, unit) })));
-        const amount = parts.reduce((s, p) => s + toUnit(p.amount * sign, unit), 0n);
+        const accounts = parts.flatMap((p) => p.accounts.map((a) => ({ ...a, amount: toUnit(a.amount * sign, unit, exponent) })));
+        const amount = parts.reduce((s, p) => s + toUnit(p.amount * sign, unit, exponent), 0n);
         current.items[ci].push({ fsLine: l.key, label: l.label, amount, accounts, ...(l.lines.some((f) => REVIEW_LINES.has(f)) ? { review: true } : {}) });
         return amount;
       });
