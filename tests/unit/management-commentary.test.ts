@@ -10,6 +10,7 @@ const base = (over: Partial<ManagementSummary> = {}): ManagementSummary => ({
   ytd: { revenue: 800_000_000n, grossProfit: 300_000_000n, netProfit: 90_000_000n },
   movers: [],
   changes: [],
+  baseline: [],
   ...over,
 });
 

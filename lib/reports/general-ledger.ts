@@ -3,7 +3,7 @@ import { fiscalEndMonth, fiscalYearStart } from "@/lib/fiscal";
 import type { AccountType, EntryKind, NormalBalance } from "@/lib/generated/prisma/enums";
 import { isMixed, scopeEntities } from "@/lib/reports/fx";
 import type { Scope } from "@/lib/reports/ledger";
-import { ENTRY_SOURCE_SELECT, entrySource } from "@/lib/reports/entry-source";
+import { ENTRY_SOURCE_SELECT, lineSource } from "@/lib/reports/entry-source";
 
 /** A month, or the client's financial year to date through that month (Jurnal Umum, Buku Besar and Neraca Saldo exports). */
 export type LedgerRange = "month" | "ytd";
@@ -86,8 +86,7 @@ export async function generalLedger(db: Db, scope: Scope, start: Date, end: Date
       balance += (l.debit - l.credit) * sign;
       debit += l.debit;
       credit += l.credit;
-      // An imported line names its own file row; the entry's rows otherwise.
-      const source = l.sourceRef && l.entry.ledgerImport ? `${l.entry.ledgerImport.fileName} · ${l.sourceRef}` : entrySource(l.entry);
+      const source = lineSource(l);
       return { date: l.date, entity: l.entry.entity.shortName, kind: l.entry.kind, memo: l.entry.memo, source, debit: l.debit, credit: l.credit, balance };
     });
     out.push({ account: { id: a.id, code: a.code, name: a.name, type: a.type, normalBalance: a.normalBalance }, opening, priorYearProfit: fold * sign, lines: glLines, debit, credit, closing: balance });

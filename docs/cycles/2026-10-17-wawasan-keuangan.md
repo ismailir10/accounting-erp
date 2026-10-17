@@ -155,7 +155,7 @@ the explanation of a movement is the accountant's, approved and kept, with AI on
 - No dependency, no auth change, no number on any report changes, no accounting invariant changes.
 
 ## Tasks
-- [ ] T1 `lib/reports/insights.ts`: trend and margin findings from `monthlyIncome` statements (reuse `activeMonths`, `percent` from
+- [x] T1 `lib/reports/insights.ts`: trend and margin findings from `monthlyIncome` statements (reuse `activeMonths`, `percent` from
       `lib/reports/analysis.ts`, `percentOf` from `lib/reports/management.ts`); `topMovers` from `managementSummary().changes` +
       `scanLedger().flux` + `scan.series`, lines via `ENTRY_SOURCE_SELECT` / `entrySource`; unit + DB tests — accept: figures equal the
       analysis tables, movers equal *Perubahan Akun*'s order and the flux control's accounts.
@@ -171,6 +171,15 @@ the explanation of a movement is the accountant's, approved and kept, with AI on
 - [ ] T5 verify-local: walk flows 1–4, screenshots at 1440 and 390 px, full gate.
 
 ## Implementation
+- Plan: T1–T4 sequential, inline in one build worker (each task builds on the last: T2 renders T1, T4 joins T2 and T3); T5
+  (verify-local) by the driver.
+- T1: `lib/reports/insights.ts`, `lib/reports/analysis.ts` (`ytd` on `MonthlyIncome`, `tenthsOf`), `lib/reports/management.ts`
+  (`changes` carry `accountId` and the scan's `series`, `baseline`, `changePercent` shared with the pack), `lib/reports/entry-source.ts`
+  (`lineSource`, now also used by the Buku Besar), `tests/unit/insights.test.ts`, `tests/db/insights.test.ts` — trend (last month,
+  average of the year's earlier months, run from 2, highest/lowest), margins with the change in points and the side that moved it,
+  movers from *Perubahan Akun* with *Melewati ambang* from the flux scan and their three largest lines with source.
+  Decision: a flagged account outside the five largest differences is listed too (after them, in the pack's order), so every
+  account the flux control names can be explained.
 
 ## Verification
 

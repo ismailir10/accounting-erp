@@ -64,7 +64,7 @@ function trendRows(sections: FormatSection[], prefix: string): TrendRow[] {
   return rows;
 }
 
-export type MonthlyIncome = { months: MonthCol[]; rows: TrendRow[]; statements: IncomeStatement[] };
+export type MonthlyIncome = { months: MonthCol[]; rows: TrendRow[]; statements: IncomeStatement[]; /** The year-to-date statement (the total column). */ ytd: IncomeStatement };
 
 /** Laba Rugi per month of the financial year to date (from the books' first month), with a total column = the year-to-date statement. Expenses and costs positive; totals signed. */
 export async function monthlyIncome(db: Db, scope: Scope, year: number, month: number): Promise<MonthlyIncome> {
@@ -82,7 +82,7 @@ export async function monthlyIncome(db: Db, scope: Scope, year: number, month: n
   // The format's last total is net profit (validated on save): the row the page and tests know as "net".
   const net = rows.findLast((r) => r.kind === "total");
   if (net) net.key = "net";
-  return { months, rows, statements };
+  return { months, rows, statements, ytd };
 }
 
 export type MonthlyBalance = { months: MonthCol[]; rows: TrendRow[]; sheets: BalanceSheet[] };
@@ -117,6 +117,12 @@ export function percent(a: bigint, b: bigint): string | null {
   if (b <= 0n) return null;
   const t = (abs(a) * 2000n + b) / (2n * b);
   return `${a < 0n ? "−" : ""}${t / 10n},${t % 10n} %`;
+}
+/** a ÷ b in tenths of a percent with `percent`'s rounding (half up, signed as a); null when b ≤ 0. For differences in points. */
+export function tenthsOf(a: bigint, b: bigint): bigint | null {
+  if (b <= 0n) return null;
+  const t = (abs(a) * 2000n + b) / (2n * b);
+  return a < 0n ? -t : t;
 }
 /** Days of the month a balance covers at the month's rate (balance ÷ flow × days), whole days half up; null when the flow ≤ 0. */
 export function days(balance: bigint, flow: bigint, inMonth: number): string | null {

@@ -1,7 +1,7 @@
 import type { Db } from "@/lib/db";
 import { formatPeriod } from "@/lib/format";
 import { excelAmount, newWorkbook, type WorkbookMeta } from "@/lib/reports/workbook";
-import { managementSummary, percentOf } from "@/lib/reports/management";
+import { changePercent, managementSummary, percentOf } from "@/lib/reports/management";
 import { noteForReport } from "@/lib/reports/report-comment";
 
 /** Laporan manajemen bulanan (I4b): Ringkasan with the commentary, and Perubahan Akun. One company, its own currency; read-only. */
@@ -36,7 +36,7 @@ export async function managementWorkbook(db: Db, input: { clientId: string; enti
   const pa = sheet("Perubahan Akun", "Akun laba rugi: bulan ini dibanding rata-rata bulan sebelumnya", `${month} · ${unit} · rata-rata dari bulan aktif sebelumnya (maks. 3)`, [12, 40, 18, 18, 18, 12]);
   head(pa, ["Kode", "Akun", "Bulan ini", "Rata-rata", "Selisih", "%"]);
   if (!s.changes.length) pa.addRow(["", "Belum ada mutasi akun laba rugi."]);
-  for (const c of s.changes) pa.addRow([c.code, c.name, n(c.current), c.average === null ? null : n(c.average), n(c.delta), c.average === null ? "–" : (percentOf(c.delta, c.average < 0n ? -c.average : c.average) ?? "–")]);
+  for (const c of s.changes) pa.addRow([c.code, c.name, n(c.current), c.average === null ? null : n(c.average), n(c.delta), changePercent(c) ?? "–"]);
 
   return Buffer.from(await book.wb.xlsx.writeBuffer());
 }
