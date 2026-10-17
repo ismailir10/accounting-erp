@@ -493,6 +493,11 @@ If the hold needs to be stored on the bank line (a new column) rather than in it
   - Pengaturan klien marks the rule → e2e test 3.
   - 390 px (list, editor, preview) → e2e tests 1, 2 and 3, unconditional.
   - Deck claims → ship (deck review), no test.
+- Build worker's gate (on `e32cdcd`, isolated database `buku_test_a`): `npm run lint` and `npm run typecheck` exit 0; full `npm test`
+  "Test Files 1 failed | 315 passed (316) · Tests 2858 passed (2858)", the one file being `tests/db/db-drift.test.ts`'s afterAll hook
+  timing out on its fixed-name database `buku_drift_check` while another worker used it; re-run alone once that database was free:
+  "Test Files 1 passed (1) · Tests 3 passed (3)". `npm run build` exit 0. Not run here (shared `buku` database): `demo:reset`,
+  `verify:books`, Playwright and the walk.
 
 ## Verification
 
