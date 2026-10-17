@@ -9,8 +9,9 @@ import { askEvidence } from "@/lib/evidence/answers";
 import { completenessMatrix } from "@/lib/controls/completeness";
 import { financialYear, fiscalEndMonth } from "@/lib/fiscal";
 import { approvalCounts } from "@/lib/approvals/queue";
+import { checklistRollup } from "@/lib/checklist/view";
 
-export type WorkspaceInput = { scope?: string; period?: string };
+export type WorkspaceInput = { scope?: string; period?: string; /** When overdue is judged (tests); now by default. */ now?: Date };
 export class WorkspaceInputError extends Error {}
 
 export function parseWorkspacePeriod(value: string) {
@@ -110,11 +111,19 @@ export async function getWorkspaceOverview(db: Db, access: WorkspaceAccess, inpu
     const setup = await setupProgress(db, c.id, { period: { year: scope.year, month: scope.month }, missingStatements: missingStatements.map(m => m.title) });
     // The findings that hold the close, failed first: what Tanya Buku names when asked what blocks the books.
     const open = [...readiness.fails, ...readiness.unacked].map((control) => ({ title: control.title, scope: control.scope, status: control.status, href: workspaceHref(control.href ?? `/clients/${c.id}/close`, scope) }));
-    return { id: c.id, name: c.name, state, label: labels[state], sumber, open, sentAt: sent?.createdAt ?? null, importHref: workspaceHref(`/clients/${c.id}/import`, scope), approvals: approvals.total, approvalsHref: workspaceHref(`/clients/${c.id}/approvals`, scope, { entity: "combined" }), hasActivity: activity > 0, failCount: readiness.fails.length, reviewCount: readiness.unacked.length, missingSignoffs: readiness.missing.length, missingStatements, taxIssues, setup: { step: setup.current, hasData: setup.hasData, hasBanks: setup.hasBanks, next: setup.next, opening: setup.needsOpening.map(e => e.shortName) }, closeHref: workspaceHref(`/clients/${c.id}/close`, scope) };
+    // Checklist tutup buku: the page's own rows from the facts read above (two small queries more), plus what is late in earlier months
+    // since the template began; the cell and Beranda's task open the earliest month with a late task.
+    const lockedAt = period?.status === "LOCKED" ? (period.lockedAt ?? new Date(0)) : null;
+    const rollup = await checklistRollup(db, { clientId: c.id, year: scope.year, month: scope.month, now: input.now, facts: { controls, sumber, approvals: approvals.total, opening: { needs: setup.needsOpening.map((e) => e.shortName), hasData: setup.hasData }, lockedAt, sentAt: sent?.createdAt ?? null } });
+    const lateMonth = rollup.earliest ? `${rollup.earliest.year}-${String(rollup.earliest.month).padStart(2, "0")}` : scope.period;
+    const checklist = { ...rollup, monthLabel: rollup.earliest ? formatPeriod(rollup.earliest.year, rollup.earliest.month) : scope.periodLabel, href: workspaceHref(`/clients/${c.id}/checklist`, scope, { period: lateMonth }) };
+    return { id: c.id, name: c.name, state, label: labels[state], sumber, open, sentAt: sent?.createdAt ?? null, importHref: workspaceHref(`/clients/${c.id}/import`, scope), approvals: approvals.total, approvalsHref: workspaceHref(`/clients/${c.id}/approvals`, scope, { entity: "combined" }), hasActivity: activity > 0, failCount: readiness.fails.length, reviewCount: readiness.unacked.length, missingSignoffs: readiness.missing.length, missingStatements, taxIssues, checklist, setup: { step: setup.current, hasData: setup.hasData, hasBanks: setup.hasBanks, next: setup.next, opening: setup.needsOpening.map(e => e.shortName) }, closeHref: workspaceHref(`/clients/${c.id}/close`, scope) };
   }));
   // The detail names the client when the company's own name doesn't (an owner "Budi Santoso" can belong to two clients).
   const tasks: WorkspaceTask[] = entities.filter(e => e.openReview > 0).map(e => ({ id: `review:${e.id}`, title: `Periksa ${e.openReview} transaksi`, detail: `${e.name === e.clientName ? e.name : `${e.clientName} · ${e.name}`} · sampai ${scope.periodLabel}`, href: e.reviewHref, priority: "high", clientId: e.clientId, entityId: e.id }));
   for (const c of clients) {
+    // Late checklist tasks outlive the lock (the pack, a Coretax upload): one task per client, before the locked ones are skipped.
+    if (c.checklist.overdue) tasks.push({ id: `checklist:${c.id}`, title: `Selesaikan ${c.checklist.overdue} tugas checklist lewat tenggat`, detail: `${c.name} · ${c.checklist.monthLabel}${c.checklist.waitsOn.length ? ` · menunggu ${c.checklist.waitsOn.join(", ")}` : ""}`, href: c.checklist.href, priority: "high", clientId: c.id });
     if (c.state === "LOCKED") continue;
     // A client still in setup gets ONE task naming the step (upload, then Saldo Awal), instead of generic "lengkapi" tasks.
     if (c.setup.step === "import" && !c.setup.hasData && c.setup.next) { tasks.push({ id: `setup:${c.id}`, title: c.setup.hasBanks ? `Mulai ${c.name}: unggah rekening koran` : `Mulai ${c.name}: impor buku besar`, detail: c.setup.hasBanks ? "Langkah 1 dari 4 · dari sini Saldo Awal terisi otomatis" : "Langkah 1 dari 4", href: workspaceHref(c.setup.next.href, scope), priority: "normal", clientId: c.id }); continue; }
@@ -124,9 +133,9 @@ export async function getWorkspaceOverview(db: Db, access: WorkspaceAccess, inpu
     if (c.state === "EMPTY") tasks.push({ id: `import:${c.id}`, title: "Lengkapi buku bulan ini", detail: c.name, href: workspaceHref(`/clients/${c.id}/import`, scope, scope.kind === "entity" ? { entity: scope.entityIds[0] } : {}), priority: "normal", clientId: c.id });
     else tasks.push({ id: `close:${c.id}`, title: c.failCount ? `Perbaiki ${c.failCount} kontrol gagal` : c.reviewCount ? `Periksa ${c.reviewCount} temuan tutup buku` : c.missingSignoffs ? `Lengkapi ${c.missingSignoffs} pemeriksaan akhir` : "Tutup buku", detail: `${c.name} · seluruh grup/klien`, href: c.closeHref, priority: c.failCount ? "high" : "normal", clientId: c.id });
   }
-  // What blocks the books first: failed controls, then missing statements (review of what isn't imported can't finish) and taxes paid
-  // short or late (a penalty in waiting), then review.
-  const rank = (t: WorkspaceTask) => (t.priority !== "high" ? 3 : t.id.startsWith("close:") ? 0 : t.id.startsWith("statement:") || t.id.startsWith("tax:") ? 1 : 2);
+  // What blocks the books first: failed controls, then missing statements (review of what isn't imported can't finish), taxes paid
+  // short or late (a penalty in waiting) and late checklist tasks, then review.
+  const rank = (t: WorkspaceTask) => (t.priority !== "high" ? 3 : t.id.startsWith("close:") ? 0 : t.id.startsWith("statement:") || t.id.startsWith("tax:") || t.id.startsWith("checklist:") ? 1 : 2);
   tasks.sort((a, b) => rank(a) - rank(b));
   return { scope, entities, clients, tasks, counts: { entities: entities.length, openReview: entities.reduce((n, e) => n + e.openReview, 0), closed: clients.filter(c => c.state === "LOCKED").length, clients: clients.length } };
 }

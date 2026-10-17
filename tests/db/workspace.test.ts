@@ -6,6 +6,9 @@ import { dateOnly } from "@/lib/format";
 import { createIntake } from "@/lib/evidence/store";
 import { approvalCounts } from "@/lib/approvals/queue";
 import { createSchedule, postAllDue } from "@/lib/adjust/schedules";
+import { addMember } from "../members";
+import { checklistMonth } from "@/lib/checklist/view";
+import { acceptDefault } from "@/lib/checklist/write";
 
 beforeEach(resetDb);
 
@@ -307,4 +310,35 @@ it("the firm board's Persetujuan cell counts the client's Kotak for the month, e
   }
   await postAllDue(db, { clientId: g.client.id, year: 2026, month: 8 });
   expect((await getWorkspaceOverview(db, { firmId: g.firm.id, clientIds: "ALL" }, { period: "2026-08" })).clients[0].approvals).toBe(2);
+});
+
+it("the board's Checklist cell and Beranda's late-task count are the checklist page's own rows (cycle 2026-10-17-checklist-tutup-buku)", async () => {
+  const g = await makeGroup();
+  const ALL = { firmId: g.firm.id, clientIds: "ALL" as const };
+  const admin = await addMember(g.firm.id, "ADMIN", { name: "Budi" });
+  const rina = await addMember(g.firm.id, "AKUNTAN", { name: "Rina", clients: [g.client.id] });
+  const now = new Date("2026-09-11T02:00:00Z"); // 11 Sep 09.00 WIB: August's tanggal 5–10 tasks are late
+  await sale(g, g.pt.entity.id, 1000n);
+  let data = await getWorkspaceOverview(db, ALL, { period: "2026-08", now });
+  expect(data.clients[0].checklist).toMatchObject({ hasTemplate: false, total: 0, overdue: 0 });
+  expect(data.tasks.some((t) => t.id.startsWith("checklist:"))).toBe(false);
+
+  await acceptDefault(db, { id: admin.id, role: admin.role }, { clientId: g.client.id, year: 2026, month: 8, assigneeId: rina.id, reviewerId: admin.id });
+  const page = await checklistMonth(db, { clientId: g.client.id, year: 2026, month: 8, now });
+  data = await getWorkspaceOverview(db, ALL, { period: "2026-08", now });
+  const cell = data.clients[0].checklist;
+  expect(cell).toMatchObject({ hasTemplate: true, total: page.counts.total, finished: page.counts.finished, overdue: page.counts.overdue, earliest: { year: 2026, month: 8 } });
+  expect(cell.overdue).toBeGreaterThan(0);
+  const href = new URL(cell.href, "https://buku.example");
+  expect([href.pathname, href.searchParams.get("period")]).toEqual([`/clients/${g.client.id}/checklist`, "2026-08"]);
+  const task = data.tasks.find((t) => t.id === `checklist:${g.client.id}`)!;
+  expect(task).toMatchObject({ title: `Selesaikan ${page.counts.overdue} tugas checklist lewat tenggat`, detail: "Grup Uji · Agustus 2026 · menunggu Rina", href: cell.href, priority: "high" });
+  // It ranks with missing statements and late taxes: before review and the other normal tasks.
+  expect(data.tasks.findIndex((t) => t.id === task.id)).toBeLessThan(data.tasks.findIndex((t) => t.priority === "normal"));
+
+  // Before the due dates nothing is late; on September's board August's late tasks still count and the link opens August.
+  expect((await getWorkspaceOverview(db, ALL, { period: "2026-08", now: new Date("2026-09-04T00:00:00Z") })).clients[0].checklist.overdue).toBe(0);
+  const sep = await getWorkspaceOverview(db, ALL, { period: "2026-09", now });
+  expect(sep.clients[0].checklist).toMatchObject({ earliest: { year: 2026, month: 8 }, overdue: page.counts.overdue });
+  expect(new URL(sep.clients[0].checklist.href, "https://buku.example").searchParams.get("period")).toBe("2026-08");
 });

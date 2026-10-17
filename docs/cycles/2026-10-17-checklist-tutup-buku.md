@@ -299,7 +299,7 @@ If the warning must become a block, or the reviewer must become a second approve
       `Checkbox`, the access context for viewers. (deps: T1)
 - [x] T3 Tutup Buku: `signoffAction` through the checklist writer (rules + `CHECKLIST` event); the *Daftar periksa* card names the
       Pelaksana and links to the checklist; the unfinished-tasks line and the lock dialog. Accept: flow 4. (deps: T1; parallel with T2)
-- [ ] T4 Firm board *Checklist* column and the Beranda overdue task from the same read model; `docs/demo/investor-demo.md` and README
+- [x] T4 Firm board *Checklist* column and the Beranda overdue task from the same read model; `docs/demo/investor-demo.md` and README
       routes. Accept: flow 3; board = page (DB test). (deps: T1; parallel with T2/T3)
 - [ ] T5 verify-local: walk flows 1–5 with screenshots at 1440 and 390 px; `e2e/checklist.spec.ts`; the full gate (`verify:books` ALL
       PASS). (deps: T2–T4)
@@ -339,6 +339,14 @@ If the warning must become a block, or the reviewer must become a second approve
   this member may not tick with the reason (not the Pelaksana, already Direviu, the Pelaksana gone, a viewer). Under the blockers a
   muted line "Checklist: N tugas belum selesai" (`unfinishedBeforeLock`: *Tutup buku* and *Laporan dikirim* left out) links to the
   checklist, and the lock dialog repeats it ("…; buku tetap bisa ditutup"). The lock button's rule and `lockPeriod` are untouched.
+- T4: `lib/workspace/index.ts`, `components/app/workspace-overview.tsx`, `docs/demo/investor-demo.md`, `README.md`,
+  `tests/db/workspace.test.ts` — each board client carries `checklist` from `checklistRollup`, fed with the controls, completeness,
+  Kotak count, Saldo Awal progress, lock and *Terkirim* the board already read (so the board month costs the template and marks
+  queries only). The *Checklist* column sits between *Persetujuan* and *Tutup buku*: "N lewat tenggat" (REVIEW) when the month or an
+  earlier month since the template began has a late task, else "7 / 10 selesai" (REVIEW) or "Lengkap" (PASS), "Belum diatur" (muted)
+  without a template, "–" before its first month; it links to the checklist on the earliest late month. Beranda gets one high-priority
+  task per client, "Selesaikan N tugas checklist lewat tenggat" with the month and who it waits on, ranked with missing statements and
+  late taxes, and pushed before locked clients are skipped (late tasks outlive the lock). `WorkspaceInput.now` lets tests fix "today".
 
 ## Verification
 
