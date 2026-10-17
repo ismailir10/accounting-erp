@@ -290,7 +290,7 @@ Facts the design relies on:
 If the warning must become a block, or the reviewer must become a second approver of the lock, that changes rule 23: stop and ask.
 
 ## Tasks
-- [ ] T1 Schema, migration and the `lib/checklist` domain: template, month view, default proposal, Otomatis proofs, statuses, due /
+- [x] T1 Schema, migration and the `lib/checklist` domain: template, month view, default proposal, Otomatis proofs, statuses, due /
       overdue, permission rules, `CHECKLIST` change-log kind, `deleteClient`, `checklist.manage`. Accept: the DB and unit seams above.
       Reuse: `completenessMatrix`, `approvalCounts`, `runControls` / `closeReadiness`, `setupProgress`, `clientModules`, the board's
       *Terkirim* read, `recordEvent`, `can` / `isAdminRole`, `ROLE_LABEL`.
@@ -305,6 +305,21 @@ If the warning must become a block, or the reviewer must become a second approve
       PASS). (deps: T2–T4)
 
 ## Implementation
+- Plan: T1 → T2 → T3 → T4 sequential, inline in one worker (they share the `lib/checklist` read model, `app/actions.ts` and the close
+  page; a fan-out would cost more than it saves). T5: the e2e spec and docs here; verify-local runs centrally.
+- T1: `prisma/schema.prisma`, `prisma/migrations/20261018120000_close_checklist/migration.sql`, `lib/checklist/{rules,proofs,view,write}.ts`,
+  `lib/auth/permissions.ts`, `lib/audit.ts`, `lib/clients/delete.ts`, `.agents/skills/accounting-rules/SKILL.md` (rule 25 names the
+  checklist), `tests/unit/checklist-rules.test.ts`, `tests/unit/permissions.test.ts`, `tests/db/checklist.test.ts` — enum `ChecklistKind`
+  (AUTO · SIGNOFF · MANUAL) and two tables: `ChecklistTask` (the template: title, Pelaksana, optional Pereviu, due day, `startPeriod` /
+  `endPeriod` as YYYYMM) and `ChecklistMark` (sparse per-month Selesai / Direviu of a human task). The mark carries the task's kind
+  through a composite FK `(taskId, kind)`, so the CHECKs can say "a Manual review only with a tick" and "a Pemeriksaan akhir mark holds
+  only the review" (its Selesai stays the `CloseSignoff` row). Other CHECKs: due day 1–28, valid months with end ≥ start, key iff not
+  Manual, no Pereviu on Otomatis, Pereviu ≠ Pelaksana, who/when paired, no empty mark. `rules.ts` (pure): due date in the month after
+  the period, today in WIB, the holder / pair / tick / review rules and the review-after-tick status. `proofs.ts` (pure): the eight
+  Otomatis kinds and their proof lines. `view.ts`: month view (`checklistMonth`), default proposal (`defaultLines` /
+  `proposeChecklist`), and the board roll-up (`checklistRollup`), all from one `buildRows`. `write.ts`: accept, add, edit, remove,
+  tick / review (`markTask`) and the one `CloseSignoff` writer (`setSignoff`), each with one `CHECKLIST` event. Capability
+  `checklist.manage` (OWNER, ADMIN): "Hanya admin kantor yang dapat mengatur checklist."
 
 ## Verification
 
