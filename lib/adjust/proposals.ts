@@ -209,6 +209,6 @@ export async function proposalViews(db: Db, clientId: string, year: number, mont
     const tx = p.bankTransactionId ? txs.get(p.bankTransactionId) : null;
     const fixed = tx?.accountCode ? lines.findIndex((l) => l.accountCode === tx.accountCode) : -1;
     const reason = tx?.taxTag ? `${p.reason} · Tag pajak transaksi ini dilepas saat dicatat; transaksinya kembali ke Review untuk memastikan pajaknya.` : p.reason;
-    return { id: p.id, memo: p.memo, reason, source: p.source, entity: p.entity.shortName, currency: p.entity.functionalCurrency, fixed: fixed >= 0 ? fixed : null, lines, blocked: blocked.get(p.id) ?? null };
+    return { id: p.id, memo: p.memo, reason, source: p.source, entityId: p.entityId, entity: p.entity.shortName, currency: p.entity.functionalCurrency, fixed: fixed >= 0 ? fixed : null, lines, blocked: blocked.get(p.id) ?? null };
   });
 }

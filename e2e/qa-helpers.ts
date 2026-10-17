@@ -1,4 +1,5 @@
-import { expect, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { expect, type Browser, type Page } from "@playwright/test";
 
 /** Shared by the qa-*.spec.ts regression specs (end-to-end QA of 2026-10-02, docs/qa). Synthetic data only. */
 let account = 7_000_100_000;
@@ -41,3 +42,55 @@ export async function uploadStatement(page: Page, clientId: string, name: string
 
 /** A BRI internet-banking CSV (`NOREK;…`), which keeps zero-amount lines. */
 export const briCsv = (number: string, rows: string[]) => ["NOREK;" + number, "NAMA;PT UJI", "TGL_TRAN;DESK_TRAN;MUTASI_DEBET;MUTASI_KREDIT;SALDO_AKHIR_MUTASI", ...rows, ""].join("\n");
+
+/** The e2e accounts written by scripts/e2e-setup.ts. */
+export const credentials = (file: string) => JSON.parse(readFileSync(`.playwright/${file}`, "utf8")) as { email: string; password: string };
+
+/** A fresh browser context signed in through the real login form as the account in `.playwright/<file>`. */
+export async function signIn(browser: Browser, baseURL: string | undefined, file: string): Promise<Page> {
+  const context = await browser.newContext({ baseURL, storageState: { cookies: [], origins: [] } });
+  const page = await context.newPage();
+  const { email, password } = credentials(file);
+  await page.goto("/login");
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Kata sandi").fill(password);
+  await page.getByRole("button", { name: "Masuk", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Beranda", exact: true })).toBeVisible({ timeout: 30_000 });
+  return page;
+}
+
+/**
+ * Runs `check` as a Peninjau: the admin (`page`) makes the e2e AKUNTAN a Peninjau on Pengaturan → Tim, adding `client` to their clients
+ * when it is one a spec created (e2e-setup assigns only the demo clients), and the AKUNTAN signs in. Restores role and clients after.
+ */
+export async function asPeninjau(page: Page, browser: Browser, baseURL: string | undefined, client: string | null, check: (viewer: Page) => Promise<void>) {
+  const { email } = credentials("credentials-akuntan.json");
+  const row = page.getByTestId("team-row").filter({ hasText: email });
+  const setRole = async (label: string) => {
+    await row.getByRole("combobox").click();
+    await page.getByRole("option", { name: label }).click();
+    await expect(page.getByText(`diubah menjadi ${label}`)).toBeVisible();
+  };
+  const toggleClient = async () => {
+    await row.getByTestId("assign-clients").click();
+    const dialog = page.getByRole("dialog");
+    await dialog.locator("div.flex").filter({ has: page.locator("label", { hasText: new RegExp(`^${client!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }) }).getByRole("checkbox").click();
+    await dialog.getByRole("button", { name: "Simpan" }).click();
+    await expect(page.getByText(/Klien .* disimpan/)).toBeVisible();
+  };
+  await page.goto("/settings?tab=tim");
+  if (client) await toggleClient();
+  await setRole("Peninjau");
+  const viewer = await signIn(browser, baseURL, "credentials-akuntan.json");
+  try {
+    await check(viewer);
+  } finally {
+    await viewer.context().close();
+    await page.goto("/settings?tab=tim");
+    await setRole("Akuntan");
+    if (client) await toggleClient();
+  }
+}
+
+/** The page does not scroll sideways at the current viewport (ui-rules: 390 px works). */
+export const noSideScroll = (page: Page) => expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

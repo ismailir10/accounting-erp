@@ -58,3 +58,15 @@ export function accountantHints(h: HintInput): Hint[] {
   }
   return out;
 }
+
+/** Review's bar for "yakin": an AI suggestion at 80 % or more with an account (accounting-rules 14: nothing lower is bulk-accepted). */
+export const SURE_CONFIDENCE = 0.8;
+export const isSureSuggestion = (l: { method: string; confidence: number; suggestedCode: string | null }) => l.method === "AI" && l.confidence >= SURE_CONFIDENCE && Boolean(l.suggestedCode);
+
+/**
+ * A line that may be accepted in bulk, unchanged (Review's *Terima N usulan AI yakin*, Kotak persetujuan's *Setujui N usulan yakin*): a
+ * sure suggestion with no accountant hint open on its suggested account. A hinted line (capex, a down payment, missing withholding) needs a look.
+ */
+export function bulkAcceptable(l: { method: string; confidence: number; suggestedCode: string | null; description: string; amount: bigint; entityKind: string }, account: HintInput["account"]): boolean {
+  return isSureSuggestion(l) && accountantHints({ description: l.description, amount: l.amount, account, wht: "none", entityKind: l.entityKind }).length === 0;
+}

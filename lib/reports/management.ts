@@ -12,7 +12,8 @@ import { scanLedger } from "@/lib/controls/anomaly";
  */
 export type Figures = { revenue: bigint; grossProfit: bigint; netProfit: bigint; cash: bigint };
 export type Mover = { code: string; name: string; type: "PENDAPATAN" | "BEBAN"; current: bigint; average: bigint; delta: bigint };
-export type AccountChange = { code: string; name: string; current: bigint; average: bigint | null; delta: bigint };
+/** `series`: the account's movement in each baseline month, then this month (the scan's series). */
+export type AccountChange = { accountId: string; code: string; name: string; current: bigint; average: bigint | null; delta: bigint; series: bigint[] };
 export type ManagementSummary = {
   period: { year: number; month: number };
   previous: { year: number; month: number };
@@ -22,6 +23,8 @@ export type ManagementSummary = {
   ytd: Omit<Figures, "cash">;
   movers: Mover[];
   changes: AccountChange[];
+  /** The baseline months the averages are over, oldest first, as `YYYY-MM`. */
+  baseline: string[];
 };
 
 const abs = (v: bigint) => (v < 0n ? -v : v);
@@ -60,7 +63,7 @@ export async function managementSummary(db: Db, input: { clientId: string; entit
     const base = series.slice(0, -1);
     const average = base.length ? base.reduce((s, v) => s + v, 0n) / BigInt(base.length) : null;
     if (current === 0n && !base.some((v) => v !== 0n)) continue;
-    changes.push({ code: a.code, name: a.name, current, average, delta: current - (average ?? 0n) });
+    changes.push({ accountId: id, code: a.code, name: a.name, current, average, delta: current - (average ?? 0n), series });
   }
   changes.sort((a, b) => (abs(b.delta) > abs(a.delta) ? 1 : abs(b.delta) < abs(a.delta) ? -1 : a.code.localeCompare(b.code)));
   return {
@@ -72,6 +75,7 @@ export async function managementSummary(db: Db, input: { clientId: string; entit
     ytd: { revenue: plYtd.totals.revenue, grossProfit: plYtd.totals.grossProfit, netProfit: plYtd.totals.netProfit },
     movers,
     changes,
+    baseline: scan.baseline,
   };
 }
 
@@ -83,6 +87,9 @@ export function percentOf(part: bigint, whole: bigint): string | null {
   const t = abs(tenths);
   return `${sign}${t / 10n},${t % 10n} %`;
 }
+
+/** An account's change against its average as a percentage of that average ("+52,1 %" reads as "52,1 %"); null without a baseline. */
+export const changePercent = (c: Pick<AccountChange, "delta" | "average">) => (c.average === null ? null : percentOf(c.delta, abs(c.average)));
 
 /** The commentary: plain sentences from the numbers, true in either direction (ui-rules: never a hard-coded "naik"). */
 export function commentary(s: ManagementSummary): string[] {

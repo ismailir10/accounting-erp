@@ -7,6 +7,7 @@ import { REVERSAL_OWNERS, reversalBlocker } from "@/lib/ledger/reverse";
 import { formatMoney } from "@/lib/money";
 import { formatRateId } from "@/lib/fx/currency";
 import { sourceAccountLabel } from "@/lib/ledger-import/code";
+import { entryOrigins } from "@/lib/reports/entry-origin";
 
 /**
  * One account's ledger for a month: opening balance, lines with running balance, and the source behind each line
@@ -66,6 +67,8 @@ export async function accountLedger(
       history.set(id, [...(history.get(id) ?? []), { at: formatDateTime(e.createdAt), actor: e.actor?.name ?? "Sistem", summary: e.summary }]);
     }
   }
+  // The proposal an entry was approved from (Kotak persetujuan), shown in its drawer.
+  const origins = await entryOrigins(db, lines.map((l) => l.entryId));
   const sign = args.normalBalance === "DEBIT" ? 1n : -1n;
   const opening = ((before._sum.debit ?? 0n) - (before._sum.credit ?? 0n)) * sign;
   const balances = lines.reduce<bigint[]>((acc, l) => [...acc, (acc.at(-1) ?? opening) + (l.debit - l.credit) * sign], []);
@@ -78,6 +81,7 @@ export async function accountLedger(
       memo: l.entry.memo,
       kind: l.entry.kind,
       postedBy: `${l.entry.postedBy?.name ?? "Sistem"} · ${formatDateTime(l.entry.createdAt)}`,
+      origin: origins.get(l.entryId) ?? null,
       debit: l.debit.toString(),
       credit: l.credit.toString(),
       balance: balances[idx].toString(),

@@ -15,13 +15,13 @@ import { statementSet, type SetRow, type SetStatement, type StatementSet } from 
  * adds the printed lines, as on the page.
  */
 
-const A4 = { width: 595.28, height: 841.89 };
-const M = { left: 50, right: 50, top: 48, bottom: 56 };
-const INK = "#0B1B32";
-const MUTED = "#4B5768";
+export const A4 = { width: 595.28, height: 841.89 };
+export const M = { left: 50, right: 50, top: 48, bottom: 56 };
+export const INK = "#0B1B32";
+export const MUTED = "#4B5768";
 const FAIL = "#C4213A";
-const RULE = "#C9CFD8";
-const REVIEW = "#8A5300";
+export const RULE = "#C9CFD8";
+export const REVIEW = "#8A5300";
 /** A management blank, with the punctuation right after it (so a closing "." never wraps onto a line of its own). */
 const MANUAL_ONE = /^\[isi oleh manajemen: [^\]]*\][.,;:]?$/;
 
@@ -46,7 +46,7 @@ function clean<T>(v: T): T {
 }
 
 /** An amount as printed: the set's currency, accounting brackets, a dash for zero. */
-const amountIn = (currency: string) => (v: bigint | null) => (v === null ? "" : v === 0n ? "–" : formatMoney(v, currency, { bare: true, accounting: true }));
+export const amountIn = (currency: string) => (v: bigint | null) => (v === null ? "" : v === 0n ? "–" : formatMoney(v, currency, { bare: true, accounting: true }));
 
 /** The values a statement prints: per line in its unit, a format total as the sum of the printed lines it names. */
 export function printedValues(rows: SetRow[], unit: StatementSet["unit"], currency = "IDR"): (bigint | null)[][] {

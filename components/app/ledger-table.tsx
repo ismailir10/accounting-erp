@@ -26,6 +26,8 @@ export type LedgerRow = {
   kind: string;
   /** "Nama · 27 Sep 2026, 14:02" — who posted the entry and when; "Sistem" for seeds. */
   postedBy?: string;
+  /** The proposal the entry was approved from ("Usulan AI 6120 (92 %) disetujui"), if any (lib/reports/entry-origin.ts). */
+  origin?: string | null;
   debit: string;
   credit: string;
   balance: string;
@@ -141,7 +143,11 @@ export function LedgerTable({ rows, opening, currency = "IDR", accounts }: { row
             <>
               <SheetHeader>
                 <SheetTitle>{KIND[open.kind]} · {open.date}</SheetTitle>
-                <SheetDescription>{open.memo}{open.postedBy && <span className="mt-1 block text-xs">Dicatat oleh {open.postedBy}</span>}</SheetDescription>
+                <SheetDescription>
+                  {open.memo}
+                  {open.postedBy && <span className="mt-1 block text-xs">Dicatat oleh {open.postedBy}</span>}
+                  {open.origin && <span className="mt-0.5 block text-xs" data-testid="entry-origin">Asal: {open.origin}</span>}
+                </SheetDescription>
               </SheetHeader>
               <div className="space-y-6 px-4 pb-6">
                 {open.source && (

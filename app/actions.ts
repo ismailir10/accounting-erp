@@ -9,6 +9,7 @@ import { mappingFromJson, MAX_COLUMNS, readMapped, suggestMapping, type ColumnMa
 import { forgetLayout } from "@/lib/import/layouts";
 import { OcrError } from "@/lib/ocr/pages";
 import { clearReportComment, CommentError, draftCommentary, saveReportComment } from "@/lib/reports/report-comment";
+import { clearFluxExplanation, draftFluxExplanation, ExplanationError, saveFluxExplanation, type ExplanationDraft } from "@/lib/reports/flux-explanation";
 import { headers } from "next/headers";
 import { appUrl } from "@/lib/supabase/env";
 import { formatDate } from "@/lib/format";
@@ -28,6 +29,8 @@ import { deleteEmployee, importCensus, saveBenefitSetting, saveEmployee, uploadM
 import { postBenefits } from "@/lib/benefits/valuation";
 import { createInvoice, voidInvoice, type InvoiceInput } from "@/lib/receivables/invoices";
 import { setContactChannel } from "@/lib/receivables/channels";
+import { setCreditLimit } from "@/lib/receivables/credit-limit";
+import { setContactTaxIdentity, setInvoiceFakturItem } from "@/lib/receivables/faktur-identity";
 import { settleFifo, settleWithReclass, tagAdvance, unsettle } from "@/lib/receivables/settle";
 import { candidateViews, type CandidateView } from "@/lib/receivables/view";
 import { postCkpn, saveCkpnSetting, type CkpnSettingInput } from "@/lib/receivables/ckpn";
@@ -699,6 +702,59 @@ export async function setContactChannelAction(input: { clientId: string; contact
   }
 }
 
+/** A customer's credit limit in Rupiah (cycle 2026-10-17-pengingat-piutang): "" clears it; recorded in Riwayat as *Batas kredit*. */
+export async function setCreditLimitAction(input: { clientId: string; contactId: string; limit: string }): Promise<Result<{ limit: string | null }>> {
+  try {
+    const client = await writeClient(input.clientId);
+    const c = await setCreditLimit(prisma, { clientId: client.id, contactId: input.contactId, limit: String(input.limit ?? ""), actorId: (await getCurrentMember()).id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true, limit: c.creditLimit?.toString() ?? null };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** A buyer's tax identity for the Coretax faktur file (NPWP / NIK / NITKU / address / email); an empty field clears it. */
+export async function setContactTaxIdentityAction(input: { clientId: string; contactId: string; npwp: string; nik: string; nitku: string; address: string; email: string }): Promise<Result> {
+  try {
+    const client = await writeClient(input.clientId);
+    await setContactTaxIdentity(prisma, {
+      clientId: client.id,
+      contactId: input.contactId,
+      npwp: String(input.npwp ?? ""),
+      nik: String(input.nik ?? ""),
+      nitku: String(input.nitku ?? ""),
+      address: String(input.address ?? ""),
+      email: String(input.email ?? ""),
+      actorId: (await getCurrentMember()).id,
+    });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return editFail(e);
+  }
+}
+
+/** The one faktur item (Barang/Jasa, Kode, Satuan, optionally the name) of one or more sales invoices of a company. */
+export async function setInvoiceFakturItemAction(input: { clientId: string; invoiceIds: string[]; kind: string; code: string; unit: string; name?: string | null }): Promise<Result<{ count: number }>> {
+  try {
+    const client = await writeClient(input.clientId);
+    const count = await setInvoiceFakturItem(prisma, {
+      clientId: client.id,
+      invoiceIds: Array.isArray(input.invoiceIds) ? input.invoiceIds.map(String) : [],
+      kind: String(input.kind ?? ""),
+      code: String(input.code ?? ""),
+      unit: String(input.unit ?? ""),
+      name: input.name === undefined || input.name === null ? undefined : String(input.name),
+      actorId: (await getCurrentMember()).id,
+    });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true, count };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 /** Keluarkan dokumen (UC-B5): reverses a wrongly entered invoice or bill on its own date, with the reason. */
 export async function voidInvoiceAction(input: { clientId: string; invoiceId: string; reason: string }): Promise<Result> {
   try {
@@ -819,10 +875,11 @@ export async function postInstallmentAction(clientId: string, scheduleId: string
   }
 }
 
-export async function postAllDueAction(clientId: string, year: number, month: number): Promise<Result<{ posted: number }>> {
+/** `entityId`: one company's instalments only (Kotak persetujuan scoped to a company); a foreign id matches no schedule of the client. */
+export async function postAllDueAction(clientId: string, year: number, month: number, entityId?: string): Promise<Result<{ posted: number }>> {
   try {
     const client = await writeClient(clientId);
-    const posted = await postAllDue(prisma, { clientId: client.id, year, month, actorId: (await getCurrentMember()).id });
+    const posted = await postAllDue(prisma, { clientId: client.id, year, month, entityId, actorId: (await getCurrentMember()).id });
     revalidatePath(`/clients/${client.id}`, "layout");
     return { ok: true, posted };
   } catch (e) {
@@ -896,8 +953,8 @@ export async function addEntityAction(clientId: string, input: NewEntityInput): 
 
 const editFail = (e: unknown) => (e instanceof OnboardingError ? { ok: false as const, error: e.message, fields: e.fields } : fail(e));
 
-/** *Ubah* on a company/owner (Pengaturan klien): name, short name, NPWP. Labels only, so the role that may add an entity may fix one. */
-export async function renameEntityAction(clientId: string, entityId: string, input: { name: string; shortName: string; npwp: string }): Promise<Result> {
+/** *Ubah* on a company/owner (Pengaturan klien): name, short name, NPWP, seller NITKU. Labels only, so the role that may add an entity may fix one. */
+export async function renameEntityAction(clientId: string, entityId: string, input: { name: string; shortName: string; npwp: string; nitku?: string }): Promise<Result> {
   try {
     const client = await clientFor("client.create", clientId);
     const member = await getCurrentMember();
@@ -1523,6 +1580,51 @@ export async function clearReportCommentAction(k: { clientId: string; entityId: 
     return { ok: true };
   } catch (e) {
     if (e instanceof CommentError) return { ok: false, error: e.message };
+    return fail(e);
+  }
+}
+
+/**
+ * Penjelasan penggerak (Wawasan, accounting-rules 20d): one AI draft for a flagged account, cited rows only and every number checked;
+ * nothing is saved here.
+ */
+export async function draftFluxExplanationAction(k: { clientId: string; entityId: string; year: number; month: number; accountCode: string }): Promise<{ ok: true; draft: ExplanationDraft } | { ok: false; error: string }> {
+  try {
+    const client = await writeClient(k.clientId);
+    const provider = await resolveProvider(prisma);
+    if (!provider) return { ok: false, error: "AI belum diatur di Pengaturan. Tulis penjelasannya sendiri." };
+    const draft = await draftFluxExplanation(prisma, { ...k, clientId: client.id, firmId: client.firmId, provider });
+    return { ok: true, draft };
+  } catch (e) {
+    if (e instanceof AiBudgetError || e instanceof AiAnswerError || e instanceof ExplanationError) return { ok: false, error: e.message };
+    if (e instanceof Error && (e.name === "TimeoutError" || /^(AI \d|Model )/.test(e.message))) {
+      console.error(e);
+      return { ok: false, error: "AI tidak tersedia saat ini. Tulis penjelasannya sendiri, atau coba lagi nanti." };
+    }
+    return fail(e);
+  }
+}
+export async function saveFluxExplanationAction(k: { clientId: string; entityId: string; year: number; month: number; accountCode: string; text: string; source: "AI" | "ACCOUNTANT"; refs: string[] }): Promise<{ ok: true; foreign: string[] } | { ok: false; error: string }> {
+  try {
+    const client = await writeClient(k.clientId);
+    const member = await getCurrentMember();
+    const r = await saveFluxExplanation(prisma, { ...k, clientId: client.id, firmId: client.firmId, actorId: member.id });
+    revalidatePath(`/clients/${client.id}/analysis`);
+    return { ok: true, ...r };
+  } catch (e) {
+    if (e instanceof ExplanationError) return { ok: false, error: e.message };
+    return fail(e);
+  }
+}
+export async function clearFluxExplanationAction(k: { clientId: string; entityId: string; year: number; month: number; accountCode: string }): Promise<Result> {
+  try {
+    const client = await writeClient(k.clientId);
+    const member = await getCurrentMember();
+    await clearFluxExplanation(prisma, { ...k, clientId: client.id, firmId: client.firmId, actorId: member.id });
+    revalidatePath(`/clients/${client.id}/analysis`);
+    return { ok: true };
+  } catch (e) {
+    if (e instanceof ExplanationError) return { ok: false, error: e.message };
     return fail(e);
   }
 }

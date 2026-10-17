@@ -1,6 +1,7 @@
 import type { Db, Tx } from "@/lib/db";
 import { Prisma } from "@/lib/generated/prisma/client";
 import { recordEvent } from "@/lib/audit";
+import { npwp16, readNitku } from "@/lib/tax/coretax-codes";
 import { cleanBank, normalizeNpwp, OnboardingError, takenNumbers, TAKEN, SHORT_NAME_TAKEN, type BankInput } from "@/lib/onboarding";
 
 /**
@@ -39,6 +40,7 @@ const BY_ENTITY: [label: string, table: string][] = [
   ["rekonsiliasi subledger", "SubledgerImport"],
   ["temuan", "Finding"],
   ["catatan laporan", "ReportComment"],
+  ["penjelasan akun laba rugi", "FluxExplanation"],
   ["faktur Coretax", "CoretaxFaktur"],
   ["bukti potong Coretax", "CoretaxBupot"],
   ["angsuran PPh 25", "TaxInstalment"],
@@ -171,8 +173,8 @@ export const glName = (label: string, shortName: string) => `${label} (${shortNa
 
 type Actor = { firmId: string; clientId: string; actorId?: string | null };
 
-/** E1: name, short name, NPWP. Labels only — the bank GL names follow, nothing else moves. */
-export async function renameEntity(db: Db, input: Actor & { entityId: string; name: string; shortName: string; npwp: string }) {
+/** E1: name, short name, NPWP and (when given) the seller NITKU. Labels only — the bank GL names follow, nothing else moves. */
+export async function renameEntity(db: Db, input: Actor & { entityId: string; name: string; shortName: string; npwp: string; nitku?: string }) {
   const entity = await db.entity.findFirst({ where: { id: input.entityId, clientId: input.clientId, firmId: input.firmId }, include: { bankAccounts: { select: { accountId: true, label: true } } } });
   if (!entity) throw new OnboardingError({ entity: "Perusahaan tidak ditemukan di klien ini." });
   const fields: Record<string, string> = {};
@@ -183,17 +185,21 @@ export async function renameEntity(db: Db, input: Actor & { entityId: string; na
   if (shortName.length > 60) fields.shortName = "Nama singkat maksimal 60 karakter.";
   const npwp = entity.kind === "BADAN_USAHA_ASING" ? "" : normalizeNpwp(input.npwp);
   if (npwp === null) fields.npwp = "NPWP berisi 15 atau 16 angka, boleh dengan titik dan strip.";
+  // The seller NITKU of the Coretax faktur file (cycle 2026-10-17-coretax-files); undefined keeps it.
+  const typed = input.nitku === undefined ? undefined : readNitku(input.nitku, npwp ? npwp16(npwp) : null, "perusahaan");
+  if (typed && !typed.ok) fields.nitku = typed.error;
+  const nitku = typed?.ok ? typed.nitku : undefined;
   // The ledger import matches a file's entity column by short name: two with the same one would make that ambiguous.
   if (!fields.shortName && shortName) {
     const siblings = await db.entity.findMany({ where: { clientId: input.clientId, id: { not: entity.id } }, select: { shortName: true } });
     if (siblings.some((s) => s.shortName.trim().toLowerCase() === shortName.toLowerCase())) fields.shortName = SHORT_NAME_TAKEN;
   }
   if (Object.keys(fields).length) throw new OnboardingError(fields);
-  const before = { name: entity.name, shortName: entity.shortName, npwp: entity.npwp ?? "" };
-  const after = { name, shortName, npwp: npwp ?? "" };
+  const before = { name: entity.name, shortName: entity.shortName, npwp: entity.npwp ?? "", ...(nitku === undefined ? {} : { nitku: entity.nitku ?? "" }) };
+  const after = { name, shortName, npwp: npwp ?? "", ...(nitku === undefined ? {} : { nitku: nitku ?? "" }) };
   if (JSON.stringify(before) === JSON.stringify(after)) return entity;
   return db.$transaction(async (tx) => {
-    const updated = await tx.entity.update({ where: { id: entity.id }, data: { name, shortName, npwp: npwp || null } });
+    const updated = await tx.entity.update({ where: { id: entity.id }, data: { name, shortName, npwp: npwp || null, ...(nitku === undefined ? {} : { nitku }) } });
     for (const b of entity.bankAccounts) await tx.account.update({ where: { id: b.accountId }, data: { name: glName(b.label, shortName) } });
     await recordEvent(tx, { clientId: input.clientId, entityId: entity.id, kind: "COMPANY_BANK", subject: `entity:${entity.id}`, summary: `Data ${before.name} diubah${before.name !== name ? ` menjadi ${name}` : ""}`, before, after, actorId: input.actorId });
     return updated;
