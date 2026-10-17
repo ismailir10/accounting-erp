@@ -297,7 +297,7 @@ If the warning must become a block, or the reviewer must become a second approve
 - [x] T2 Server actions and the *Checklist tutup buku* page: accept default, add / edit / remove a task, tick, review, undo; the nav
       entry. Accept: flows 1, 2 and 5 on the dev server. Reuse: `loadClientPage`, `ScopeBar`, `NextStep`, `StatusPill`, `ProgressFill`,
       `Checkbox`, the access context for viewers. (deps: T1)
-- [ ] T3 Tutup Buku: `signoffAction` through the checklist writer (rules + `CHECKLIST` event); the *Daftar periksa* card names the
+- [x] T3 Tutup Buku: `signoffAction` through the checklist writer (rules + `CHECKLIST` event); the *Daftar periksa* card names the
       Pelaksana and links to the checklist; the unfinished-tasks line and the lock dialog. Accept: flow 4. (deps: T1; parallel with T2)
 - [ ] T4 Firm board *Checklist* column and the Beranda overdue task from the same read model; `docs/demo/investor-demo.md` and README
       routes. Accept: flow 3; board = page (DB test). (deps: T1; parallel with T2/T3)
@@ -332,6 +332,13 @@ If the warning must become a block, or the reviewer must become a second approve
   *Tandai direviu* (outline) and *Batalkan reviu* (ghost) only when the viewer may review; *Tambah tugas* for writers; *Atur checklist*
   (admins) adds *Ubah* per row and *Tambah tugas otomatis*. Pereviu choices list only eligible members ranked ≥ the Pelaksana. The menu
   lists *Checklist tutup buku* directly before *Tutup Buku*.
+- T3: `app/(app)/clients/[id]/close/page.tsx`, `components/app/close-panel.tsx`, `lib/checklist/view.ts`, `README.md`,
+  `tests/db/checklist.test.ts` — `signoffAction` (changed with the T2 actions) writes through `setSignoff`, the one `CloseSignoff`
+  writer: with the sign-off's task in the month's checklist the task's rules apply and a `CHECKLIST` event is written; without one any
+  writer ticks as before, now with a trace too. *Daftar periksa* names the Pelaksana, links *Buka checklist*, and disables a checkbox
+  this member may not tick with the reason (not the Pelaksana, already Direviu, the Pelaksana gone, a viewer). Under the blockers a
+  muted line "Checklist: N tugas belum selesai" (`unfinishedBeforeLock`: *Tutup buku* and *Laporan dikirim* left out) links to the
+  checklist, and the lock dialog repeats it ("…; buku tetap bisa ditutup"). The lock button's rule and `lockPeriod` are untouched.
 
 ## Verification
 

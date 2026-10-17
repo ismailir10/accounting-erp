@@ -8,7 +8,7 @@ import { setupProgress } from "@/lib/setup-progress";
 import { clientModules } from "@/lib/clients/modules";
 import { formatDate, formatPeriod } from "@/lib/format";
 import { withParams } from "@/lib/scope";
-import { AUTO_KINDS, autoKind, isAutoKey, NEEDS, prove, type AutoKey, type ChecklistFacts, type Proof } from "@/lib/checklist/proofs";
+import { AFTER_LOCK, AUTO_KINDS, autoKind, isAutoKey, NEEDS, prove, type AutoKey, type ChecklistFacts, type Proof } from "@/lib/checklist/proofs";
 import { daysLate, dueDate, humanStatus, holderProblem, pairProblem, periodNumber, periodOf, nextPeriod, todayWib, type Person, type Role, type Stamp, type TaskStatus } from "@/lib/checklist/rules";
 
 /**
@@ -168,6 +168,10 @@ export const countsOf = (rows: ChecklistRow[]) => ({
   awaitingReview: rows.filter((r) => !r.finished && r.status === "SELESAI" && r.kind !== "AUTO").length,
   overdue: rows.filter((r) => r.overdue).length,
 });
+
+/** What Tutup Buku warns about before the lock (never a blocker): unfinished tasks, less *Tutup buku* and *Laporan dikirim*, which can't be done before it. */
+export const unfinishedBeforeLock = (rows: Pick<ChecklistRow, "finished" | "kind" | "key">[]) =>
+  rows.filter((r) => !r.finished && !(r.kind === "AUTO" && AFTER_LOCK.includes(r.key as AutoKey))).length;
 
 const markInclude = { doneBy: { select: { name: true } }, reviewedBy: { select: { name: true } } } as const;
 

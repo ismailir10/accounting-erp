@@ -8,7 +8,7 @@ import { recordEvent } from "@/lib/audit";
 import { deleteClient } from "@/lib/clients/delete";
 import { createFirm } from "@/lib/setup";
 import { dateOnly } from "@/lib/format";
-import { checklistMonth, checklistRollup, proposeChecklist } from "@/lib/checklist/view";
+import { checklistMonth, checklistRollup, proposeChecklist, unfinishedBeforeLock } from "@/lib/checklist/view";
 import { acceptDefault, addTask, markTask, removeTask, setSignoff, updateTask } from "@/lib/checklist/write";
 import { ChecklistError } from "@/lib/checklist/rules";
 
@@ -285,6 +285,24 @@ describe("locked months", () => {
     await refused(addTask(db, as(admin), { ...AUG(g), kind: "MANUAL", title: "Baru", assigneeId: rina.id, reviewerId: null, dueDay: 5 }), closed);
     await refused(updateTask(db, as(admin), { ...AUG(g), taskId: pack.id, title: "Ganti", assigneeId: rina.id, reviewerId: null, dueDay: 5 }), closed);
     await refused(removeTask(db, as(admin), { ...AUG(g), taskId: pack.id }), closed);
+  });
+});
+
+describe("the lock warns, it does not block (accounting-rules 23 unchanged)", () => {
+  it("counts the unfinished tasks less Tutup buku and Laporan dikirim, and the lock still succeeds when controls and sign-offs allow", async () => {
+    const { g, admin, rina } = await team();
+    await acceptDefault(db, as(admin), { ...AUG(g), assigneeId: rina.id, reviewerId: admin.id });
+    await addTask(db, as(admin), { ...AUG(g), kind: "MANUAL", title: "Kirim paket ke klien", assigneeId: rina.id, reviewerId: admin.id, dueDay: 20 });
+    await entry(g, 8);
+    const before = await month(g);
+    const open = before.rows.filter((r) => !r.finished).length;
+    expect(unfinishedBeforeLock(before.rows)).toBe(open - 2);
+    expect(unfinishedBeforeLock(before.rows)).toBeGreaterThan(0);
+    // The sign-offs are given outside the checklist's review (no review yet), the controls noted: the lock goes through.
+    expect((await lock(g)).status).toBe("LOCKED");
+    const after = await month(g);
+    expect(after.rows.filter((r) => r.kind === "SIGNOFF").map((r) => r.status)).toEqual(["SELESAI", "SELESAI", "SELESAI"]);
+    expect(after.rows.find((r) => r.title === "Kirim paket ke klien")).toMatchObject({ status: "BELUM", finished: false });
   });
 });
 
