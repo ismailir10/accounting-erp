@@ -273,3 +273,8 @@ partner, who sees typing errors come back a month later as an ekualisasi *selisi
 ## Verification
 
 ## Ship Notes
+- Migration `20261017120000_coretax_faktur`: additive nullable columns only (`Contact.nik/nitku/address/email`, `Entity.nitku`,
+  `Invoice.fakturItemKind/fakturItemCode/fakturUnit/fakturItemName`), no backfill, no CHECK. Rollback: revert the code; the columns can
+  stay (nothing else reads them).
+- No env var, no new dependency, no AI call, no report number moves (`verify:books` unaffected). The `e2e` label applies (app flow).
+- Post-merge: the pilot firm uploads one real file to Coretax before the format is called confirmed (Assumptions).
