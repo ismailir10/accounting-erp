@@ -109,7 +109,7 @@ export async function accountUsage(db: Db | Tx, clientId: string, accountId: str
     select: {
       code: true,
       firmId: true,
-      _count: { select: { lines: true, bankAccounts: true, sourceAccounts: true, scheduleDebits: true, scheduleCredits: true, scheduleSources: true, fixedAssets: true, fixedAssetsAcc: true, invoiceCounter: true, invoiceArAp: true, taxCorrections: true, taxCredits: true } },
+      _count: { select: { lines: true, bankAccounts: true, sourceAccounts: true, scheduleDebits: true, scheduleCredits: true, scheduleSources: true, fixedAssets: true, fixedAssetsAcc: true, invoiceCounter: true, invoiceArAp: true, taxCorrections: true, taxCredits: true, budgets: true } },
     },
   });
   if (!a) return [];
@@ -138,6 +138,7 @@ export async function accountUsage(db: Db | Tx, clientId: string, accountId: str
     [bankLines + splits, "mutasi bank"],
     [agings, "rekonsiliasi umur piutang/utang"],
     [proposals, "usulan jurnal"],
+    [c.budgets, "sel anggaran"],
   ];
   return parts.filter(([n]) => n > 0).map(([n, what]) => `${n.toLocaleString("id-ID")} ${what}`);
 }

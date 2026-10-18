@@ -46,6 +46,7 @@ describe("switchTarget", () => {
     expect(url(switchTarget("/clients/a1/journals", B).href).pathname).toBe("/clients/b1/journals");
     expect(sectionOf("/journals")).toMatchObject({ section: { label: "Jurnal Umum" }, deeper: false });
     expect(sectionOf("/journals/new")).toMatchObject({ section: { label: "Jurnal Penyesuaian" }, deeper: false });
+    expect(sectionOf("/budget")).toMatchObject({ section: { label: "Anggaran" }, deeper: false });
   });
   it("falls back to the section from a page under it, and says so", () => {
     const t = switchTarget("/clients/a1/ledger/akun/xyz", B);

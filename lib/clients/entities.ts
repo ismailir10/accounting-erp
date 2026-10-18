@@ -46,6 +46,7 @@ const BY_ENTITY: [label: string, table: string][] = [
   ["angsuran PPh 25", "TaxInstalment"],
   ["dokumen yang dikonfirmasi untuk perusahaan ini", "EvidenceSelection"],
   ["pemeriksaan impor buku besar", "ImportCheck"],
+  ["anggaran", "Budget"],
 ];
 const DRAFT = "draf impor buku besar";
 const LOCKED_NOTE = "catatan kontrol di bulan yang sudah ditutup";

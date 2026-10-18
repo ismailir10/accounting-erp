@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { BookOpen, Boxes, CalendarCheck, ListTodo, Building2, ChartColumn, ChevronsUpDown, HandCoins, KeyRound, ReceiptText, Warehouse, ChevronDown, ClipboardCheck, Coins, FileSpreadsheet, FolderOpen, Home, Inbox, Landmark, ListChecks, ListFilter, LogOut, NotebookPen, Plus, Scale, Search, Settings2, SlidersHorizontal, Upload, Users, History, ListTree } from "lucide-react";
+import { BookOpen, Boxes, CalendarCheck, ListTodo, Building2, ChartColumn, ChevronsUpDown, HandCoins, KeyRound, ReceiptText, Warehouse, ChevronDown, ClipboardCheck, Coins, FileSpreadsheet, FolderOpen, Home, Inbox, Landmark, ListChecks, ListFilter, LogOut, NotebookPen, Plus, Scale, Search, Settings2, SlidersHorizontal, Upload, Users, History, ListTree, Target } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { BrandMark } from "@/components/app/brand-mark";
 import { ShortcutKbd, useClientSwitcher, type SwitcherClient } from "@/components/app/client-switcher";
@@ -22,7 +22,7 @@ const DESTINATIONS = [
 const ICONS: Record<string, typeof Upload> = {
   "/import": Upload, "/analysis": ChartColumn, "/opening": Landmark, "/approvals": ListChecks, "/review": Inbox, "/ledger": BookOpen, "/trial-balance": Scale, "/journals/new": NotebookPen,
   "/receivables": HandCoins, "/inventory": Boxes, "/assets": Warehouse, "/leases": KeyRound, "/benefits": Users, "/checklist": ListTodo, "/close": ClipboardCheck,
-  "/reports": FileSpreadsheet, "/tax/masa": CalendarCheck, "/tax": ReceiptText, "/accounts": ListTree, "/rates": Coins, "/settings": ListFilter, "/history": History,
+  "/reports": FileSpreadsheet, "/budget": Target, "/tax/masa": CalendarCheck, "/tax": ReceiptText, "/accounts": ListTree, "/rates": Coins, "/settings": ListFilter, "/history": History,
 };
 type Item = NavSection & { icon: typeof Upload };
 const withIcons = (items: NavSection[]): Item[] => items.map((item) => ({ ...item, icon: ICONS[item.href] ?? FileSpreadsheet }));

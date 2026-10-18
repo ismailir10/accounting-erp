@@ -415,6 +415,7 @@ model Client {
   aiRuns             AiRun[]
   uploadItems        UploadItem[]
   pdfPasswords       ClientPdfPassword[]
+  budgets            Budget[]
   checklistTasks     ChecklistTask[]
   instructions       Instruction[]
   journalApprovals   JournalApproval[]
@@ -457,6 +458,7 @@ model Entity {
   findings           Finding[]
   subledgerImports   SubledgerImport[]
   journalApprovals   JournalApproval[]
+  budgets            Budget[]
 
   @@index([clientId])
 }
@@ -490,6 +492,7 @@ model Account {
   invoiceArAp     Invoice[]            @relation("InvoiceArAp")
   taxCorrections  FiscalCorrection[]
   taxCredits      TaxCredit[]
+  budgets         Budget[]
 
   @@unique([clientId, code])
 }
@@ -1498,6 +1501,7 @@ model FirmMember {
   updatedAt DateTime   @updatedAt
 
   postedEntries        JournalEntry[]        @relation("EntryPostedBy")
+  budgetsUpdated       Budget[]              @relation("BudgetUpdatedBy")
   signoffs             CloseSignoff[]        @relation("SignoffDoneBy")
   lockedPeriods        Period[]              @relation("PeriodLockedBy")
   periodUnlocks        PeriodUnlockLog[]     @relation("PeriodUnlockedBy")
@@ -2434,4 +2438,27 @@ model ReopenRequest {
   createdAt     DateTime       @default(now())
 
   @@index([clientId, status])
+}
+
+/// Anggaran: the accountant's plan for one company's income or expense account in one month, in minor units of the company's currency,
+/// on the account's normal side (revenue and expense both positive, as the Laba Rugi shows them). Planning data, never posted and never
+/// part of the books: compared with the ledger at read time (lib/budget). Set per financial year from the Anggaran page.
+model Budget {
+  id          String      @id @default(cuid())
+  firmId      String
+  clientId    String
+  client      Client      @relation(fields: [clientId], references: [id])
+  entityId    String
+  entity      Entity      @relation(fields: [entityId], references: [id])
+  accountId   String
+  account     Account     @relation(fields: [accountId], references: [id])
+  year        Int
+  month       Int
+  amount      BigInt
+  updatedById String?
+  updatedBy   FirmMember? @relation("BudgetUpdatedBy", fields: [updatedById], references: [id])
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([entityId, accountId, year, month])
+  @@index([clientId, year, month])
 }
