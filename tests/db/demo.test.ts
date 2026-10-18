@@ -8,6 +8,7 @@ import { MockProvider } from "@/lib/ai/provider";
 import { masaReport } from "@/lib/tax/masa-report";
 import { fakturRecon } from "@/lib/tax/faktur";
 import { bankReasoning, bankSteps, DEMO_ANSWER } from "@/lib/approvals/reasoning";
+import { accrualProposals } from "@/lib/adjust/accruals";
 
 /** Lihat alasan: every AI line waiting in Review reads its seeded answer back by its recomputed cache key (cycle 2026-10-17-lihat-alasan). */
 async function aiLinesMatch() {
@@ -29,6 +30,12 @@ describe("demo seed vs ground truth", () => {
     const before = await verifyBooks(db);
     expect(before.failures).toEqual([]);
     expect(before.checks).toBeGreaterThan(900);
+
+    // Usulan akrual (cycle 2026-10-18-usulan-akrual): every scenario vendor pays every month, so the demo proposes no accrual in any
+    // month — Kotak's counts and the investor walk stay as they were.
+    for (const c of await db.client.findMany({ select: { id: true } })) {
+      for (const month of [3, 4, 5, 6, 7, 8, 9]) expect((await accrualProposals(db, c.id, 2026, month, { now: new Date("2026-12-01T00:00:00Z") })).map((p) => `${month}:${p.key}`)).toEqual([]);
+    }
 
     // A tidy client remits what the previous masa owed: Pajak Masa ties on every demo company, from the opening on.
     const companies = await db.entity.findMany({ where: { kind: { not: "PERORANGAN" } }, select: { id: true, clientId: true } });

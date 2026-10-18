@@ -36,6 +36,13 @@ async function setup() {
     const other = { email: "admin-lain@buku.example", password: randomBytes(12).toString("base64url") };
     const otherFirm = await db.firm.findFirst({ where: { name: "KAP Uji Lain" } }) ?? await db.$transaction((tx) => createFirm(tx, "KAP Uji Lain"));
     await ensureLocalAdmin(db, auth, { ...other, name: "Admin firma lain", firmId: otherFirm.id });
+    // Persetujuan kedua (e2e/persetujuan-kedua.spec.ts) needs two people on each side of a decision in a firm of its own, so the demo
+    // firm's settings never change under parallel specs: a second ADMIN and an AKUNTAN of "KAP Uji Lain" (the spec assigns its QA client).
+    const otherAdmin2 = { email: "admin-lain-2@buku.example", password: randomBytes(12).toString("base64url") };
+    await ensureLocalAdmin(db, auth, { ...otherAdmin2, name: "Admin kedua lain", firmId: otherFirm.id });
+    const otherAkuntan = { email: "akuntan-lain@buku.example", password: randomBytes(12).toString("base64url") };
+    await ensureLocalAdmin(db, auth, { ...otherAkuntan, name: "Akuntan firma lain", firmId: otherFirm.id });
+    await db.firmMember.update({ where: { email: otherAkuntan.email }, data: { role: "AKUNTAN" } });
     // Trial accounts for e2e/trial-expiry.spec.ts (ADR 0017): one organisation whose trial ended yesterday, one ending in 3 days.
     const wibDay = (offset: number) => new Date(Date.now() + 7 * 3600_000 + offset * 86_400_000).toISOString().slice(0, 10);
     const trialFirm = async (name: string, endsOn: string) => (await db.firm.findFirst({ where: { name } })) ?? db.$transaction(async (tx) => {
@@ -78,6 +85,8 @@ async function setup() {
     writeFileSync(".playwright/credentials-trial-ending.json", JSON.stringify(ending), { mode: 0o600 });
     writeFileSync(".playwright/credentials-akuntan.json", JSON.stringify(akuntan), { mode: 0o600 });
     writeFileSync(".playwright/credentials-other-firm.json", JSON.stringify(other), { mode: 0o600 });
+    writeFileSync(".playwright/credentials-other-admin2.json", JSON.stringify(otherAdmin2), { mode: 0o600 });
+    writeFileSync(".playwright/credentials-other-akuntan.json", JSON.stringify(otherAkuntan), { mode: 0o600 });
   } finally { await db.$disconnect(); }
 }
 

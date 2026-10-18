@@ -3,7 +3,7 @@ import { findClientForMember } from "@/lib/tenant";
 import { ReasoningError, reasoningCsv, reasoningFor } from "@/lib/approvals/reasoning";
 
 /**
- * GET ?item=<bank line or draft id> — *Unduh nilai (CSV)* of a *Lihat alasan* panel: the values sent to the AI, returned and checked, as a
+ * GET ?item=<bank line or draft id, or accrual key> — *Unduh nilai (CSV)* of a *Lihat alasan* panel: the values sent to the AI, returned and checked (an accrual: the history rows and the rule), as a
  * semicolon CSV for Excel id-ID. A working file for anyone who may read the books (not a REPORT_EXPORT); reads only. An item of another
  * client, or one without AI reasoning, is 404.
  */
@@ -17,7 +17,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     return new Response(reasoningCsv(facts), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="alasan-${facts.kind === "bank" ? "mutasi" : "draf"}-${item.replace(/[^\w-]+/g, "")}.csv"`,
+        "Content-Disposition": `attachment; filename="alasan-${facts.kind === "bank" ? "mutasi" : facts.kind === "draft" ? "draf" : "akrual"}-${item.replace(/[^\w-]+/g, "")}.csv"`,
         "Cache-Control": "no-store",
       },
     });

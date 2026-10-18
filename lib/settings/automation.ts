@@ -47,8 +47,8 @@ export const AMOUNT_MESSAGE = "Isi nominal Rupiah lebih dari 0, atau kosongkan."
 export const PERCENT_MESSAGE = "Isi persentase bulat dari 1 sampai 1000.";
 export const PERCENT_MAX = 1000;
 
-/** Empty = none; otherwise whole Rupiah above zero, at most 15 digits (as the import reads amounts). */
-function amount(text: string): bigint | null | undefined {
+/** Empty = none (null); otherwise whole Rupiah above zero, at most 15 digits (as the import reads amounts); undefined = invalid. */
+export function rupiahThreshold(text: string): bigint | null | undefined {
   const t = text.trim();
   if (!t) return null;
   try {
@@ -62,9 +62,9 @@ function amount(text: string): bigint | null | undefined {
 
 export function parseAutomation(input: AutomationInput): { ok: true; value: FirmAutomation } | { ok: false; errors: AutomationErrors } {
   const errors: AutomationErrors = {};
-  const cap = amount(input.cap);
+  const cap = rupiahThreshold(input.cap);
   if (cap === undefined) errors.cap = AMOUNT_MESSAGE;
-  const fluxFloor = amount(input.fluxFloor);
+  const fluxFloor = rupiahThreshold(input.fluxFloor);
   if (fluxFloor === undefined) errors.fluxFloor = AMOUNT_MESSAGE;
   const p = input.fluxPercent.trim().replace(/\s*%$/, "");
   const fluxPercent = /^\d{1,4}$/.test(p) ? Number(p) : NaN;

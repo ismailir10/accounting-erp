@@ -8,6 +8,7 @@ import { createClient } from "@/lib/setup";
 import { deleteClient, DeleteClientError } from "@/lib/clients/delete";
 import { dateOnly } from "@/lib/format";
 import { postJournal } from "@/lib/ledger/post";
+import { addMember } from "../members";
 
 beforeEach(resetDb);
 
@@ -30,6 +31,12 @@ it("deletes one client's books completely and nothing of another client", async 
   await reviewTransaction(db, { bankTxId: tx.id, accountCode: "6190", taxTag: null });
   await postAdjustment(db, { clientId: g.client.id, entityId: g.pt.entity.id, date: dateOnly(2026, 8, 31), memo: "Akrual", lines: [{ accountCode: "6190", debit: "500", credit: "" }, { accountCode: "2150", debit: "", credit: "500" }] });
   const otherAccounts = await db.account.count({ where: { clientId: other.client.id } });
+  // Instruksi kantor: the client's own instruction and its rule go; a *Semua klien* one and its rule stay.
+  const own = await db.instruction.create({ data: { firmId: g.firm.id, clientId: g.client.id, sentence: "BIAYA ADM selalu 6190", kind: "ACCOUNT", origin: "PARSER", pattern: "BIAYA ADM", direction: "OUT", accountCode: "6190" } });
+  await db.rule.create({ data: { firmId: g.firm.id, clientId: g.client.id, pattern: "BIAYA ADM", direction: "OUT", accountCode: "6190", priority: 5, source: "INSTRUKSI", instructionId: own.id } });
+  const firmWide = await db.instruction.create({ data: { firmId: g.firm.id, sentence: "PT MAJU JAYA selalu 6190", kind: "ACCOUNT", origin: "PARSER", pattern: "PT MAJU JAYA", direction: "OUT", accountCode: "6190" } });
+  await db.rule.create({ data: { firmId: g.firm.id, pattern: "PT MAJU JAYA", direction: "OUT", accountCode: "6190", priority: 5, source: "INSTRUKSI", instructionId: firmWide.id } });
+  await db.instruction.create({ data: { firmId: g.firm.id, clientId: g.client.id, sentence: "tandai pengeluaran > Rp10 jt", kind: "FLAG", origin: "PARSER", direction: "OUT", minAmount: 10_000_000n } });
 
   await expect(deleteClient(db, { firmId: g.firm.id, clientId: g.client.id, confirmName: "grup uji" })).rejects.toBeInstanceOf(DeleteClientError);
   await expect(deleteClient(db, { firmId: "another-firm", clientId: g.client.id, confirmName: "Grup Uji" })).rejects.toThrow("Klien tidak ditemukan.");
@@ -45,6 +52,8 @@ it("deletes one client's books completely and nothing of another client", async 
   expect(await db.account.count({ where: { clientId: g.client.id } })).toBe(0);
   expect(await db.account.count({ where: { clientId: other.client.id } })).toBe(otherAccounts);
   expect(await db.client.count({ where: { id: other.client.id } })).toBe(1);
+  expect(await db.instruction.findMany({ select: { id: true } })).toEqual([{ id: firmWide.id }]);
+  expect(await db.rule.count({ where: { instructionId: { not: null } } })).toBe(1);
 });
 
 it("deletes a schedule made from a journal line and its posted installments (they point at each other)", async () => {
@@ -56,4 +65,19 @@ it("deletes a schedule made from a journal line and its posted installments (the
   await db.$transaction((tx) => postJournal(tx, { entityId: g.pt.entity.id, date: dateOnly(2026, 7, 31), kind: "ADJUSTMENT", memo: "Amortisasi sewa 1/12", scheduleId: schedule.id, installment: 1, lines: [{ accountId: expense, debit: 1_000n }, { accountId: prepaid, credit: 1_000n }] }));
   await deleteClient(db, { firmId: g.firm.id, clientId: g.client.id, confirmName: "Grup Uji" });
   expect([await db.adjustmentSchedule.count(), await db.journalEntry.count(), await db.client.count()]).toEqual([0, 0, 0]);
+});
+
+it("deletes its Persetujuan kedua rows: waiting and approved journal requests, reopen requests and the unlock log's requester", async () => {
+  const g = await makeGroup();
+  const maker = await addMember(g.firm.id, "AKUNTAN", { clients: [g.client.id] });
+  const admin = await addMember(g.firm.id, "ADMIN");
+  const entry = await postAdjustment(db, { clientId: g.client.id, entityId: g.pt.entity.id, date: dateOnly(2026, 8, 31), memo: "Akrual", lines: [{ accountCode: "6190", debit: "500", credit: "" }, { accountCode: "2150", debit: "", credit: "500" }] });
+  const base = { firmId: g.firm.id, clientId: g.client.id, entityId: g.pt.entity.id, date: dateOnly(2026, 8, 31), memo: "Akrual", lines: [], amount: 500n, makerId: maker.id, makerRole: "AKUNTAN" as const };
+  await db.journalApproval.create({ data: { ...base, source: "MANUAL", status: "APPROVED", entryId: entry.id, decidedById: admin.id, decidedAt: new Date() } });
+  await db.journalApproval.create({ data: { ...base, source: "REVERSAL", reversesId: entry.id } });
+  await db.reopenRequest.create({ data: { firmId: g.firm.id, clientId: g.client.id, year: 2026, month: 7, reason: "Salah input", requestedById: admin.id } });
+  await db.periodUnlockLog.create({ data: { firmId: g.firm.id, clientId: g.client.id, year: 2026, month: 7, reason: "Salah input", unlockedById: admin.id, requestedById: maker.id } });
+
+  await deleteClient(db, { firmId: g.firm.id, clientId: g.client.id, confirmName: "Grup Uji" });
+  expect([await db.journalApproval.count(), await db.reopenRequest.count(), await db.periodUnlockLog.count(), await db.journalEntry.count(), await db.client.count()]).toEqual([0, 0, 0, 0, 0]);
 });

@@ -160,6 +160,6 @@ export const SUSPENSE_NOT_DISMISSABLE = "Selisih di 1999 harus dikoreksi sebelum
 
 /** Everything the *Usulan jurnal koreksi* card shows: stored drafts, then this period's undecided 1999 corrections. */
 export async function correctionViews(db: Db, clientId: string, year: number, month: number) {
-  const suspense = (await suspenseCorrections(db, clientId, year, month)).map((c) => ({ id: `${SUSPENSE_PREFIX}${c.lineId}`, memo: c.memo, reason: c.reason, source: "SUSPENSE" as const, entityId: c.entity.id, entity: c.entity.shortName, currency: c.entity.functionalCurrency, fixed: 0, lines: c.lines, blocked: null }));
+  const suspense = (await suspenseCorrections(db, clientId, year, month)).map((c) => ({ id: `${SUSPENSE_PREFIX}${c.lineId}`, memo: c.memo, reason: c.reason, source: "SUSPENSE" as const, entityId: c.entity.id, entity: c.entity.shortName, currency: c.entity.functionalCurrency, fixed: 0, lines: c.lines, blocked: null, rejected: null }));
   return [...(await proposalViews(db, clientId, year, month)), ...suspense];
 }

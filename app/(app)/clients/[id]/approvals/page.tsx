@@ -5,7 +5,10 @@ import { formatDate, formatPeriod } from "@/lib/format";
 import { NextStep, PageHeader } from "@/components/app/page-header";
 import { ScopeBar } from "@/components/app/scope-bar";
 import { LinkTabs } from "@/components/app/link-tabs";
-import { ApprovalQueue } from "@/components/app/approval-queue";
+import { ApprovalQueue, type SecondView } from "@/components/app/approval-queue";
+import { approverProblem } from "@/lib/approvals/second";
+import { routeFor } from "@/lib/approvals/journals";
+import { can } from "@/lib/auth/permissions";
 import { APPROVAL_KINDS, approvalQueue, type ApprovalKind } from "@/lib/approvals/queue";
 import { accessView, requireWorkspaceSession } from "@/lib/auth/session";
 
@@ -13,7 +16,7 @@ export const metadata = { title: "Kotak persetujuan" };
 
 /**
  * Kotak persetujuan (Phase 2 item 1): every proposal of the month waiting for a click — bank classifications, journal drafts, scheduled
- * journals and Coretax faktur not in the books — in one queue for the scope. Read from the owning pages' own data; every button is
+ * journals, accruals proposed from vendor history and Coretax faktur not in the books — in one queue for the scope. Read from the owning pages' own data; every button is
  * that page's own action.
  */
 export default async function ApprovalsPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: SearchParams }) {
@@ -24,19 +27,43 @@ export default async function ApprovalsPage({ params, searchParams }: { params: 
   ]);
   const { canWrite } = accessView(session);
   const label = formatPeriod(period.year, period.month);
+  // Persetujuan kedua: what this member may do on each request (every action checks it again). A journal is decided by another writer
+  // of a tier at least the maker's, never in a closed month; a reopen by another admin — the one card a closed month's queue acts on.
+  const me = { id: session.member.id, role: session.member.role };
+  const canReopen = canWrite && can(me.role, "period.unlock");
+  const second: SecondView[] = q.second.map((s) =>
+    s.type === "journal"
+      ? { ...s, canDecide: canWrite && !q.locked && approverProblem(me, s) === null, mine: canWrite && s.makerId === me.id }
+      : { ...s, canDecide: canReopen && s.requestedById !== me.id, mine: canReopen && s.requestedById === me.id },
+  );
+  const draftRoute = q.drafts.some((d) => d.source === "AI_CONTROL") ? await routeFor(prisma, client.id, me, "AI_DRAFT") : undefined;
+  // An accrual's *Setujui* follows *Jurnal manual*'s route (the card says so before the click).
+  const accrualRoute = q.accruals.length ? await routeFor(prisma, client.id, me, "MANUAL") : undefined;
+  const reopenOnly = q.locked && q.counts.total === q.counts.second && second.some((s) => s.type === "reopen");
   const query = { entity: scope.value, period: period.key };
   // A kind with nothing waiting has no tab; an unknown or empty `?jenis=` falls back to Semua (ui-rules 13a).
   const present = APPROVAL_KINDS.filter((k) => q.counts[k.key] > 0);
   const chosen = present.find((k) => k.param === sp.jenis);
   const kinds: ApprovalKind[] = chosen ? [chosen.key] : present.map((k) => k.key);
   const draftAccounts = q.drafts.length ? await prisma.account.findMany({ where: { clientId: client.id, isBank: false }, select: { code: true, name: true }, orderBy: { code: "asc" } }) : [];
+  // An accrual's *Ubah*: never a bank, clearing (1190/1199) or 1999 account; the credit a liability (the writer checks again).
+  const accrualChart = q.accruals.length
+    ? await prisma.account.findMany({ where: { clientId: client.id, isBank: false, isClearing: false, isIntercompany: false, isSuspense: false }, select: { code: true, name: true, type: true }, orderBy: { code: "asc" } })
+    : [];
+  const accrualAccounts = q.accruals.length
+    ? { debit: accrualChart.map(({ code, name }) => ({ code, name })), credit: accrualChart.filter((a) => a.type === "LIABILITAS").map(({ code, name }) => ({ code, name })) }
+    : null;
   const closeHref = withParams(`${base}/close`, { period: period.key });
   const n = q.counts.total;
 
   return (
     <div className="space-y-6">
       <PageHeader title="Kotak persetujuan" description={`${scopeLabel} · usulan sampai ${formatDate(period.end)}`} actions={<ScopeBar entities={entityOptions} periods={periodOptions} entity={scope.value} period={period.key} />} />
-      {q.locked ? (
+      {reopenOnly ? (
+        <NextStep href={closeHref} cta="Buka Tutup Buku">
+          Buku {label} sudah ditutup. Admin kantor memutuskan permintaan membuka kembali di bawah.
+        </NextStep>
+      ) : q.locked ? (
         <NextStep href={closeHref} cta="Buka Tutup Buku">
           Buku {label} sudah ditutup, jadi usulan{n ? " di bawah" : ""} hanya bisa dilihat. Minta admin membuka kembali {label} (dengan alasan) untuk mengubahnya.
         </NextStep>
@@ -69,7 +96,12 @@ export default async function ApprovalsPage({ params, searchParams }: { params: 
           confident={q.confident}
           drafts={q.drafts}
           scheduled={q.scheduled}
+          accruals={q.accruals}
+          accrualAccounts={accrualAccounts}
           faktur={q.faktur}
+          second={second}
+          draftRoute={draftRoute}
+          accrualRoute={accrualRoute}
           fakturAccounts={q.fakturAccounts}
           draftAccounts={draftAccounts}
           reviewHref={withParams(`${base}/review`, query)}

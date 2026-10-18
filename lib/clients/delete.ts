@@ -33,6 +33,8 @@ export async function deleteClient(db: Db, input: { firmId: string; clientId: st
       await tx.closeSignoff.deleteMany({ where: { periodId: { in: periodIds } } });
       await tx.checklistMark.deleteMany({ where: { task: { clientId } } }); // Checklist tutup buku: the month marks, then the template
       await tx.checklistTask.deleteMany({ where: { clientId } });
+      await tx.journalApproval.deleteMany({ where: { clientId } }); // Persetujuan kedua: points at drafts and entries
+      await tx.reopenRequest.deleteMany({ where: { clientId } });
       await tx.proposedEntry.deleteMany({ where: { clientId } });
       await tx.withholdingSlip.deleteMany({ where: { clientId } }); // points at bank lines and contacts
       await tx.invoiceSettlement.deleteMany({ where: { invoice: { clientId } } });
@@ -65,7 +67,8 @@ export async function deleteClient(db: Db, input: { firmId: string; clientId: st
       await tx.sourceAccount.deleteMany({ where: { clientId } });
       await tx.ledgerImport.deleteMany({ where: { clientId } }); // checks cascade
       await tx.memory.deleteMany({ where: { clientId } });
-      await tx.rule.deleteMany({ where: { clientId } });
+      await tx.rule.deleteMany({ where: { clientId } }); // its instruction rules too, before the instructions they point at
+      await tx.instruction.deleteMany({ where: { clientId } }); // Instruksi kantor for this client; *Semua klien* ones stay
       await tx.uploadLink.deleteMany({ where: { clientId } });
       await tx.evidenceSelection.deleteMany({ where: { intakeId: { in: intakeIds } } });
       await tx.evidenceUpload.deleteMany({ where: { intakeId: { in: intakeIds } } });

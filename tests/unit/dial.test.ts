@@ -52,11 +52,50 @@ describe("decidePosting", () => {
   });
 });
 
+describe("hold by instruction (cycle 2026-10-18-instruksi-kantor)", () => {
+  const maju = { pattern: "PT MAJU JAYA", direction: null, minAmount: null, inclusive: false, sentence: "PT MAJU JAYA selalu ke Review" };
+  const line = (description: string, amount = -5_000_000n) => ({ description, amount, direction: amount < 0n ? ("OUT" as const) : ("IN" as const) });
+
+  it("a line the dial would post whose description holds the keyword waits, its classifier's reason after the instruction's", () => {
+    const dial = { ...ON, holds: [maju] };
+    expect(decidePosting(rule, -5_000_000n, dial, [line("TRSF E-BANKING DB PT MAJU JAYA")])).toEqual({ post: false, held: "instruction", reason: 'Ditahan instruksi kantor "PT MAJU JAYA selalu ke Review". Aturan: "BIAYA ADM"' });
+    expect(decidePosting(memory, -5_000_000n, dial, [line("trsf pt maju jaya")]).held).toBe("instruction");
+    // Another counterparty, or no line given: posts as before.
+    expect(decidePosting(rule, -5_000_000n, dial, [line("TRSF E-BANKING DB PT MAJU")])).toEqual({ post: true, held: null, reason: rule.reason });
+    expect(decidePosting(rule, -5_000_000n, dial)).toEqual({ post: true, held: null, reason: rule.reason });
+    expect(decidePosting(rule, -5_000_000n, { ...ON, holds: [] }, [line("PT MAJU JAYA")]).post).toBe(true);
+  });
+
+  it("direction and minimum amount when given, strictly above or at least", () => {
+    const out = { ...maju, direction: "OUT" as const, minAmount: 10_000_000n };
+    expect(decidePosting(rule, 10_000_000n, { ...ON, holds: [out] }, [line("PT MAJU JAYA", 10_000_001n)]).post).toBe(true);
+    expect(decidePosting(rule, -10_000_000n, { ...ON, holds: [out] }, [line("PT MAJU JAYA", -10_000_000n)]).post).toBe(true);
+    expect(decidePosting(rule, -10_000_001n, { ...ON, holds: [out] }, [line("PT MAJU JAYA", -10_000_001n)]).held).toBe("instruction");
+    expect(decidePosting(rule, -10_000_000n, { ...ON, holds: [{ ...out, inclusive: true }] }, [line("PT MAJU JAYA", -10_000_000n)]).held).toBe("instruction");
+  });
+
+  it("only sends more to Review: AI and the guess never post, a switch or the cap still says why first", () => {
+    const dial = { ...ON, holds: [maju] };
+    expect(decidePosting({ method: "AI", confidence: 0.99, reason: "x" }, -1n, dial, [line("PT MAJU JAYA")])).toEqual({ post: false, held: null, reason: "x" });
+    expect(decidePosting(rule, -1n, { ...dial, rules: false }, [line("PT MAJU JAYA")]).held).toBe("rules");
+    expect(decidePosting(rule, -200n, { ...dial, cap: 100n }, [line("PT MAJU JAYA", -200n)]).held).toBe("cap");
+  });
+
+  it("a transfer pair is one decision: a hold naming either half holds it", () => {
+    const own = { ...maju, pattern: "DARI BCA" };
+    const halves = [line("PINDAH BUKU KE MANDIRI PT UJI", -150n), line("PINDAH BUKU DARI BCA PT UJI", 150n)];
+    expect(decidePosting(pair, -150n, { ...ON, holds: [own] }, halves).held).toBe("instruction");
+    expect(decidePosting(pair, 150n, { ...ON, holds: [own] }, [...halves].reverse()).held).toBe("instruction");
+  });
+});
+
 describe("heldLine", () => {
   it("counts the held lines with their reasons, and says nothing when the dial held none", () => {
     expect(heldLine({})).toBeNull();
     expect(heldLine({ cap: 0 })).toBeNull();
     expect(heldLine({ rules: 1, cap: 2 })).toBe("3 ditahan Otomasi kantor (batas nominal, aturan dimatikan)");
     expect(heldLine({ memory: 1, transfer: 1 })).toBe("2 ditahan Otomasi kantor (transfer dimatikan, pilihan yang diingat dimatikan)");
+    expect(heldLine({ instruction: 1 })).toBe("1 ditahan Otomasi kantor (instruksi kantor)");
+    expect(heldLine({ instruction: 2, cap: 1 })).toBe("3 ditahan Otomasi kantor (batas nominal, instruksi kantor)");
   });
 });

@@ -7,6 +7,7 @@ import { reviewTransactionTx } from "@/lib/review";
 import { controlSnapshot } from "@/lib/controls/ai-review";
 import { amountOf } from "@/lib/ai/provider";
 import { bankLineAccounts, citedBankIds } from "@/lib/controls/cited";
+import { PENDING_DRAFT } from "@/lib/approvals/second";
 
 /**
  * Proposed entries (accounting-rules 20b): draft journals from the close copilot or a deterministic check. Nothing posts until
@@ -97,21 +98,31 @@ export async function openProposals(db: Db, clientId: string, year: number, mont
 }
 
 /** The accountant's click. `accounts` (optional) replaces each line's account code, in order; amounts never change. */
-export async function postProposal(db: Db, input: { clientId: string; proposalId: string; accounts?: string[]; actorId?: string | null; origin?: { ledgerImportId?: string; sourceRef?: string }; guard?: (tx: Tx) => Promise<void> }) {
-  const p = await db.proposedEntry.findFirst({ where: { id: input.proposalId, clientId: input.clientId } });
-  if (!p) throw new LedgerError("Usulan tidak ditemukan.");
-  if (p.status !== "PROPOSED") throw new LedgerError(p.status === "POSTED" ? "Usulan ini sudah dicatat." : "Usulan ini sudah diabaikan.");
-  const lines = readLines(p.lines);
-  if (input.accounts && input.accounts.length !== lines.length) throw new LedgerError("Jumlah akun tidak sesuai dengan baris usulan.");
-  const codes = lines.map((l, i) => (input.accounts?.[i] ?? l.accountCode).trim());
+/** The draft's lines on the accounts the accountant chose (in order; amounts never change): each in the chart and never a bank account. */
+export async function chosenAccounts(db: Db | Tx, clientId: string, lines: ProposalLine[], chosen?: string[]) {
+  if (chosen && chosen.length !== lines.length) throw new LedgerError("Jumlah akun tidak sesuai dengan baris usulan.");
+  const codes = lines.map((l, i) => (chosen?.[i] ?? l.accountCode).trim());
   if (codes.some((c) => !c)) throw new LedgerError("Pilih akun untuk setiap baris.");
-  const accounts = new Map((await db.account.findMany({ where: { clientId: input.clientId, code: { in: codes } } })).map((a) => [a.code, a]));
+  const accounts = new Map((await db.account.findMany({ where: { clientId, code: { in: codes } } })).map((a) => [a.code, a]));
   const posting = lines.map((l, i) => {
     const a = accounts.get(codes[i]);
     if (!a) throw new LedgerError(`Akun ${codes[i]} tidak ada di bagan akun klien.`);
     if (a.isBank) throw new LedgerError("Usulan tidak boleh mengubah akun bank; sisi bank hanya berubah lewat mutasi.");
     return { accountId: a.id, debit: BigInt(l.debit), credit: BigInt(l.credit) };
   });
+  return { codes, posting };
+}
+
+/**
+ * `guard` runs a caller's own precondition on the same serializable snapshot before the write; `onPosted` runs after it with the entry, in
+ * the same transaction (the approval of a waiting draft records its decision there, so posting and deciding are one).
+ */
+export async function postProposal(db: Db, input: { clientId: string; proposalId: string; accounts?: string[]; actorId?: string | null; origin?: { ledgerImportId?: string; sourceRef?: string }; guard?: (tx: Tx) => Promise<void>; onPosted?: (tx: Tx, entry: { id: string }) => Promise<void> }) {
+  const p = await db.proposedEntry.findFirst({ where: { id: input.proposalId, clientId: input.clientId } });
+  if (!p) throw new LedgerError("Usulan tidak ditemukan.");
+  if (p.status !== "PROPOSED") throw new LedgerError(p.status === "POSTED" ? "Usulan ini sudah dicatat." : "Usulan ini sudah diabaikan.");
+  const lines = readLines(p.lines);
+  const { codes, posting } = await chosenAccounts(db, input.clientId, lines, input.accounts);
   const date = periodBounds(p.year, p.month).end;
   try {
     // Freshness check and write in one SERIALIZABLE transaction: a correction someone makes meanwhile either commits first
@@ -151,6 +162,7 @@ export async function postProposal(db: Db, input: { clientId: string; proposalId
         // Only a still-open proposal can be decided: a concurrent click rolls this transaction back.
         const done = await tx.proposedEntry.updateMany({ where: { id: p.id, status: "PROPOSED" }, data: { status: "POSTED", entryId: entry.id, decidedById: input.actorId ?? null, decidedAt: new Date() } });
         if (done.count !== 1) throw new LedgerError("Usulan ini sudah diputuskan.");
+        await input.onPosted?.(tx, entry);
         return entry;
       },
       { isolationLevel: "Serializable", timeout: 60_000 },
@@ -188,14 +200,32 @@ async function bankReclass(tx: Tx, p: { entityId: string; bankTransactionId: str
 }
 
 export async function dismissProposal(db: Db, input: { clientId: string; proposalId: string; actorId?: string | null }) {
+  // A draft waiting for a second approver (Persetujuan kedua) is decided in Kotak persetujuan, never dismissed under it.
+  if (await db.journalApproval.findFirst({ where: { proposalId: input.proposalId, status: "PENDING" }, select: { id: true } })) throw new LedgerError(PENDING_DRAFT);
   const done = await db.proposedEntry.updateMany({ where: { id: input.proposalId, clientId: input.clientId, status: "PROPOSED" }, data: { status: "DISMISSED", decidedById: input.actorId ?? null, decidedAt: new Date() } });
   if (done.count !== 1) throw new LedgerError("Usulan tidak ditemukan atau sudah diputuskan.");
 }
 
 /** Plain JSON for the proposals card (bigint as strings). */
 export async function proposalViews(db: Db, clientId: string, year: number, month: number) {
-  // 1999 corrections are shown from their source line (lib/adjust/suspense), never twice.
-  const rows = (await openProposals(db, clientId, year, month)).filter((p) => p.source !== "SUSPENSE");
+  // 1999 corrections are shown from their source line (lib/adjust/suspense), never twice; accruals are never stored open (Kotak's own
+  // kind). A draft waiting for a second approver shows under Persetujuan kedua instead (lib/approvals/queue.ts), never twice either. One
+  // rejected there comes back with the reason.
+  const open = (await openProposals(db, clientId, year, month)).flatMap((p) => (p.source === "AI_CONTROL" ? [{ ...p, source: p.source }] : []));
+  const asked = await db.journalApproval.findMany({
+    where: { proposalId: { in: open.map((p) => p.id) } },
+    select: { proposalId: true, status: true, note: true, decidedBy: { select: { name: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+  const waiting = new Set(asked.filter((a) => a.status === "PENDING").map((a) => a.proposalId));
+  // The latest decided request per draft: only a rejection is shown (a withdrawn one says nothing).
+  const latest = new Map<string, (typeof asked)[number]>();
+  for (const a of asked) if (a.proposalId && a.status !== "PENDING" && !latest.has(a.proposalId)) latest.set(a.proposalId, a);
+  const rejected = (id: string) => {
+    const a = latest.get(id);
+    return a?.status === "REJECTED" ? `Ditolak ${a.decidedBy?.name ?? "anggota lain"}: ${a.note}` : null;
+  };
+  const rows = open.filter((p) => !waiting.has(p.id));
   const txs = new Map((await db.bankTransaction.findMany({ where: { id: { in: rows.flatMap((p) => (p.bankTransactionId ? [p.bankTransactionId] : [])) } }, select: { id: true, entityId: true, date: true, amount: true, accountCode: true, taxTag: true } })).map((t) => [t.id, t]));
   const end = periodBounds(year, month).end;
   const blocked = new Map<string, string>();
@@ -209,6 +239,6 @@ export async function proposalViews(db: Db, clientId: string, year: number, mont
     const tx = p.bankTransactionId ? txs.get(p.bankTransactionId) : null;
     const fixed = tx?.accountCode ? lines.findIndex((l) => l.accountCode === tx.accountCode) : -1;
     const reason = tx?.taxTag ? `${p.reason} · Tag pajak transaksi ini dilepas saat dicatat; transaksinya kembali ke Review untuk memastikan pajaknya.` : p.reason;
-    return { id: p.id, memo: p.memo, reason, source: p.source, entityId: p.entityId, entity: p.entity.shortName, currency: p.entity.functionalCurrency, fixed: fixed >= 0 ? fixed : null, lines, blocked: blocked.get(p.id) ?? null };
+    return { id: p.id, memo: p.memo, reason, source: p.source, entityId: p.entityId, entity: p.entity.shortName, currency: p.entity.functionalCurrency, fixed: fixed >= 0 ? fixed : null, lines, blocked: blocked.get(p.id) ?? null, rejected: rejected(p.id) };
   });
 }

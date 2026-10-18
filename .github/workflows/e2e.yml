@@ -53,7 +53,8 @@ jobs:
         contains(github.event.pull_request.labels.*.name, 'e2e') &&
         (github.event.action != 'labeled' || github.event.label.name == 'e2e')))
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    # Two full Playwright passes (demo, then private mode) on top of setup: 131 tests took 13.4 min and ~20 min in October 2026.
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:16

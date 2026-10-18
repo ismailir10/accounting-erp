@@ -66,7 +66,8 @@ function normalizeLines(lines: PostLine[]) {
   return out;
 }
 
-export async function postJournal(tx: Tx, input: PostInput) {
+/** Every rule of postJournal() except the period (rules 1, 3, 4 above): the normalised lines and the entity, or a LedgerError. */
+async function validate(tx: Tx, input: Pick<PostInput, "entityId" | "lines">) {
   const lines = normalizeLines(input.lines);
   if (lines.length < 2) throw new LedgerError("Jurnal minimal dua baris");
   const totalDebit = lines.reduce((s, l) => s + l.debit, 0n);
@@ -125,11 +126,27 @@ export async function postJournal(tx: Tx, input: PostInput) {
     const diff = expected > actual ? expected - actual : actual - expected;
     if (diff > 1n) throw new LedgerError(`Nominal ${actual} tidak sama dengan ${l.fx.amount} ${l.fx.currency} × kurs ${l.fx.rate}`);
   }
+  return { lines, entity };
+}
 
+const closed = (p: { year: number; month: number }) => new LedgerError(`Periode ${formatPeriod(p.year, p.month)} sudah ditutup`);
+
+/**
+ * The same checks postJournal() makes, writing nothing: used where a journal is held back as a request (Persetujuan kedua) so the request
+ * is refused now, not at approval, when it could never post. A month without a Period row yet is open.
+ */
+export async function checkJournal(tx: Tx, input: Pick<PostInput, "entityId" | "date" | "lines">) {
+  const { entity } = await validate(tx, input);
+  const year = input.date.getUTCFullYear();
+  const month = input.date.getUTCMonth() + 1;
+  const period = await tx.period.findUnique({ where: { clientId_year_month: { clientId: entity.clientId, year, month } }, select: { status: true } });
+  if (period?.status === "LOCKED") throw closed({ year, month });
+}
+
+export async function postJournal(tx: Tx, input: PostInput) {
+  const { lines, entity } = await validate(tx, input);
   const period = await getOrCreatePeriod(tx, entity.firmId, entity.clientId, input.date);
-  if (period.status === "LOCKED") {
-    throw new LedgerError(`Periode ${formatPeriod(period.year, period.month)} sudah ditutup`);
-  }
+  if (period.status === "LOCKED") throw closed(period);
 
   return tx.journalEntry.create({
     data: {

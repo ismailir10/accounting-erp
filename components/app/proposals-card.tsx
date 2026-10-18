@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Money } from "@/components/app/money";
 import { dismissProposalAction, postProposalAction } from "@/app/actions";
+import { formNotice, type SourceRoute } from "@/lib/approvals/second";
 
 export type ProposalView = {
   id: string;
@@ -21,22 +22,28 @@ export type ProposalView = {
   lines: { accountCode: string; debit: string; credit: string }[];
   /** Why it can't be posted (e.g. a Jurnal Penyesuaian already made this correction); only *Abaikan* is offered. */
   blocked?: string | null;
+  /** A second approver rejected it (Persetujuan kedua): "Ditolak <nama>: <catatan>". */
+  rejected?: string | null;
 };
 
-/** Draft journals of the period (accounting-rules 20b). Accounts may be changed, amounts never; posting is the accountant's click. */
-export function ProposalsCard({ clientId, periodLabel, items, accounts, locked }: { clientId: string; periodLabel: string; items: ProposalView[]; accounts: { code: string; name: string }[]; locked: boolean }) {
+/**
+ * Draft journals of the period (accounting-rules 20b). Accounts may be changed, amounts never; posting is the accountant's click — and
+ * above the firm's *Draf AI* threshold (`route`) that click sends it to a second approver (Persetujuan kedua).
+ */
+export function ProposalsCard({ clientId, periodLabel, items, accounts, locked, route }: { clientId: string; periodLabel: string; items: ProposalView[]; accounts: { code: string; name: string }[]; locked: boolean; route?: SourceRoute }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [codes, setCodes] = useState<Record<string, string[]>>({});
   const codesOf = (p: ProposalView) => codes[p.id] ?? p.lines.map((l) => l.accountCode);
-  const run = async (key: string, fn: () => Promise<{ ok: boolean; error?: string }>, done: string) => {
+  const run = async (key: string, fn: () => Promise<{ ok: boolean; error?: string; pending?: boolean }>, done: string) => {
     setBusy(key);
     const r = await fn();
     setBusy(null);
     if (!r.ok) return void toast.error((r as { error: string }).error);
-    toast.success(done);
+    toast.success(r.pending ? "Jurnal menunggu persetujuan" : done);
     router.refresh();
   };
+  const noticeOf = (p: ProposalView) => (p.source === "AI_CONTROL" ? formNotice(route, p.lines.reduce((s, l) => s + BigInt(l.debit), 0n), p.currency) : null);
   return (
     <Card data-testid="proposals">
       <CardHeader>
@@ -63,10 +70,12 @@ export function ProposalsCard({ clientId, periodLabel, items, accounts, locked }
               ))}
             </div>
             {p.blocked && <p className="text-sm font-medium text-review" data-testid="proposal-blocked">{p.blocked}</p>}
+            {p.rejected && <p className="text-sm font-medium text-review" data-testid="proposal-rejected">{p.rejected}</p>}
+            {!p.blocked && noticeOf(p) && <p className="text-sm text-muted-foreground">{noticeOf(p)!.text}</p>}
             <div className="flex flex-wrap gap-2">
               {!p.blocked && (
                 <Button variant="outline" size="sm" disabled={locked || busy !== null} onClick={() => run(p.id, () => postProposalAction(clientId, p.id, codesOf(p)), "Jurnal koreksi dicatat")}>
-                  {busy === p.id ? "Mencatat…" : "Catat jurnal"}
+                  {busy === p.id ? "Mencatat…" : noticeOf(p)?.waits ? "Ajukan persetujuan" : "Catat jurnal"}
                 </Button>
               )}
               {/* A 1999 difference has to be corrected before the close, so its correction can't be dismissed. */}

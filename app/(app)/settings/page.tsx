@@ -1,6 +1,11 @@
-import { requireWorkspaceSession } from "@/lib/auth/session";
+import { accessibleClientWhere, accessView, requireWorkspaceSession, type WorkspaceSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
-import { formatDateTime } from "@/lib/format";
+import { formatDate, formatDateTime } from "@/lib/format";
+import { can } from "@/lib/auth/permissions";
+import { compiledSentence, flagTitle, KIND_LABEL, ORIGIN_LABEL } from "@/lib/instructions/compile";
+import { draftOf, listInstructions } from "@/lib/instructions/store";
+import { InstructionEditor } from "@/components/app/instruction-editor";
+import { InstructionList, type InstructionRow } from "@/components/app/instruction-list";
 import { resolveAiConfig } from "@/lib/settings/ai";
 import { monthlyAiUse } from "@/lib/ai/budget";
 import { PageHeader, NextStep } from "@/components/app/page-header";
@@ -11,6 +16,8 @@ import { ocrEnabled } from "@/lib/ocr/draft";
 import { OcrSettingCard } from "@/components/app/ocr-setting";
 import { AutomationCard } from "@/components/app/automation-card";
 import { lastAutomationChange, readAutomation } from "@/lib/settings/automation";
+import { ApprovalsCard } from "@/components/app/approvals-card";
+import { activeAdminCount, lastApprovalsChange, readApprovals } from "@/lib/settings/approvals";
 import { isAdminRole } from "@/lib/auth/permissions";
 import { LinkTabs } from "@/components/app/link-tabs";
 import { TeamCard } from "@/components/app/team-card";
@@ -20,11 +27,32 @@ import type { SearchParams } from "@/lib/scope";
 export const metadata = { title: "Pengaturan kantor" };
 
 export default async function SettingsPage({ searchParams }: { searchParams: SearchParams }) {
-  const { firm, member } = await requireWorkspaceSession();
+  const session = await requireWorkspaceSession();
+  const { firm, member } = session;
   const isAdmin = isAdminRole(member.role);
-  // Tim (ADR 0017 §5): owners and admins manage people here; other roles see only the general section.
-  const tab = (await searchParams).tab === "tim" && isAdmin ? "tim" : "umum";
-  const tabs = isAdmin ? <LinkTabs label="Bagian pengaturan" items={[{ href: "/settings", label: "Umum", active: tab === "umum" }, { href: "/settings?tab=tim", label: "Tim", active: tab === "tim" }]} /> : null;
+  // Tim (ADR 0017 §5): owners and admins manage people here. Instruksi (cycle 2026-10-18-instruksi-kantor): every role, writers write.
+  const asked = (await searchParams).tab;
+  const tab = asked === "tim" && isAdmin ? "tim" : asked === "instruksi" ? "instruksi" : "umum";
+  const tabs = (
+    <LinkTabs
+      label="Bagian pengaturan"
+      items={[
+        { href: "/settings", label: "Umum", active: tab === "umum" },
+        { href: "/settings?tab=instruksi", label: "Instruksi", active: tab === "instruksi" },
+        ...(isAdmin ? [{ href: "/settings?tab=tim", label: "Tim", active: tab === "tim" }] : []),
+      ]}
+    />
+  );
+  if (tab === "instruksi") {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Pengaturan kantor" description="Berlaku untuk semua klien di kantor ini." />
+        {tabs}
+        <NextStep>Tulis kebiasaan kantor dalam satu kalimat. Buku menyusunnya menjadi aturan pasti; Anda memeriksa contohnya lalu menyetujui.</NextStep>
+        <InstructionsSection session={session} />
+      </div>
+    );
+  }
   if (tab === "tim") {
     const team = await listTeam(prisma, firm.id);
     return (
@@ -43,6 +71,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Sea
     );
   }
   const [cfg, lastCall, plans, ocr, automation, automationChange] = await Promise.all([resolveAiConfig(prisma), prisma.aiUsage.findFirst({ where: { firmId: firm.id, model: { not: "demo-seed" } }, orderBy: { at: "desc" } }), planRejections(prisma, firm.id), ocrEnabled(prisma), readAutomation(prisma, firm.id), lastAutomationChange(prisma, firm.id)]);
+  const [approvals, approvalsChange, admins] = await Promise.all([readApprovals(prisma, firm.id), lastApprovalsChange(prisma, firm.id), activeAdminCount(prisma, firm.id)]);
   const live = Boolean(cfg.apiKey && cfg.model);
   const use = await monthlyAiUse(prisma, firm.id);
 
@@ -63,6 +92,14 @@ export default async function SettingsPage({ searchParams }: { searchParams: Sea
         canSave={isAdmin}
         lastChange={automationChange && { at: formatDateTime(automationChange.at), actor: automationChange.actor }}
       />
+      {/* Otomasi decides what may skip you; Persetujuan kedua decides what needs two of you. */}
+      <ApprovalsCard
+        key={[approvals.manual, approvals.manualAbove, approvals.aiDraft, approvals.aiDraftAbove, approvals.reopen].join("|")}
+        settings={{ ...approvals, manualAbove: approvals.manualAbove?.toString() ?? null, aiDraftAbove: approvals.aiDraftAbove?.toString() ?? null }}
+        canSave={isAdmin}
+        singleAdmin={admins < 2}
+        lastChange={approvalsChange && { at: formatDateTime(approvalsChange.at), actor: approvalsChange.actor }}
+      />
       <OcrSettingCard enabled={ocr} canSave={false} aiLive={live} />
       <Card>
         <CardHeader>
@@ -76,5 +113,47 @@ export default async function SettingsPage({ searchParams }: { searchParams: Sea
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/**
+ * Pengaturan kantor → Instruksi (cycle 2026-10-18-instruksi-kantor): the editor for members who may approve in at least one scope
+ * (*Semua klien* for admins, their clients for writers), the list for everyone. Peninjau, a read-only organisation and a support
+ * session read the list only.
+ */
+async function InstructionsSection({ session }: { session: WorkspaceSession }) {
+  const { firm, member } = session;
+  const writes = accessView(session).canWrite;
+  const firmWide = writes && can(member.role, "org.settings");
+  const perClient = writes && can(member.role, "books.write");
+  const [clients, rows, cfg] = await Promise.all([
+    prisma.client.findMany({ where: accessibleClientWhere(session), select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    listInstructions(prisma, firm.id, session.clientIds),
+    resolveAiConfig(prisma),
+  ]);
+  const codes = [...new Set(rows.flatMap((r) => (r.accountCode ? [r.accountCode] : [])))];
+  const names = new Map((await prisma.account.findMany({ where: { firmId: firm.id, code: { in: codes } }, distinct: ["code"], select: { code: true, name: true } })).map((a) => [a.code, a.name]));
+  const scopes = [...(firmWide ? [{ value: "", label: "Semua klien" }] : []), ...(perClient ? clients.map((c) => ({ value: c.id, label: c.name })) : [])];
+  const view = rows.map((r): InstructionRow => {
+    const d = draftOf(r);
+    return {
+      id: r.id,
+      sentence: r.sentence,
+      compiled: compiledSentence(d, { accountName: d.accountCode ? names.get(d.accountCode) : null, firmWide: !r.clientId }),
+      eyebrow: `${KIND_LABEL[d.kind]} · ${r.client?.name ?? "Semua klien"}`,
+      approved: `Disetujui ${formatDate(r.approvedAt)} oleh ${r.approvedBy?.name ?? "anggota yang sudah dihapus"} · ${ORIGIN_LABEL[r.origin]}`,
+      off: r.offAt && `Dimatikan ${formatDate(r.offAt)} oleh ${r.offBy?.name ?? "anggota yang sudah dihapus"}`,
+      stops:
+        d.kind === "ACCOUNT" ? `Aturan "${d.pattern}" → ${d.accountCode} dihapus, jadi impor berikutnya memakai aturan lain.`
+        : d.kind === "FLAG" ? `Kontrol "${flagTitle(d)}" hilang dari bulan yang belum dikunci.`
+        : `Impor berikutnya tidak lagi menahan mutasi yang memuat "${d.pattern}".`,
+      canTurnOff: r.clientId ? perClient : firmWide,
+    };
+  });
+  return (
+    <>
+      {scopes.length > 0 && <InstructionEditor scopes={scopes} aiAvailable={Boolean(cfg.apiKey && cfg.model)} />}
+      <InstructionList active={view.filter((r) => !r.off)} off={view.filter((r) => r.off)} />
+    </>
   );
 }

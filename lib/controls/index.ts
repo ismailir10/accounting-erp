@@ -9,6 +9,8 @@ import { balanceSheet, combinedWorksheet, trialBalance } from "@/lib/reports/led
 import { sanityControls } from "@/lib/controls/sanity";
 import { anomalyControls } from "@/lib/controls/anomaly";
 import { closeLock, dueProposals, schedulesDueBy } from "@/lib/adjust/schedules";
+import { closeReopenRequests, pendingJournalCount, pendingLockMessage } from "@/lib/approvals/pending";
+import { paidAfterAccrual } from "@/lib/adjust/accruals";
 import { registerVsLedger } from "@/lib/assets/register";
 import { subledgerVsLedger } from "@/lib/receivables/aging";
 import { ckpn, settingAt } from "@/lib/receivables/ckpn";
@@ -23,6 +25,8 @@ import { bupotNotes, bupotRecon } from "@/lib/tax/bupot";
 import { findingLabel } from "@/lib/findings";
 import { compareSubledger } from "@/lib/reconcile/subledger";
 import { can } from "@/lib/auth/permissions";
+import { activeInstructions } from "@/lib/instructions/store";
+import { instructionControls } from "@/lib/instructions/controls";
 import type { MemberRole } from "@/lib/generated/prisma/enums";
 
 /**
@@ -70,7 +74,9 @@ async function collectControls(db: Db, clientId: string, year: number, month: nu
   const controls: Control[] = [];
   const base = `/clients/${clientId}`;
   const clientScope = entities.length > 1 ? "Grup" : (entities[0]?.shortName ?? "Klien");
-  const { industry, fiscalYearEndMonth: yearEnd } = await db.client.findUniqueOrThrow({ where: { id: clientId }, select: { industry: true, fiscalYearEndMonth: true } });
+  const { industry, fiscalYearEndMonth: yearEnd, firmId } = await db.client.findUniqueOrThrow({ where: { id: clientId }, select: { industry: true, fiscalYearEndMonth: true, firmId: true } });
+  // The firm's own checks (*Tandai*, accounting-rules 22d): every month that is not locked; a locked month keeps the controls it closed with.
+  const flags = period?.status === "LOCKED" ? [] : await activeInstructions(db, firmId, clientId, "FLAG");
 
   for (const e of entities) {
     const scope = { clientId, entityIds: [e.id] };
@@ -245,6 +251,7 @@ async function collectControls(db: Db, clientId: string, year: number, month: nu
         ? sane
         : [{ key: `sanity:${e.id}`, title: "Kewajaran pembukuan", scope: e.shortName, status: "PASS" as const, detail: "Tidak ada saldo janggal, pembiayaan di Laba Rugi, bulan kosong, tebakan yang diterima begitu saja, fluktuasi atau jurnal ganda" }]),
     );
+    if (flags.length) controls.push(...(await instructionControls(db, { flags, entity: e, start, end, acks })));
 
     // Adjustment schedules (rule 5a): an installment of this month not yet posted needs the click or a note.
     const due = await dueProposals(db, clientId, year, month, e.id);
@@ -259,6 +266,22 @@ async function collectControls(db: Db, clientId: string, year: number, month: nu
         detail: `${due.length} angsuran: ${list.join("; ")}${due.length > 3 ? `; +${due.length - 3} lainnya` : ""}`,
         href: `${base}/journals/new?period=${year}-${String(month).padStart(2, "0")}`,
         ack: acks.get(sKey),
+      });
+    }
+
+    // Usulan akrual (rule 5a): an approved accrual whose counterparty then got a line in the month counts the expense twice. The way out
+    // is the accrual's own reversal copied into the month with *Balik otomatis*; a note acknowledges it like any REVIEW, never a FAIL.
+    for (const d of await paidAfterAccrual(db, clientId, e.id, year, month)) {
+      const aKey = `accrual-paid:${d.proposalId}`;
+      const ym = `${year}-${String(month).padStart(2, "0")}`;
+      controls.push({
+        key: aKey,
+        title: "Akrual dan pembayaran di bulan yang sama",
+        scope: e.shortName,
+        status: "REVIEW",
+        detail: `Akrual ${formatDate(d.entry.date)} “${d.entry.memo}” ${fmt(d.entry.amount)} dan ${d.arrival.text} ${formatDate(d.arrival.date)} ${fmt(d.arrival.amount)}: beban ${d.counterparty} tercatat dua kali. Salin jurnal pembalik akrualnya ke ${formatPeriod(year, month)} dengan Balik otomatis, lalu tulis catatan.`,
+        href: d.reversalId ? `${base}/journals/new?period=${ym}&salin=${d.reversalId}` : `${base}/journals/new?period=${ym}`,
+        ack: acks.get(aKey),
       });
     }
 
@@ -642,6 +665,9 @@ const mustCloseFirst = (p: { year: number; month: number }) => new CloseError(`T
 export async function lockPeriod(db: Db, clientId: string, year: number, month: number, note: string, actorId?: string | null) {
   const before = await earlierOpenMonth(db, clientId, year, month);
   if (before) throw mustCloseFirst(before);
+  // A journal waiting for a second approver that would post into this month (Persetujuan kedua): the lock waits for its decision.
+  const waiting = await pendingJournalCount(db, clientId, year, month);
+  if (waiting) throw new CloseError(pendingLockMessage(waiting));
   // Schedules due by this month known before the controls run: one created meanwhile was never checked, so the lock refuses (rule 5a).
   const known = new Set(await schedulesDueBy(db, clientId, year, month));
   const controls = await runControls(db, clientId, year, month);
@@ -664,6 +690,8 @@ export async function lockPeriod(db: Db, clientId: string, year: number, month: 
     await closeLock(tx, clientId);
     const raced = await earlierOpenMonth(tx, clientId, year, month);
     if (raced) throw mustCloseFirst(raced);
+    const asked = await pendingJournalCount(tx, clientId, year, month); // a request stored meanwhile (submits take the same lock)
+    if (asked) throw new CloseError(pendingLockMessage(asked));
     if ((await schedulesDueBy(tx, clientId, year, month)).some((id) => !known.has(id))) {
       throw new CloseError("Jadwal penyesuaian baru yang jatuh tempo sampai bulan ini ditambahkan saat tutup buku berjalan. Muat ulang halaman, periksa kontrolnya, lalu tutup lagi.");
     }
@@ -678,18 +706,38 @@ export const UNLOCK_REASON_MIN = 5;
  * admin. The status change and the audit row (`PeriodUnlockLog`) are one transaction, under the same client lock as closing.
  */
 export async function unlockPeriod(db: Db, clientId: string, year: number, month: number, actor: { id: string; role: MemberRole }, reason: string) {
+  const why = unlockReason(actor, reason);
+  return db.$transaction((tx) => unlockPeriodTx(tx, clientId, year, month, actor, why));
+}
+
+/** The unlock's own refusals before anything is read: admin only, and a reason of at least 5 characters (returned trimmed). */
+export function unlockReason(actor: { role: MemberRole }, reason: string) {
   if (!can(actor.role, "period.unlock")) throw new CloseError("Hanya admin kantor yang dapat membuka kembali periode.");
   const why = reason.trim();
   if (why.length < UNLOCK_REASON_MIN) throw new CloseError(`Tulis alasan membuka kembali periode (min. ${UNLOCK_REASON_MIN} karakter).`);
-  return db.$transaction(async (tx) => {
-    await closeLock(tx, clientId);
-    const period = await tx.period.findUnique({ where: { clientId_year_month: { clientId, year, month } } });
-    if (!period || period.status !== "LOCKED") throw new CloseError(`Periode ${formatPeriod(year, month)} belum ditutup.`);
-    const later = await laterLockedMonth(tx, clientId, year, month);
-    if (later) throw new CloseError(`Buka kembali ${formatPeriod(later.year, later.month)} dulu: bulan setelahnya masih ditutup.`);
-    await tx.periodUnlockLog.create({ data: { firmId: period.firmId, clientId, year, month, unlockedById: actor.id, reason: why } });
-    // A reopened month is changed on purpose: its sign-offs described the books before the change, so they are given again.
-    await tx.closeSignoff.deleteMany({ where: { periodId: period.id } });
-    return tx.period.update({ where: { id: period.id }, data: { status: "OPEN", lockedAt: null, lockedById: null } });
-  });
+  return why;
+}
+
+/** The month is closed and no later month is (reverse order of closing): the checks a reopen request makes too. Returns the period. */
+export async function reopenablePeriod(tx: Tx, clientId: string, year: number, month: number) {
+  const period = await tx.period.findUnique({ where: { clientId_year_month: { clientId, year, month } } });
+  if (!period || period.status !== "LOCKED") throw new CloseError(`Periode ${formatPeriod(year, month)} belum ditutup.`);
+  const later = await laterLockedMonth(tx, clientId, year, month);
+  if (later) throw new CloseError(`Buka kembali ${formatPeriod(later.year, later.month)} dulu: bulan setelahnya masih ditutup.`);
+  return period;
+}
+
+/**
+ * The unlock on `tx`, under the client lock: checks, the log row, the sign-offs removed, the month opened. A confirmed reopen request
+ * (Persetujuan kedua, lib/approvals/reopen.ts) passes its requester, kept on the log beside the confirming admin; a direct unlock closes
+ * any request for the month still waiting ("dibuka langsung").
+ */
+export async function unlockPeriodTx(tx: Tx, clientId: string, year: number, month: number, actor: { id: string }, why: string, opts: { requestedById?: string } = {}) {
+  await closeLock(tx, clientId);
+  const period = await reopenablePeriod(tx, clientId, year, month);
+  await tx.periodUnlockLog.create({ data: { firmId: period.firmId, clientId, year, month, unlockedById: actor.id, requestedById: opts.requestedById ?? null, reason: why } });
+  if (!opts.requestedById) await closeReopenRequests(tx, clientId, year, month, actor.id);
+  // A reopened month is changed on purpose: its sign-offs described the books before the change, so they are given again.
+  await tx.closeSignoff.deleteMany({ where: { periodId: period.id } });
+  return tx.period.update({ where: { id: period.id }, data: { status: "OPEN", lockedAt: null, lockedById: null } });
 }

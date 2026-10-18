@@ -4,6 +4,7 @@ import type { Prisma } from "@/lib/generated/prisma/client";
 import { MoneyError, parseMoney } from "@/lib/money";
 import { ENTRY_SOURCE_SELECT, entrySource } from "@/lib/reports/entry-source";
 import { entryOrigins } from "@/lib/reports/entry-origin";
+import { approvalLines } from "@/lib/approvals/pending";
 import type { Scope } from "@/lib/reports/ledger";
 
 /** The kinds Jurnal Umum filters by (`?jenis=`). A bank line's later reclassification belongs with the bank lines. */
@@ -71,6 +72,8 @@ export type RegisterEntry = {
   origin: string | null;
   postedBy: string;
   postedAt: Date;
+  /** Persetujuan kedua: "Diajukan <maker> · Disetujui <approver>" when it came through a second approver. */
+  approval?: string | null;
   /** The date of the journal that reversed this one (*Balik jurnal*), if any. */
   reversedOn: Date | null;
   lines: RegisterLine[];
@@ -97,6 +100,7 @@ export async function journalRegister(db: Db, scope: Scope, f: RegisterFilter, p
         date: true,
         memo: true,
         createdAt: true,
+        reversesId: true,
         entity: { select: { shortName: true } },
         postedBy: { select: { name: true } },
         reversedBy: { select: { date: true } },
@@ -105,7 +109,7 @@ export async function journalRegister(db: Db, scope: Scope, f: RegisterFilter, p
       },
     }),
   ]);
-  const origins = await entryOrigins(db, rows.map((e) => e.id));
+  const [origins, approvals] = await Promise.all([entryOrigins(db, rows.map((e) => e.id)), approvalLines(db, rows)]);
   const entries: RegisterEntry[] = rows.map((e) => ({
     id: e.id,
     date: e.date,
@@ -116,6 +120,7 @@ export async function journalRegister(db: Db, scope: Scope, f: RegisterFilter, p
     origin: origins.get(e.id) ?? null,
     postedBy: e.postedBy?.name ?? "Sistem",
     postedAt: e.createdAt,
+    approval: approvals.get(e.id) ?? null,
     reversedOn: e.reversedBy?.date ?? null,
     lines: [...e.lines]
       .sort((a, b) => Number(b.debit > 0n) - Number(a.debit > 0n))

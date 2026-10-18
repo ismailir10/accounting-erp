@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { loadClientPage } from "@/lib/client-page";
 import { withParams, type SearchParams } from "@/lib/scope";
@@ -117,7 +118,7 @@ export default async function SettingsPage({ params, searchParams }: { params: P
             <Card>
               <CardHeader>
                 <CardTitle>Aturan klien</CardTitle>
-                <CardDescription>Didahulukan dari aturan kantor. Tambah dari halaman Review dengan “Selalu gunakan akun ini”.</CardDescription>
+                <CardDescription>Didahulukan dari aturan kantor. Tambah dari halaman Review dengan “Selalu gunakan akun ini”, atau tulis di Pengaturan kantor → Instruksi.</CardDescription>
               </CardHeader>
               <CardContent className="px-0">
                 <RuleTable rules={clientRules} accounts={accounts} />
@@ -163,7 +164,7 @@ export default async function SettingsPage({ params, searchParams }: { params: P
   );
 }
 
-function RuleTable({ rules, accounts }: { rules: { id: string; pattern: string; direction: string | null; accountCode: string; taxTag: keyof typeof TAX_TAG_LABEL | null; source: string }[]; accounts: Map<string, string> }) {
+function RuleTable({ rules, accounts }: { rules: { id: string; pattern: string; direction: string | null; accountCode: string; taxTag: keyof typeof TAX_TAG_LABEL | null; source: string; instructionId: string | null }[]; accounts: Map<string, string> }) {
   if (rules.length === 0) return <p className="px-6 py-4 text-sm text-muted-foreground">Belum ada aturan khusus untuk klien ini.</p>;
   return (
     <Table>
@@ -173,7 +174,13 @@ function RuleTable({ rules, accounts }: { rules: { id: string; pattern: string; 
       <TableBody>
         {rules.map((r) => (
           <TableRow key={r.id}>
-            <TableCell className="pl-6 font-mono text-xs whitespace-normal">{r.pattern}{r.source === "USER" && <span className="ml-2 font-sans text-muted-foreground">(dari review)</span>}</TableCell>
+            <TableCell className="pl-6 font-mono text-xs whitespace-normal">
+              {r.pattern}
+              {r.source === "USER" && <span className="ml-2 font-sans text-muted-foreground">(dari review)</span>}
+              {r.instructionId && (
+                <Link href={`/settings?tab=instruksi#instruksi-${r.instructionId}`} className="drill ml-2 font-sans" data-testid="rule-instruction">Instruksi kantor</Link>
+              )}
+            </TableCell>
             <TableCell className="text-muted-foreground">{r.direction === "IN" ? "Masuk" : r.direction === "OUT" ? "Keluar" : "Semua"}</TableCell>
             <TableCell className="pr-6 whitespace-normal">{r.accountCode} {accounts.get(r.accountCode)}{r.taxTag && <span className="text-xs text-muted-foreground"> · {TAX_TAG_LABEL[r.taxTag]}</span>}</TableCell>
           </TableRow>

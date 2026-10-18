@@ -7,6 +7,11 @@ import { correctionViews } from "@/lib/adjust/suspense";
 import { proposalViews as scheduleViews } from "@/lib/adjust/view";
 import { packApplies } from "@/lib/tax/pack";
 import { FAKTUR_PREFERRED, fakturCounterAccounts, fakturRecon } from "@/lib/tax/faktur";
+import type { JournalApprovalSource, MemberRole } from "@/lib/generated/prisma/enums";
+import { readStoredLines } from "@/lib/approvals/journals";
+import { pendingReopens } from "@/lib/approvals/reopen";
+import { ACCRUAL_LABEL, SOURCE_LABEL, waitingFor, waitReason } from "@/lib/approvals/second";
+import { accrualProposals, NO_CREDIT } from "@/lib/adjust/accruals";
 
 /**
  * Kotak persetujuan (Phase 2 item 1): every proposal of a client-month waiting for the accountant's click, in one queue. A read model,
@@ -14,16 +19,20 @@ import { FAKTUR_PREFERRED, fakturCounterAccounts, fakturRecon } from "@/lib/tax/
  * - bank lines in Review through the month end (Review's query and order), accepted by the reviewer's writer;
  * - open *Jelaskan* drafts and the month's 1999 corrections (Tutup Buku's *Usulan jurnal koreksi*), posted by the proposal writer;
  * - adjustment-schedule instalments due by the month, overdue ones included (Jurnal Penyesuaian), posted by the schedule writer;
- * - counted Coretax faktur of the masa that match nothing in the books (Pajak Masa), booked by the invoice writer.
+ * - accruals proposed from each vendor's history (`lib/adjust/accruals.ts`), posted with their reversal by the accrual writer;
+ * - counted Coretax faktur of the masa that match nothing in the books (Pajak Masa), booked by the invoice writer;
+ * - journals waiting for a second approver and months an admin asked to reopen (Persetujuan kedua), decided by their own actions.
  * The firm board's count is this same function (`approvalCounts`), so the board always equals the page.
  */
 
-export type ApprovalKind = "bank" | "draft" | "scheduled" | "faktur";
-/** In page order; `param` is the kind's `?jenis=` value. */
+export type ApprovalKind = "second" | "bank" | "draft" | "scheduled" | "accrual" | "faktur";
+/** In page order; `param` is the kind's `?jenis=` value. Persetujuan kedua leads: a second person is waiting on it. */
 export const APPROVAL_KINDS: { key: ApprovalKind; param: string; label: string }[] = [
+  { key: "second", param: "kedua", label: "Persetujuan kedua" },
   { key: "bank", param: "bank", label: "Klasifikasi bank" },
   { key: "draft", param: "draf", label: "Draf jurnal" },
   { key: "scheduled", param: "terjadwal", label: "Jurnal terjadwal" },
+  { key: "accrual", param: "akrual", label: "Usulan akrual" },
   { key: "faktur", param: "faktur", label: "Faktur Coretax" },
 ];
 /** Bank lines dominate a month; past this many the rest are counted and left to Review. */
@@ -59,6 +68,28 @@ export type BankCard = {
 };
 export type DraftCard = Awaited<ReturnType<typeof correctionViews>>[number] & { date: string };
 export type ScheduledCard = Awaited<ReturnType<typeof scheduleViews>>[number] & { overdue: boolean };
+/** An accrual proposal (plain JSON): `id` is its key; `source` marks it for *Lihat alasan* (`hasReasoning`). */
+export type AccrualCard = {
+  id: string;
+  source: "ACCRUAL";
+  entityId: string;
+  entity: string;
+  /** ISO: the month's last day, and the reversal's (the 1st of the next month). */
+  date: string;
+  reversalDate: string;
+  counterparty: string;
+  account: { code: string; name: string };
+  credit: { code: string; name: string } | null;
+  /** Without 2150 the accountant picks the liability (*Setujui* waits for it): what the card says. */
+  noCredit: string | null;
+  amount: string;
+  currency: string;
+  rationale: string;
+  warning: string | null;
+  blocked: string | null;
+  /** Persetujuan kedua: the latest request for it was rejected — "Ditolak <nama>: <alasan>" (it is back to decide again). */
+  rejected: string | null;
+};
 export type FakturCard = {
   id: string;
   direction: "KELUARAN" | "MASUKAN";
@@ -76,6 +107,36 @@ export type FakturCard = {
   preferred: string;
 };
 
+/** A journal waiting for a second approver (Persetujuan kedua); amounts as minor-unit strings. */
+export type SecondJournalCard = {
+  type: "journal";
+  id: string;
+  source: JournalApprovalSource;
+  sourceLabel: string;
+  entityId: string;
+  entity: string;
+  currency: string;
+  /** ISO date the journal posts on. */
+  date: string;
+  memo: string;
+  lines: { accountCode: string; accountName: string; debit: string; credit: string; memo: string | null }[];
+  total: string;
+  reverseNextMonth: boolean;
+  makerId: string;
+  makerRole: MemberRole;
+  maker: string;
+  at: string;
+  /** "di atas Rp 100.000.000" */
+  why: string;
+  /** Who may decide, for everyone else looking at it. */
+  waitingFor: string;
+  /** Dated before the month in scope ("bulan lalu"). */
+  earlier: boolean;
+};
+/** A closed month an admin asked to reopen (Persetujuan kedua). */
+export type SecondReopenCard = { type: "reopen"; id: string; year: number; month: number; label: string; reason: string; requestedById: string; requestedBy: string; at: string; earlier: boolean };
+export type SecondCard = SecondJournalCard | SecondReopenCard;
+
 export type ApprovalQueue = {
   counts: ApprovalCounts;
   /** The month is closed: the queue is shown, nothing can be approved. */
@@ -86,12 +147,15 @@ export type ApprovalQueue = {
   confident: { id: string; accountCode: string; taxTag: string | null }[];
   drafts: DraftCard[];
   scheduled: ScheduledCard[];
+  accruals: AccrualCard[];
   faktur: FakturCard[];
+  /** Persetujuan kedua: waiting journals (oldest first), then reopen requests. */
+  second: SecondCard[];
   /** The accounts a faktur may be booked against, per direction (only when there are faktur cards). */
   fakturAccounts: ReturnType<typeof fakturCounterAccounts> | null;
 };
 
-export type QueueInput = { clientId: string; year: number; month: number; /** Companies in scope; all of the client's when omitted. */ entityIds?: string[] };
+export type QueueInput = { clientId: string; year: number; month: number; /** Companies in scope; all of the client's when omitted. */ entityIds?: string[]; /** Today, for "the month has ended" (accruals); tests fix it. */ now?: Date };
 
 async function scopeOf(db: Db, input: QueueInput) {
   const entities = await db.entity.findMany({
@@ -118,6 +182,40 @@ async function scheduled(db: Db, input: QueueInput, ids: string[], start: Date):
   return views.map((v) => ({ ...v, overdue: v.date < first })).sort((a, b) => Number(b.overdue) - Number(a.overdue) || a.date.localeCompare(b.date));
 }
 
+async function accruals(db: Db, input: QueueInput, ids: string[]): Promise<AccrualCard[]> {
+  if (!ids.length) return [];
+  // Problems first already (blocked, then warned). One waiting for a second approver is under Persetujuan kedua instead; one rejected
+  // there is back here with the reason (a withdrawn one says nothing), as a rejected AI draft is.
+  const proposals = await accrualProposals(db, input.clientId, input.year, input.month, { entityIds: ids, now: input.now });
+  const asked = proposals.length
+    ? await db.journalApproval.findMany({ where: { accrualKey: { in: proposals.map((p) => p.key) }, status: { in: ["REJECTED", "WITHDRAWN"] } }, select: { accrualKey: true, status: true, note: true, decidedBy: { select: { name: true } } }, orderBy: { decidedAt: "desc" } })
+    : [];
+  const latest = new Map<string, (typeof asked)[number]>();
+  for (const a of asked) if (a.accrualKey && !latest.has(a.accrualKey)) latest.set(a.accrualKey, a);
+  const rejected = (key: string) => {
+    const a = latest.get(key);
+    return a?.status === "REJECTED" ? `Ditolak ${a.decidedBy?.name ?? "anggota lain"}: ${a.note}` : null;
+  };
+  return proposals.map((p) => ({
+    id: p.key,
+    source: "ACCRUAL",
+    entityId: p.entity.id,
+    entity: p.entity.shortName,
+    date: toIsoDate(p.date),
+    reversalDate: toIsoDate(p.reversalDate),
+    counterparty: p.counterparty,
+    account: { code: p.account.code, name: p.account.name },
+    credit: p.credit ? { code: p.credit.code, name: p.credit.name } : null,
+    noCredit: p.credit ? null : NO_CREDIT,
+    amount: p.amount.toString(),
+    currency: p.entity.functionalCurrency,
+    rationale: p.rationale,
+    warning: p.warning,
+    blocked: p.blocked,
+    rejected: rejected(p.key),
+  }));
+}
+
 /** Counted faktur of the masa matching nothing in the books, for each Rupiah company that imported faktur for it. */
 async function unbookedFaktur(db: Db, input: QueueInput, entities: { id: string; shortName: string; kind: string; functionalCurrency: string }[]): Promise<FakturCard[]> {
   const companies = entities.filter(packApplies);
@@ -135,12 +233,64 @@ async function unbookedFaktur(db: Db, input: QueueInput, entities: { id: string;
   return out;
 }
 
-const countsOf = (bank: number, d: unknown[], s: unknown[], f: unknown[]): ApprovalCounts => ({ bank, draft: d.length, scheduled: s.length, faktur: f.length, total: bank + d.length + s.length + f.length });
+const countsOf = (second: number, bank: number, d: unknown[], s: unknown[], a: unknown[], f: unknown[]): ApprovalCounts => ({
+  second,
+  bank,
+  draft: d.length,
+  scheduled: s.length,
+  accrual: a.length,
+  faktur: f.length,
+  total: second + bank + d.length + s.length + a.length + f.length,
+});
+
+/**
+ * Journals waiting for a second approver dated on or before the month end (a draft by its period), for the companies in scope, oldest
+ * first: Review's "through the month end", so an old request never hides. A request is never a ledger entry (accounting-rules 2a).
+ */
+const secondWhere = (clientId: string, ids: string[], end: Date) => ({ clientId, entityId: { in: ids }, status: "PENDING" as const, date: { lte: end } });
+/** Reopen requests for months up to the one in scope: shown even when that month is closed, the one card a closed month can act on. */
+const reopenWhere = (clientId: string, year: number, month: number) => ({ clientId, status: "PENDING" as const, OR: [{ year: { lt: year } }, { year, month: { lte: month } }] });
+
+async function secondCards(db: Db, input: QueueInput, ids: string[], start: Date, end: Date): Promise<SecondCard[]> {
+  const [rows, reopens, accounts] = await Promise.all([
+    db.journalApproval.findMany({
+      where: secondWhere(input.clientId, ids, end),
+      include: { entity: { select: { shortName: true, functionalCurrency: true } }, maker: { select: { name: true } } },
+      orderBy: [{ date: "asc" }, { createdAt: "asc" }],
+    }),
+    pendingReopens(db, input.clientId, { year: input.year, month: input.month }),
+    db.account.findMany({ where: { clientId: input.clientId }, select: { code: true, name: true } }),
+  ]);
+  const names = new Map(accounts.map((a) => [a.code, a.name]));
+  const journals: SecondCard[] = rows.map((a) => ({
+    type: "journal",
+    id: a.id,
+    source: a.source,
+    sourceLabel: a.accrualKey ? ACCRUAL_LABEL : SOURCE_LABEL[a.source],
+    entityId: a.entityId,
+    entity: a.entity.shortName,
+    currency: a.entity.functionalCurrency,
+    date: toIsoDate(a.date),
+    memo: a.memo,
+    lines: readStoredLines(a.lines).map((l) => ({ accountCode: l.accountCode, accountName: names.get(l.accountCode) ?? "", debit: l.debit, credit: l.credit, memo: l.memo ?? null })),
+    total: a.amount.toString(),
+    reverseNextMonth: a.reverseNextMonth,
+    makerId: a.makerId,
+    makerRole: a.makerRole,
+    maker: a.maker.name,
+    at: a.createdAt.toISOString(),
+    why: waitReason(a.threshold, a.entity.functionalCurrency),
+    waitingFor: waitingFor(a.makerRole),
+    earlier: a.date < start,
+  }));
+  const asked: SecondCard[] = reopens.map((r) => ({ type: "reopen", id: r.id, year: r.year, month: r.month, label: r.label, reason: r.reason, requestedById: r.requestedById, requestedBy: r.requestedBy, at: r.at.toISOString(), earlier: r.year * 100 + r.month < input.year * 100 + input.month }));
+  return [...journals, ...asked];
+}
 
 /** The queue for a client-month and scope, with a card per proposal (bank lines capped) and the count per kind. */
 export async function approvalQueue(db: Db, input: QueueInput): Promise<ApprovalQueue> {
   const { entities, ids, start, end } = await scopeOf(db, input);
-  const [lines, accounts, period, draftCards, scheduledCards, fakturCards] = await Promise.all([
+  const [lines, accounts, period, draftCards, scheduledCards, accrualCards, fakturCards, second] = await Promise.all([
     db.bankTransaction.findMany({
       where: reviewWhere(ids, end),
       include: { bankAccount: { select: { label: true, currency: true } } },
@@ -150,7 +300,9 @@ export async function approvalQueue(db: Db, input: QueueInput): Promise<Approval
     db.period.findUnique({ where: { clientId_year_month: { clientId: input.clientId, year: input.year, month: input.month } }, select: { status: true } }),
     drafts(db, input, ids, end),
     scheduled(db, input, ids, start),
+    accruals(db, input, ids),
     unbookedFaktur(db, input, entities),
+    secondCards(db, input, ids, start, end),
   ]);
   // The hints read the suggested account as Review's picker lists it.
   const byCode = new Map(classifiableOptions(accounts).map((o) => [o.code, o]));
@@ -184,25 +336,33 @@ export async function approvalQueue(db: Db, input: QueueInput): Promise<Approval
   const low = (c: BankCard) => c.confidence < LOW_CONFIDENCE;
   const shown = [...cards].sort((a, b) => Number(low(b)) - Number(low(a))).slice(0, BANK_CARD_LIMIT);
   return {
-    counts: countsOf(lines.length, draftCards, scheduledCards, fakturCards),
+    counts: countsOf(second.length, lines.length, draftCards, scheduledCards, accrualCards, fakturCards),
     locked: period?.status === "LOCKED",
     bank: shown,
     confident,
     drafts: draftCards,
     scheduled: scheduledCards,
+    accruals: accrualCards,
     faktur: fakturCards,
+    second,
     fakturAccounts: fakturCards.length ? fakturCounterAccounts(accounts) : null,
   };
 }
 
-/** The count per kind only (the firm board's *Persetujuan* cell): the same sets as `approvalQueue`, without building cards. */
-export async function approvalCounts(db: Db, input: QueueInput): Promise<ApprovalCounts> {
+/**
+ * The count per kind only (the firm board's *Persetujuan* cell): the same sets as `approvalQueue`, without building cards. `reopen: false`
+ * leaves reopen requests out (the checklist's *Review transaksi dan usulan* proof: a reopen of July is not August's review work).
+ */
+export async function approvalCounts(db: Db, input: QueueInput, opts: { reopen?: boolean } = {}): Promise<ApprovalCounts> {
   const { entities, ids, start, end } = await scopeOf(db, input);
-  const [bank, draftCards, scheduledCards, fakturCards] = await Promise.all([
+  const [journals, reopens, bank, draftCards, scheduledCards, accrualCards, fakturCards] = await Promise.all([
+    db.journalApproval.count({ where: secondWhere(input.clientId, ids, end) }),
+    opts.reopen === false ? 0 : db.reopenRequest.count({ where: reopenWhere(input.clientId, input.year, input.month) }),
     db.bankTransaction.count({ where: reviewWhere(ids, end) }),
     drafts(db, input, ids, end),
     scheduled(db, input, ids, start),
+    accruals(db, input, ids),
     unbookedFaktur(db, input, entities),
   ]);
-  return countsOf(bank, draftCards, scheduledCards, fakturCards);
+  return countsOf(journals + reopens, bank, draftCards, scheduledCards, accrualCards, fakturCards);
 }

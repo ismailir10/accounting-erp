@@ -14,6 +14,7 @@ import { StatusPill } from "@/components/app/status";
 import { adjustmentAction } from "@/app/actions";
 import { formatMoney, parseMoney } from "@/lib/money";
 import { formatPeriod } from "@/lib/format";
+import { formNotice, type SourceRoute } from "@/lib/approvals/second";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type Line = { accountCode: string; debit: string; credit: string; memo?: string };
@@ -35,7 +36,7 @@ const TEMPLATES: { label: string; memo: string; lines: Line[] }[] = [
 ];
 
 /** `lockedMonths` ("YYYY-MM"): closed months; a date in one is refused by the server, so the form says so before anything is typed. */
-export function JournalForm({ clientId, entities, accounts, defaultDate, lockedMonths = [], closeHref, copy }: { clientId: string; entities: { id: string; name: string; currency: string }[]; accounts: { code: string; name: string; group: string; entityId: string | null }[]; defaultDate: string; lockedMonths?: string[]; closeHref?: string; copy?: JournalCopy }) {
+export function JournalForm({ clientId, entities, accounts, defaultDate, lockedMonths = [], closeHref, copy, route }: { clientId: string; entities: { id: string; name: string; currency: string }[]; accounts: { code: string; name: string; group: string; entityId: string | null }[]; defaultDate: string; lockedMonths?: string[]; closeHref?: string; copy?: JournalCopy; /** Persetujuan kedua's *Jurnal manual* for this member. */ route?: SourceRoute }) {
   const router = useRouter();
   const [entityId, setEntityId] = useState(copy && entities.some((e) => e.id === copy.entityId) ? copy.entityId : (entities[0]?.id ?? ""));
   const [date, setDate] = useState(defaultDate);
@@ -58,6 +59,8 @@ export function JournalForm({ clientId, entities, accounts, defaultDate, lockedM
   const cr = parsed.reduce((s, p) => s + p.credit.value, 0n);
   const error = parsed.flatMap((p) => [p.debit.error, p.credit.error]).find(Boolean);
   const balanced = dr === cr && dr > 0n && !error;
+  // Persetujuan kedua: above the firm's threshold the save becomes a request another member approves (the server decides again).
+  const notice = balanced ? formNotice(route, dr, currency) : null;
   const setLine = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   // Typed "152000000" reads back as "152.000.000" once the field is left, so a missing digit is visible.
   const tidy = (i: number, side: "debit" | "credit") => {
@@ -144,6 +147,7 @@ export function JournalForm({ clientId, entities, accounts, defaultDate, lockedM
           {closeHref ? <a href={closeHref} className="font-medium underline underline-offset-4">Tutup Buku</a> : "Tutup Buku"} (dengan alasan).
         </p>
       )}
+      {notice && <p className="text-sm text-muted-foreground" data-testid="journal-second-notice">{notice.text}</p>}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <StatusPill status={balanced ? "PASS" : "REVIEW"} label={error ? "Periksa nominal" : balanced ? "Seimbang" : dr === cr ? "Isi nominal" : `Selisih ${formatMoney(dr - cr, currency)}`} />
         <Button
@@ -152,7 +156,9 @@ export function JournalForm({ clientId, entities, accounts, defaultDate, lockedM
             start(async () => {
               const r = await adjustmentAction({ clientId, entityId, date, memo, lines, reverseNextMonth: reverse });
               if (!r.ok) return void toast.error(r.error);
-              toast.success(reverse ? `Jurnal penyesuaian tersimpan, dibalik pada ${nextLabel}` : "Jurnal penyesuaian tersimpan");
+              if (r.pending) toast.success("Jurnal menunggu persetujuan", { description: "Anggota lain menyetujuinya di Kotak persetujuan sebelum dicatat." });
+              else if (r.fallback) toast.success("Jurnal penyesuaian tersimpan", { description: "Dicatat tanpa persetujuan kedua: tidak ada anggota lain yang berhak menyetujui." });
+              else toast.success(reverse ? `Jurnal penyesuaian tersimpan, dibalik pada ${nextLabel}` : "Jurnal penyesuaian tersimpan");
               setMemo("");
               setReverse(false);
               setLines([{ accountCode: "", debit: "", credit: "" }, { accountCode: "", debit: "", credit: "" }]);
@@ -160,7 +166,7 @@ export function JournalForm({ clientId, entities, accounts, defaultDate, lockedM
             })
           }
         >
-          Simpan jurnal
+          {notice?.waits ? "Ajukan persetujuan" : "Simpan jurnal"}
         </Button>
       </div>
     </div>

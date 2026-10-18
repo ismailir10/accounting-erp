@@ -6,6 +6,7 @@ import { ScopeBar } from "@/components/app/scope-bar";
 import { ScheduleProposals } from "@/components/app/schedule-proposals";
 import { SchedulePanel } from "@/components/app/schedule-panel";
 import { candidateViews, proposalViews, scheduleViews } from "@/lib/adjust/view";
+import { accrualProposals } from "@/lib/adjust/accruals";
 import { Money } from "@/components/app/money";
 import { NextStep, PageHeader } from "@/components/app/page-header";
 import Link from "next/link";
@@ -14,17 +15,22 @@ import { formatMoney } from "@/lib/money";
 import { firstOfNextMonth } from "@/lib/ledger/adjustment";
 import { accountGroup } from "@/lib/coa/options";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { StatusPill } from "@/components/app/status";
+import { requireWorkspaceSession } from "@/lib/auth/session";
+import { routeFor } from "@/lib/approvals/journals";
 
 export const metadata = { title: "Jurnal Penyesuaian" };
 
 export default async function NewJournalPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: SearchParams }) {
   const { client, period, periodOptions, sp } = await loadClientPage(params, searchParams);
-  const [due, candidates, schedules, p, lockedPeriods] = await Promise.all([
+  const [due, candidates, schedules, p, lockedPeriods, accruals] = await Promise.all([
     proposalViews(prisma, client.id, period.year, period.month),
     candidateViews(prisma, client.id, period.year, period.month),
     scheduleViews(prisma, client.id),
     prisma.period.findUnique({ where: { clientId_year_month: { clientId: client.id, year: period.year, month: period.month } }, select: { status: true } }),
     prisma.period.findMany({ where: { clientId: client.id, status: "LOCKED" }, select: { year: true, month: true } }),
+    // Accruals are proposed per vendor in Kotak persetujuan (cycle 2026-10-18-usulan-akrual), no longer as candidates here.
+    accrualProposals(prisma, client.id, period.year, period.month),
   ]);
   const lockedMonths = lockedPeriods.map((l) => `${l.year}-${String(l.month).padStart(2, "0")}`);
   const closeHref = `/clients/${client.id}/close?period=${period.key}`;
@@ -34,6 +40,13 @@ export default async function NewJournalPage({ params, searchParams }: { params:
   // Companies first: an adjusting entry almost always belongs to the PT/CV, not the owner.
   const entities = [...client.entities].sort((a, b) => Number(a.kind === "PERORANGAN") - Number(b.kind === "PERORANGAN")).map((e) => ({ id: e.id, name: e.name, currency: e.functionalCurrency }));
   const accounts = await prisma.account.findMany({ where: { clientId: client.id, isSuspense: false }, orderBy: { code: "asc" }, include: { bankAccounts: { select: { entityId: true } } } });
+  // Persetujuan kedua: this member's route for *Jurnal manual*, and the journals of this client still waiting (listed first).
+  const session = await requireWorkspaceSession();
+  const [route, waiting] = await Promise.all([
+    routeFor(prisma, client.id, { id: session.member.id, role: session.member.role }, "MANUAL"),
+    prisma.journalApproval.findMany({ where: { clientId: client.id, status: "PENDING", source: { in: ["MANUAL", "REVERSAL"] } }, include: { entity: { select: { shortName: true, functionalCurrency: true } } }, orderBy: { createdAt: "desc" } }),
+  ]);
+  const kotakHref = (d: Date) => withParams(`/clients/${client.id}/approvals`, { period: `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`, jenis: "kedua" });
   const recent = await prisma.journalEntry.findMany({
     where: { entity: { clientId: client.id }, kind: "ADJUSTMENT" },
     include: { entity: true, lines: true, reversedBy: { select: { date: true } } },
@@ -60,6 +73,10 @@ export default async function NewJournalPage({ params, searchParams }: { params:
         <NextStep href={closeHref} cta="Buka Tutup Buku">Buku {label} sudah ditutup, jadi jurnal bertanggal di bulan ini ditolak. Pilih bulan yang masih terbuka di kanan atas, atau minta admin membuka kembali {label} (dengan alasan).</NextStep>
       ) : due.length ? (
         <NextStep>Catat {due.length} jurnal terjadwal {label} di bawah, lalu tambahkan penyesuaian lain bila perlu.</NextStep>
+      ) : accruals.length ? (
+        <NextStep href={withParams(`/clients/${client.id}/approvals`, { period: period.key, jenis: "akrual" })} cta="Buka Kotak persetujuan">
+          {accruals.length} usulan akrual dari riwayat vendor menunggu di Kotak persetujuan.
+        </NextStep>
       ) : candidates.length ? (
         <NextStep>Buat jadwal untuk kandidat di bawah bila perlu, atau catat jurnal bebas.</NextStep>
       ) : (
@@ -79,6 +96,7 @@ export default async function NewJournalPage({ params, searchParams }: { params:
               defaultDate={toIsoDate(period.end)}
               lockedMonths={lockedMonths}
               closeHref={closeHref}
+              route={route}
             />
           </CardContent>
         </Card>
@@ -88,6 +106,19 @@ export default async function NewJournalPage({ params, searchParams }: { params:
             <CardDescription>Jurnal penyesuaian klien ini</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
+            {waiting.map((a) => (
+              <div key={a.id} className="flex justify-between gap-2" data-testid="journal-waiting">
+                <div className="min-w-0">
+                  <div className="truncate">{a.source === "REVERSAL" ? `Pembalik: ${a.memo}` : a.memo}</div>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                    <StatusPill status="REVIEW" label="Menunggu persetujuan" />
+                    <span>{formatDate(a.date)} · {a.entity.shortName}</span>
+                    <Link href={kotakHref(a.date)} className="drill">Kotak persetujuan</Link>
+                  </div>
+                </div>
+                <Money className="shrink-0" value={a.amount} currency={a.entity.functionalCurrency} />
+              </div>
+            ))}
             {recent.map((e) => (
               <div key={e.id} className="flex justify-between gap-2">
                 <div className="min-w-0">
@@ -107,7 +138,7 @@ export default async function NewJournalPage({ params, searchParams }: { params:
                 <Money className="shrink-0" value={e.lines.reduce((s, l) => s + l.debit, 0n)} currency={e.entity.functionalCurrency} />
               </div>
             ))}
-            {recent.length === 0 && <p className="text-muted-foreground">Belum ada jurnal penyesuaian untuk klien ini.</p>}
+            {recent.length === 0 && waiting.length === 0 && <p className="text-muted-foreground">Belum ada jurnal penyesuaian untuk klien ini.</p>}
           </CardContent>
         </Card>
       </div>

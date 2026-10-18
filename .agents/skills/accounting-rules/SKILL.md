@@ -40,6 +40,18 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
    A bank GL account belongs to one entity (`BankAccount.entityId`): another entity's entry may not use it — money between
    entities goes through 1190 in each entity's own books (rule 10). The only exception clears what older books left there (a
    line moving that entity's balance on the account toward zero); close control `bank-entity:` (REVIEW) shows such leftovers.
+2a. **Persetujuan kedua: a waiting journal is a request, never an entry** (`lib/approvals/journals.ts`, cycle 2026-10-18-persetujuan-kedua).
+   When the firm's card routes a journal (*Jurnal manual* — Jurnal Penyesuaian with or without *Balik otomatis*, *Balik jurnal* and an
+   accrual card's *Setujui* — or a *Draf AI*, each strictly above its whole-Rupiah threshold; a company kept in another currency routes
+   every journal of a switched-on source), the save stores a `JournalApproval` (lines as account code + minor-unit strings + note, the maker and the maker's role) and
+   writes **no** `JournalEntry`: no report, control or ledger view sees it. Every check the post would make runs at submission
+   (`checkJournal`). Another member with `books.write` on the client, never the maker, of a tier at least the maker's (Admin and Pemilik
+   one tier; Peninjau never) approves it; the maker's own writer (the adjustment writer, through the accrual writer for an approved
+   *Usulan akrual* — rule 5a; the reversal writer; `postProposal`) then posts it through `postJournal()` in **one transaction** with the
+   status change (`APPROVED` + `entryId`), every check made again; a refusal leaves it `PENDING`. `postedById` is the approver; the request
+   keeps the maker. Reject needs a note (≥ 5 characters); only the maker withdraws. When no other member may approve (the only admin's own
+   journal), it posts at once and Riwayat says "Dicatat tanpa persetujuan kedua". The deterministic writers (schedules, registers, tax,
+   revaluation, invoices, Saldo Awal, Temuan, ledger import, 1999 corrections) are never routed. Card off = every writer as before.
 3. **Posted entries are immutable.** Corrections = new entry. The database refuses changing a line's amounts, account, entity, date or
    entry and an entry's entity, period, date or kind (memo, source refs and links may change). Two named exceptions, both admin only and logged: deleting a client (rule 25)
    and **removing a whole import** (ADR 0013, `lib/imports/remove.ts`: open months only, a written reason, refused while an invoice
@@ -63,11 +75,19 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     same accounts and source accounts), dated by the accountant on or after the original, through `postJournal()`; `reversesId` (unique) points
     at the original, so an entry is reversed once and a reversal is never reversed. An entry a schedule, register, pack, stock count or lease
     owns, a foreign-currency or revaluation entry, and every non-adjustment are refused with where to change them instead.
+    Above the firm's *Jurnal manual* threshold (by the original's Σdebit) the reversal waits for a second approver (rule 2a); while one
+    reversal request of an entry waits, no other reversal of it is taken (a partial unique index keeps one PENDING per entry).
 4. **Locked periods reject every write** — imports, reclasses, adjustments. The database refuses inserting or deleting a journal entry
    or line dated in a LOCKED month; only `deleteClient` passes, through `set_config('buku.client_delete', 'on', true)` in its own transaction. Closing goes in order: a month can't be locked while an earlier
    month with entries other than the Saldo Awal is open (`lockPeriod`, checked again under the client lock). Unlock (`unlockPeriod`) is
    explicit, **ADMIN only**, needs a reason (≥ 5 characters), runs in reverse order (refused while a later month is locked) and writes a
-   `PeriodUnlockLog` row in the same transaction.
+   `PeriodUnlockLog` row in the same transaction. With the firm's *Buka kembali bulan* on (Persetujuan kedua, `lib/approvals/reopen.ts`)
+   the admin's reason creates a `ReopenRequest` (checked like the unlock; one PENDING per client-month) and the month **stays locked**
+   until another active Pemilik or Admin confirms it — the confirm runs the same unlock in the same transaction as the decision, and the
+   log keeps `requestedById` (the requester) beside `unlockedById` (the confirmer). Reject (another admin, a note ≥ 5 characters) and
+   cancel (the requester) leave it locked. With a single active admin the reopen happens at once and the log and Riwayat say "Dibuka tanpa
+   konfirmasi kedua: hanya satu admin aktif"; with the setting off it is exactly the direct unlock, which also closes a waiting request
+   of the month as "dibuka langsung".
 5. **Opening balances** are `OPENING` entries. **No plug** (ADR 0012): a difference between the typed lines posts to **3290 Selisih Saldo
    Awal** and opens a **Temuan** (`Finding`, `T-<n>` per client) in the same transaction — never to 3200. Saldo Laba is typed (or copied
    from the difference by an explicit click). A Temuan is resolved once: a written decision (≥ 10 characters) and one `OPENING` entry dated the
@@ -82,8 +102,36 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     account, total in minor units, months, start). Installments are exact (⌊total/n⌋, remainder on the last); an accrual is one month
     and reverses on the 1st of the next. Each month's installment is **proposed at read time and posted only by the accountant's click**
     through `postJournal()` (kind `ADJUSTMENT`), carrying `scheduleId` + `installment` (unique: posts once). Never edited after posting —
-    stop and create a new one (a stop is checked under a row lock when posting; installments due through the month of the stop stay owed and proposed until posted, later ones are dropped; a stopped accrual still reverses what it posted). An installment stays proposed from its month until posted, in every later month too, unless its month is locked; a schedule with any installment (or reversal) in an already locked month is refused at creation (under a per-client close lock that closing a month also takes; a close refuses if a schedule due by that month, overdue ones included, appeared while its controls ran). Candidates (fixed-asset purchase, prepayment, deferred revenue, recurring cost missing this month) are
+    stop and create a new one (a stop is checked under a row lock when posting; installments due through the month of the stop stay owed and proposed until posted, later ones are dropped; a stopped accrual still reverses what it posted). An installment stays proposed from its month until posted, in every later month too, unless its month is locked; a schedule with any installment (or reversal) in an already locked month is refused at creation (under a per-client close lock that closing a month also takes; a close refuses if a schedule due by that month, overdue ones included, appeared while its controls ran). Candidates (fixed-asset purchase, prepayment, deferred revenue; never an accrual — see *Usulan akrual* below) are
     deterministic suggestions only; a schedule made from an entry stores that line (`sourceEntryId` + `sourceAccountId`, which it must release: an asset by depreciation — an expense debited, accumulated depreciation or that asset credited — a prepayment or deferred revenue by amortisation, the prepayment on credit, the deferred revenue on debit) and covers only it; schedules made before the line was stored are matched one to one by memo, then amount. A due, unposted installment is a REVIEW control `sched:`.
+    **Usulan akrual** (`lib/adjust/accruals.ts`, cycle 2026-10-18-usulan-akrual): a cost that recurs per counterparty and is missing
+    from a month is proposed as an accrual — deterministic, no AI, computed at read time, nothing stored until decided.
+    - **Bucket** = company, expense account (BEBAN on *Beban umum & administrasi*, *Beban penjualan*, *Beban lain-lain*, except 7190,
+      7200, 7300; never HPP or tax) and counterparty: a bank line's `merchantKey` (BANK/RECLASS, never a generic key, rule 14), a
+      purchase invoice's contact (INVOICE, not voided), or — for imported ledger lines (IMPORTED) — the account itself. Adjustments,
+      schedules, reversals and Saldo Awal are never spend.
+    - **Rule** on M−4…M−1, each month the bucket's net natural movement in functional minor units: ≥ 3 months with movement, none
+      negative, every one within 25 % of the median (4 × |amount − median| ≤ median, bigint), the median ≥ the ledger scan's
+      materiality (rule 22b). The median is the middle month, of four the later of the two middle months: always one month's own amount.
+    - **Proposed only when** M has ended (Asia/Jakarta), M isn't locked, nothing from the counterparty is dated in M (a payee's out
+      line in any status, a supplier's bill or matched bank line, a ledger bucket's imported line) and M is complete (every bank
+      account of a payee's history covered through M's end, rule 22c; a ledger-fed company has imported lines in M). A manual accrual
+      on the account in M (an ADJUSTMENT crediting a liability, or an ACCRUAL schedule's instalment) hides a ledger bucket and warns
+      on a payee or supplier card. Every history line is cited as `jl:<id>`, so the amount drills to its bank row or `sheet!row`.
+    - **Posted only by the accountant's click** (*Setujui*, `postAccrual` / `postPreparedAccrual`): one SERIALIZABLE transaction
+      re-checks that the proposal is undecided and still missing, posts Dr the account / Cr 2150 on M's last day and its mirror on the
+      1st of M+1 (`reversesId` set) through Jurnal Penyesuaian's own writer (`postPreparedAdjustment`, *Balik otomatis*; a locked M+1
+      refuses both), and stores the `ProposedEntry` (source ACCRUAL) POSTED with its entry. *Tolak* stores it DISMISSED, for M only.
+      Nothing else proposes accruals.
+    - **With Persetujuan kedua's *Jurnal manual* on** (rule 2a), *Setujui* follows the manual journal's route (`submitAccrual`): strictly
+      above the threshold (or every accrual of a non-Rupiah company) it stores a MANUAL `JournalApproval` with *Balik otomatis* and
+      `accrualKey` = the proposal's key — no entry, no `ProposedEntry`; the card leaves *Usulan akrual* while it waits and refuses a direct
+      *Setujui* / *Tolak*. Another member's approval re-reads the proposal and posts the stored lines through the same accrual writer,
+      storing the decision and approving the request in one transaction; a refusal (payment arrived, decided, M+1 locked) leaves it
+      waiting. A rejected request brings the card back with the reason. Equal posts; with nobody else to approve, it posts at once.
+    - A POSTED accrual whose counterparty then gets a line in M (a late statement) counts the expense twice: REVIEW control
+      `accrual-paid:` *Akrual dan pembayaran di bulan yang sama* lists both and points to *Salin* of the accrual's reversal into M with
+      *Balik otomatis*; acknowledged with a note like any REVIEW, never FAIL.
 
 ## Money
 5b. **Fixed-asset register** (`lib/assets`): a `FixedAsset` per entity (fiscal group, fiscal method, acquisition date, cost, residual,
@@ -312,6 +360,11 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     INTEREST → 8200, BIAYA TXN / FEE PAYMENT / MATERAI / STAMP DUTY → 7100) are firm **rules** (they post); a new firm rule reaches
     existing firms only through a data migration. The last-resort simple guess depends on the entity (`lib/classify/fallback.ts`):
     company in → 4100 / out → 6190; PERORANGAN in → 4910 / out → 3300 Prive.
+    **Instruksi kantor** (`lib/instructions`, cycle 2026-10-18-instruksi-kantor): an approved *Aturan akun* is an ordinary `Rule` with
+    `source` INSTRUKSI, `instructionId` set and **priority 5** (before every seeded firm rule): a firm rule for *Semua klien*, a client rule
+    for one client. Client-before-firm and the specificity exception above are unchanged; a matched line's reason reads `Instruksi kantor:
+    keterangan memuat "<pattern>"` and it is RULE 0.97 like any rule (rule 14's dial applies). *Matikan* deletes the rule; nothing posted
+    moves, on approval or after.
 13a. **Tax remittances file to the liability they clear** (firm rules, `lib/classify/rules.ts`, by words or by the KAP-KJS code on the state receipt — 411121, 411124, 411128, 411125-100/-200, 411211): PPh 21 → 2140, PPh 23 → 2141, PPh 4(2) / final → 2145, PPh 29 → 2146, PPN → 2130, PPh 25 → 1180
     (prepaid, rule 5d), Bea Meterai → 7100. A payment that reads as a state tax payment without naming the tax (MPN, DJP, SSP, KPP, kode billing; regional taxes excluded) gets a HEURISTIC suggestion 2145 for review (`taxPaymentSuggestion`), never an expense and no AI call. A remittance without the withholding booked leaves that liability **debit**, which the sanity control *Saldo berlawanan dengan sifat akun* raises
     — book the withholding (payroll, or rule 5h) rather than moving the remittance. A rule whose account the client's chart lacks is skipped (`matchRule(…, codes)`), never a failed import.
@@ -324,6 +377,11 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     earlier (in Review it is linked and takes the transfer suggestion; on the transfer account it is linked; posted elsewhere it stays
     unlinked and untouched, named in the new line's reason). Changing the dial affects new imports only. Defaults (all on, no cap) = the
     behaviour before the dial.
+    An active *Tahan di Review* instruction (`lib/instructions`) is read with the dial and is **stricter only**: a line the dial would post
+    whose description holds its keyword (its direction and minimum amount when given; `matchesLine`) waits on 1999 the same way, reason
+    `Ditahan instruksi kantor "<sentence>". <classifier's reason>`, counted as *instruksi kantor* in "N ditahan Otomasi kantor (…)". A
+    transfer pair is decided once for both halves (a hold naming either half holds the pair), so a held pair follows the rules above.
+    The import reads the instruction's typed fields only; the sentence is never a prompt.
     An AI suggestion of a trade receivable for money in (or a trade payable for money out) while the entity's books hold none to settle
     **by the row's date** is replaced by the simple guess's account (4100 / 6190; 4910 / 3300 for a person, `lib/classify/fallback.ts`) at 0.55, still
     method AI, with a reason naming the original account and why (`lib/ai/unbacked.ts`, import and *Minta saran AI*); it never posts, is never
@@ -422,12 +480,18 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
 20b. **Close copilot / proposed entries** (`lib/controls/explain.ts`, `lib/adjust/proposals.ts`): *Jelaskan* sends one flagged control's
     rows (20a caps) and gets an explanation, an optional note (a prefill the accountant saves) and an optional draft journal —
     kept only if every account is in the chart (never a bank account), it balances, and **every amount equals the amount of a row the answer cites** (checked again when it posts).
-    Drafts are `ProposedEntry` rows, posted only by the accountant's click (accounts editable, amounts never) through `postJournal()`;
+    Drafts are `ProposedEntry` rows, posted only by the accountant's click (accounts editable, amounts never) through `postJournal()`
+    — and above the firm's *Draf AI* threshold that click is the first approval: the chosen accounts wait in a `JournalApproval` (rule 2a),
+    the draft stays PROPOSED and refuses a direct post or dismiss, and a second member's approval runs `postProposal` with every re-check;
+    a rejection returns the draft with the note. AI still never posts: a draft needs one or two human clicks;
     a draft that moves one cited **bank line** posts through the reviewer's writer instead (RECLASS + Memory, rule 3); one that moves
     cited bank lines any other way (several lines at once) gets no draft, never a free journal. A cited journal line or entry
     (`jl:`/`je:`, as the ledger anomaly scans cite) counts as its bank line when it came from one, and every account that line posts
     to (classification, tax split, suspense) is part of it. Group-level
-    controls get words only. Deterministic proposals (e.g. 1999 corrections) use the same table.
+    controls get words only. Deterministic proposals (1999 corrections, accruals from history — rule 5a, source ACCRUAL, stored only when
+    decided) use the same table. An accrual is an estimate, so unlike a draft its amount may be changed before *Setujui* (`parseMoney`,
+    > 0), as may its accounts: the debit never a bank, clearing (1190/1199) or 1999 account, the credit a liability, none of those. The
+    stored proposal keeps Buku's lines; the entry holds what was posted, and its origin says "diubah dari Rp …".
     A draft that moves a bank line is not created, shown as blocked and refused on post when an `ADJUSTMENT` of that entity, dated from
     the line's date to the period end, already moves exactly its amount off its account (`priorCorrection`): never correct twice.
     Drafts for a PT or foreign company never see the Prive line (3300); a CV's or an individual's may.
@@ -447,6 +511,17 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     against: when the books move that series it is stale and the management pack's *Perubahan Akun* leaves it out, saying so. Last
     month's text is only offered (*Pakai lagi*), never approved for the accountant. One budgeted, cached call (scope `flux:<client>:<month>`,
     its own per-month limit); explanations are commentary, so a closed month still takes one.
+20e. **Instruksi kantor — *Susun dengan AI*** (`lib/instructions/ai.ts`, `ai-prompt.ts`, cycle 2026-10-18-instruksi-kantor): offered only
+    for a sentence Buku's own reader did not understand (an explicit refusal stays a refusal) and only on the click of a member who may
+    approve it. The payload is the sentence (≤ 300 characters) and the account list a rule may target, by code and name (no bank, 1999,
+    3200, 3290; never 1190/1199, as `aiAccounts`) — no bank line, no amount from the books, no client name. The answer is one closed JSON
+    object `{kind: ACCOUNT|FLAG|HOLD|NONE, pattern, direction, accountCode, taxTag, minAmount, inclusive}`; any other key, a second object
+    or NONE ends it. It is kept only when grounded — the keyword is in the sentence (case and spaces ignored), the amount is one Buku's own
+    reader finds in the sentence, the account is in the list — and then passes the same `validateDraft` as the reader's output. One
+    budgeted call (`runBudgetedAi`, scope `instruksi:<firm>`), cached in `EvidenceAiCache` by sentence, account list, model and prompt
+    version, never retried; tests use `MockProvider`. The result is a draft marked *Disusun AI*; only a person's *Setujui* stores it, and
+    the server decides the origin (its reader's result, else a cached AI draft for that sentence, else *Disunting*). Never at run time:
+    imports, controls and the preview read only the approved typed fields.
 21. Provider is OpenAI-compatible `fetch` (OpenCode Zen default) behind `AiProvider`; swap by config, not code.
     Key + model: **Pengaturan (DB, encrypted) overrides env** — resolve via `resolveAiConfig()` (`lib/settings/ai.ts`).
     `AI_BASE_URL` stays **env-only** so a visitor can't redirect the stored key. *Cek koneksi* hits `GET /models` (no tokens).
@@ -476,7 +551,16 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     7190/7200 exempt from flux/flip. The AI close review may send the flagged accounts' month series and the month's journal lines behind
     them (memo ≤ 80 chars) under rule 20a's caps.
 22c. Source validation persists declared/inferred periods and printed/derived balances. Monthly bank completeness requires the union of declared intervals through month end; legacy/unknown, repaired or inferred evidence is REVIEW. Contradictory source balances are FAIL. An earlier printed row balance is never treated as the month-end balance.
-23. Tutup Buku requires: no FAIL, every REVIEW acknowledged with a note, all sign-offs ticked.
+22d. **Tandai — the firm's own checks** (`lib/instructions/controls.ts`, cycle 2026-10-18-instruksi-kantor): an active *Tandai* instruction
+    is one REVIEW control per entity (key `instr:<entity>:<instruction>`) in every month whose period is not locked, listing the month's
+    bank lines with its direction, its keyword when given and an absolute amount above (or at least) its minimum — up to five in the
+    detail, then "+N lainnya". With none it is PASS ("Tidak ada …") and folds with the passed controls. Computed at read time from the
+    typed fields, never stored, never added to a locked month (reopening shows it). A note clears it like any REVIEW control while the
+    list is unchanged; *Matikan* removes it from open months and its old notes stay, unused. The AI close review and *Jelaskan* may send
+    its listed lines like any flagged control's rows (rule 20a caps). Deterministic: no model decides it.
+23. Tutup Buku requires: no FAIL, every REVIEW acknowledged with a note, all sign-offs ticked, and **no journal waiting for a second
+    approver** that would post into the month (dated in it, or a *Balik otomatis* request of the month before; `pendingJournalCount`,
+    checked again under the client lock): "Belum bisa tutup buku: 2 jurnal menunggu persetujuan kedua."
     *Tutup bulan-bulan sebelumnya* (`lib/controls/history.ts`, admin only) closes the open months before the selected one in order, one
     month per call: the same rule per month, with one note written on each REVIEW still without a note and the sign-offs given by the
     admin once for the run; a month whose open controls differ from what was previewed, or that fails, stops the run.
@@ -485,6 +569,6 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
 24. Every row has `firmId`. Server actions resolve the client through `getClientForFirm()` before any write.
 25. **Deleting a client** (`lib/clients/delete.ts`) is not a ledger correction: an admin removes a client entered by mistake or a test
     copy after typing its exact name. Everything that is its books (entities, accounts, periods, journals, bank and ledger imports,
-    memories, client rules, proposals, invoices, assets, schedules, leases, employee benefits, tax records, stock counts, evidence, Temuan, close checklist, change log) goes in one
-    transaction; firm rules, rates, mortality tables and
+    memories, client rules and its Instruksi kantor, proposals, second-approval and reopen requests, invoices, assets, schedules, leases, employee benefits, tax records, stock counts, evidence, Temuan, close checklist, change log) goes in one
+    transaction; firm rules, *Semua klien* instructions, rates, mortality tables and
     AI caches stay. A new table that references a client or entity must be added to that function.
