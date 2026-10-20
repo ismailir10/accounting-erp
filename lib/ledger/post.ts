@@ -39,6 +39,9 @@ export type PostInput = {
   /** Installment of an adjustment schedule (accounting-rules 5a); both or neither. */
   scheduleId?: string;
   installment?: number;
+  /** Instalment of a Jurnal berulang (lib/adjust/recurring.ts): the template and its month (year × 100 + month); both or neither. */
+  recurringId?: string;
+  recurringMonth?: number;
   /** Member doing the posting; null/undefined = system (seed, migration). Attribution only, never a rule. */
   actorId?: string | null;
   /** The entry this one reverses (lib/ledger/reverse.ts); unique, so an entry is reversed once. */
@@ -184,6 +187,8 @@ export async function postJournal(tx: Tx, input: PostInput) {
       sourceRef: input.sourceRef,
       scheduleId: input.scheduleId,
       installment: input.installment,
+      recurringId: input.recurringId,
+      recurringMonth: input.recurringMonth,
       reversesId: input.reversesId,
       postedById: input.actorId ?? null,
       number,

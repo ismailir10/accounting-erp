@@ -12,7 +12,7 @@ import { clearReportComment, CommentError, draftCommentary, saveReportComment } 
 import { clearFluxExplanation, draftFluxExplanation, ExplanationError, saveFluxExplanation, type ExplanationDraft } from "@/lib/reports/flux-explanation";
 import { headers } from "next/headers";
 import { appUrl } from "@/lib/supabase/env";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatPeriod } from "@/lib/format";
 import { createUploadLink, revokeUploadLink, uploadPath, UploadLinkError } from "@/lib/upload-links";
 import { importStatement, type ImportSummary } from "@/lib/import/pipeline";
 import { resolveProvider } from "@/lib/settings/ai";
@@ -22,7 +22,9 @@ import { cancelReopen, confirmReopen, rejectReopen, requestReopen } from "@/lib/
 import { LedgerError } from "@/lib/ledger/post";
 import { approveJournal, rejectJournal, submitAccrual, submitAdjustment, submitProposal, submitReversal, withdrawJournal, type Outcome } from "@/lib/approvals/journals";
 import { ApprovalError } from "@/lib/approvals/second";
-import { createSchedule, postAllDue, postInstallment, stopSchedule, type ScheduleInput } from "@/lib/adjust/schedules";
+import { createSchedule, dueProposals, postAllDue, postInstallment, stopSchedule, type ScheduleInput } from "@/lib/adjust/schedules";
+import { createRecurring, stopRecurring } from "@/lib/adjust/recurring";
+import { postAllRecurring, postRecurring } from "@/lib/adjust/recurring-post";
 import { createAsset, type AssetInput } from "@/lib/assets/register";
 import { disposeAsset, type DisposalInput } from "@/lib/assets/dispose";
 import { cancelLease, createLease, postLeaseMonths, type LeaseInput } from "@/lib/leases/register";
@@ -1103,13 +1105,55 @@ export async function postInstallmentAction(clientId: string, scheduleId: string
   }
 }
 
-/** `entityId`: one company's instalments only (Kotak persetujuan scoped to a company); a foreign id matches no schedule of the client. */
-export async function postAllDueAction(clientId: string, year: number, month: number, entityId?: string): Promise<Result<{ posted: number }>> {
+/**
+ * *Catat semua*: every schedule instalment, then every Jurnal berulang instalment, due by the month. `entityId`: one company's only
+ * (Kotak persetujuan scoped to a company); a foreign id matches nothing of the client. `asked`: recurring ones stored as requests.
+ */
+export async function postAllDueAction(clientId: string, year: number, month: number, entityId?: string): Promise<Result<{ posted: number; asked: number }>> {
   try {
-    const client = await writeClient(clientId);
-    const posted = await postAllDue(prisma, { clientId: client.id, year, month, entityId, actorId: (await getCurrentMember()).id });
+    const { client, member } = await writer(clientId);
+    const scheduled = (await dueProposals(prisma, client.id, year, month, entityId)).length ? await postAllDue(prisma, { clientId: client.id, year, month, entityId, actorId: member.id }) : 0;
+    const recurring = await postAllRecurring(prisma, { clientId: client.id, year, month, entityId, maker: member });
     revalidatePath(`/clients/${client.id}`, "layout");
-    return { ok: true, posted };
+    if (!scheduled && !recurring.posted && !recurring.asked) throw new LedgerError(`Tidak ada jurnal terjadwal untuk ${formatPeriod(year, month)}.`);
+    return { ok: true, posted: scheduled + recurring.posted, asked: recurring.asked };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** *Ulangi tiap bulan* on a posted Jurnal Penyesuaian (lib/adjust/recurring.ts); `end` "YYYY-MM" is the last month it proposes, optional. */
+export async function createRecurringAction(clientId: string, entryId: string, end?: string): Promise<Result> {
+  try {
+    const { client, member } = await writer(clientId);
+    const m = end ? /^(\d{4})-(\d{2})$/.exec(end) : null;
+    if (end && !m) throw new LedgerError("Bulan terakhir tidak valid.");
+    await createRecurring(prisma, { clientId: client.id, entryId, end: m ? { year: Number(m[1]), month: Number(m[2]) } : null, actorId: member.id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** *Catat* on a Jurnal berulang instalment (`k` = year × 100 + month): posted, or a request above the *Jurnal manual* threshold. */
+export async function postRecurringAction(clientId: string, recurringId: string, k: number): Promise<Result<Saved>> {
+  try {
+    const { client, member } = await writer(clientId);
+    const o = await postRecurring(prisma, { clientId: client.id, recurringId, year: Math.floor(k / 100), month: k % 100, maker: member });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true, ...saved(o) };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function stopRecurringAction(clientId: string, recurringId: string): Promise<Result> {
+  try {
+    const { client, member } = await writer(clientId);
+    await stopRecurring(prisma, { clientId: client.id, recurringId, actorId: member.id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
   } catch (e) {
     return fail(e);
   }

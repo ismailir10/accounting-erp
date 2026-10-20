@@ -5,7 +5,7 @@ import { recordEvent } from "@/lib/audit";
 import { formatDate, periodBounds } from "@/lib/format";
 import { formatMoney } from "@/lib/money";
 import { checkJournal, LedgerError } from "@/lib/ledger/post";
-import { adjustmentPosting, firstOfNextMonth, postAdjustment, postPreparedAdjustment, prepareAdjustment, type AdjustmentLineInput, type PreparedAdjustment } from "@/lib/ledger/adjustment";
+import { adjustmentPosting, firstOfNextMonth, postPreparedAdjustment, prepareAdjustment, type AdjustmentLineInput, type PreparedAdjustment } from "@/lib/ledger/adjustment";
 import { checkReversal, mirrorLines, reverseEntry, reverseEntryTx } from "@/lib/ledger/reverse";
 import { chosenAccounts, postProposal, readLines } from "@/lib/adjust/proposals";
 import { closeLock } from "@/lib/adjust/schedules";
@@ -86,6 +86,7 @@ type NewRequest = {
   proposalId?: string;
   accounts?: string[];
   accrualKey?: string;
+  recurring?: { id: string; month: number };
 };
 
 /** Stores the request and its "diajukan" event in `tx` (the caller has checked it could post). */
@@ -104,6 +105,8 @@ async function createRequest(tx: Tx, r: NewRequest) {
       proposalId: r.proposalId ?? null,
       accounts: r.accounts ?? [],
       accrualKey: r.accrualKey ?? null,
+      recurringId: r.recurring?.id ?? null,
+      recurringMonth: r.recurring?.month ?? null,
       amount: r.amount,
       threshold: r.threshold,
       makerId: r.maker.id,
@@ -128,25 +131,42 @@ async function createRequest(tx: Tx, r: NewRequest) {
  * the journal is stored as a request — no entry. With nobody else to approve, it posts at once and Riwayat says so.
  */
 export async function submitAdjustment(db: Db, input: { clientId: string; entityId: string; date: Date; memo: string; lines: AdjustmentLineInput[]; reverseNextMonth?: boolean; maker: Maker }): Promise<Outcome> {
+  return submitPrepared(db, await prepareAdjustment(db, input), input);
+}
+
+/**
+ * The route behind `submitAdjustment` for an adjustment already read: also *Catat* on a Jurnal berulang instalment (lib/adjust/recurring.ts),
+ * whose `guard` runs first in whichever transaction posts it or stores its request, and whose `onPosted` runs after a post in it.
+ */
+export async function submitPrepared(
+  db: Db,
+  prepared: PreparedAdjustment,
+  input: { clientId: string; maker: Maker; guard?: (tx: Tx) => Promise<void>; onPosted?: (tx: Tx, entryId: string) => Promise<void> },
+): Promise<Outcome> {
   const settings = await readApprovals(db, await firmOf(db, input.clientId));
-  if (!settings.manual) return { posted: true, entryId: (await postAdjustment(db, { ...input, actorId: input.maker.id })).id, fallback: false };
-  const prepared = await prepareAdjustment(db, input);
+  const by = input.maker.id;
+  const post = (fallback?: (tx: Tx, entryId: string) => Promise<void>) =>
+    db.$transaction(async (tx) => {
+      await input.guard?.(tx);
+      const e = await postPreparedAdjustment(tx, prepared, by);
+      await fallback?.(tx, e.id);
+      await input.onPosted?.(tx, e.id);
+      return e;
+    });
+  if (!settings.manual) return { posted: true, entryId: (await post()).id, fallback: false };
   const amount = sumDebit(prepared.lines);
   const route = routing(settings, "MANUAL", amount, prepared.entity.functionalCurrency);
   const h: Head = { source: "MANUAL", memo: prepared.memo, date: prepared.date, amount, currency: prepared.entity.functionalCurrency };
-  if (!route.routed) return { posted: true, entryId: (await db.$transaction((tx) => postPreparedAdjustment(tx, prepared, input.maker.id))).id, fallback: false };
+  if (!route.routed) return { posted: true, entryId: (await post()).id, fallback: false };
   if (!(await approverExists(db, input.clientId, input.maker))) {
-    const entry = await db.$transaction(async (tx) => {
-      const e = await postPreparedAdjustment(tx, prepared, input.maker.id);
-      await recordFallback(tx, input.clientId, prepared.entity.id, h, e.id, input.maker.id);
-      return e;
-    });
+    const entry = await post((tx, id) => recordFallback(tx, input.clientId, prepared.entity.id, h, id, by));
     return { posted: true, entryId: entry.id, fallback: true };
   }
   const a = await db.$transaction(async (tx) => {
     await closeLock(tx, input.clientId); // a lock of the month either sees this request or refuses it (period closed)
+    await input.guard?.(tx);
     await checkPrepared(tx, prepared);
-    return createRequest(tx, { ...h, clientId: input.clientId, entityId: prepared.entity.id, lines: stored(prepared.lines), threshold: route.threshold, maker: input.maker, reverseNextMonth: prepared.reverseNextMonth });
+    return createRequest(tx, { ...h, clientId: input.clientId, entityId: prepared.entity.id, lines: stored(prepared.lines), threshold: route.threshold, maker: input.maker, reverseNextMonth: prepared.reverseNextMonth, recurring: prepared.recurring });
   });
   return { posted: false, approvalId: a.id };
 }
@@ -312,20 +332,26 @@ async function markApproved(tx: Tx, a: Request, entryId: string, approverId: str
   await recordEvent(tx, { clientId: a.clientId, entityId: a.entityId, kind: "APPROVAL", subject: approvalSubject(a.id), summary: `${requestHead(a)} disetujui dan dicatat${reversal}`, before: { status: "PENDING" }, after: { status: "APPROVED", entryId }, actorId: approverId });
 }
 
-/** The stored lines on the client's chart as it is now (an account removed meanwhile refuses). */
+/** Stored lines (a request's, a Jurnal berulang template's) on the client's chart as it is now (an account removed meanwhile refuses). */
+export async function storedPosting(db: Db | Tx, clientId: string, value: unknown): Promise<PreparedAdjustment["lines"]> {
+  const lines = readStoredLines(value);
+  const accounts = new Map((await db.account.findMany({ where: { clientId, code: { in: lines.map((l) => l.accountCode) } } })).map((x) => [x.code, x]));
+  return lines.map((l) => {
+    const acc = accounts.get(l.accountCode);
+    if (!acc) throw new LedgerError(`Akun ${l.accountCode} tidak ada lagi di bagan akun klien.`);
+    return { accountId: acc.id, accountCode: acc.code, debit: BigInt(l.debit), credit: BigInt(l.credit), memo: l.memo };
+  });
+}
+
+/** A waiting request as the adjustment writer takes it (a Jurnal berulang instalment keeps its template and month). */
 async function preparedOf(tx: Db | Tx, a: Request): Promise<PreparedAdjustment> {
-  const lines = readStoredLines(a.lines);
-  const accounts = new Map((await tx.account.findMany({ where: { clientId: a.clientId, code: { in: lines.map((l) => l.accountCode) } } })).map((x) => [x.code, x]));
   return {
     entity: { id: a.entityId, functionalCurrency: a.entity.functionalCurrency },
     date: a.date,
     memo: a.memo,
     reverseNextMonth: a.reverseNextMonth,
-    lines: lines.map((l) => {
-      const acc = accounts.get(l.accountCode);
-      if (!acc) throw new LedgerError(`Akun ${l.accountCode} tidak ada lagi di bagan akun klien.`);
-      return { accountId: acc.id, accountCode: acc.code, debit: BigInt(l.debit), credit: BigInt(l.credit), memo: l.memo };
-    }),
+    lines: await storedPosting(tx, a.clientId, a.lines),
+    ...(a.recurringId && a.recurringMonth ? { recurring: { id: a.recurringId, month: a.recurringMonth } } : {}),
   };
 }
 

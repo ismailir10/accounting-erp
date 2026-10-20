@@ -423,6 +423,7 @@ model Client {
   coaVersion         Int                  @default(1)
   /// Modules turned on in the client menu (lib/clients/modules.ts): receivables · inventory · assets · leases · benefits. Presentation only.
   modules            String[]             @default([])
+  recurringJournals  RecurringJournal[]
 
   @@index([firmId])
 }
@@ -460,6 +461,7 @@ model Entity {
   journalApprovals   JournalApproval[]
   budgets            Budget[]
   journalSequences   JournalSequence[]
+  recurringJournals  RecurringJournal[]
 
   @@index([clientId])
 }
@@ -816,13 +818,52 @@ model JournalEntry {
   number            String?
   /// Lampiran: evidence files attached to the journal (never read for amounts).
   attachments       JournalAttachment[]
+  /// Jurnal berulang: the template this entry is the instalment of, and its month (year × 100 + month); one per template and month.
+  recurringId       String?
+  recurring         RecurringJournal?    @relation("RecurringEntries", fields: [recurringId], references: [id], onDelete: Restrict)
+  recurringMonth    Int?
+  /// Templates made from this entry (*Ulangi tiap bulan*).
+  recurringFrom     RecurringJournal[]   @relation("RecurringSource")
   lines             JournalLine[]
 
   @@unique([scheduleId, installment])
   @@unique([entityId, number])
+  @@unique([recurringId, recurringMonth])
   @@index([entityId, date])
   @@index([bankTransactionId])
   @@index([ledgerImportId])
+}
+
+/// Jurnal berulang (cycle 2026-10-21-jurnal-berulang): a Jurnal Penyesuaian repeated every month from its start to its end or stop, each
+/// month's instalment proposed and posted only by a click through Jurnal Penyesuaian's own writer (lib/adjust/recurring.ts). Its lines
+/// never change: a different journal is a new template.
+model RecurringJournal {
+  id               String            @id @default(cuid())
+  firmId           String
+  clientId         String
+  client           Client            @relation(fields: [clientId], references: [id])
+  entityId         String
+  entity           Entity            @relation(fields: [entityId], references: [id])
+  memo             String
+  /// [{ accountCode, debit, credit, memo? }]: minor units of the entity's currency as strings, as a stored Jurnal Penyesuaian request.
+  lines            Json
+  /// Day of the month the instalment is dated (1–31, a shorter month's last day when past it), or 0 for the month's last day.
+  day              Int
+  reverseNextMonth Boolean           @default(false)
+  startYear        Int
+  startMonth       Int
+  endYear          Int?
+  endMonth         Int?
+  stoppedAt        DateTime?
+  sourceEntryId    String?
+  sourceEntry      JournalEntry?     @relation("RecurringSource", fields: [sourceEntryId], references: [id], onDelete: SetNull)
+  createdById      String?
+  createdBy        FirmMember?       @relation("RecurringCreatedBy", fields: [createdById], references: [id])
+  createdAt        DateTime          @default(now())
+  entries          JournalEntry[]    @relation("RecurringEntries")
+  approvals        JournalApproval[] @relation("RecurringApprovals")
+
+  @@index([clientId])
 }
 
 /// Lampiran jurnal (cycle 2026-10-20-lampiran-arsip): a receipt, invoice or approval kept with a journal. Evidence only: it never
@@ -1579,6 +1620,7 @@ model FirmMember {
   reopensDecided       ReopenRequest[]       @relation("ReopenDecider")
   unlocksRequested     PeriodUnlockLog[]     @relation("PeriodUnlockRequestedBy")
   attachmentsUploaded  JournalAttachment[]   @relation("AttachmentUploadedBy")
+  recurringCreated     RecurringJournal[]    @relation("RecurringCreatedBy")
 
   @@index([firmId])
 }
@@ -2436,6 +2478,10 @@ model JournalApproval {
   accounts         String[]              @default([])
   /// MANUAL with *Balik otomatis* only: the *Usulan akrual* this request posts (its `ProposedEntry` key, stored POSTED on approval).
   accrualKey       String?
+  /// MANUAL only: the Jurnal berulang instalment this request posts (template and month, year × 100 + month).
+  recurringId      String?
+  recurring        RecurringJournal?     @relation("RecurringApprovals", fields: [recurringId], references: [id], onDelete: Restrict)
+  recurringMonth   Int?
   /// Σdebit in minor units of the entity's functional currency, and the threshold in force (whole Rupiah; null = every journal).
   amount           BigInt
   threshold        BigInt?

@@ -9,6 +9,7 @@ import { balanceSheet, combinedWorksheet, trialBalance } from "@/lib/reports/led
 import { sanityControls } from "@/lib/controls/sanity";
 import { anomalyControls } from "@/lib/controls/anomaly";
 import { closeLock, dueProposals, schedulesDueBy } from "@/lib/adjust/schedules";
+import { recurringDue, recurringDueBy } from "@/lib/adjust/recurring";
 import { closeReopenRequests, pendingJournalCount, pendingLockMessage } from "@/lib/approvals/pending";
 import { paidAfterAccrual } from "@/lib/adjust/accruals";
 import { registerVsLedger } from "@/lib/assets/register";
@@ -253,11 +254,15 @@ async function collectControls(db: Db, clientId: string, year: number, month: nu
     );
     if (flags.length) controls.push(...(await instructionControls(db, { flags, entity: e, start, end, acks })));
 
-    // Adjustment schedules (rule 5a): an installment of this month not yet posted needs the click or a note.
-    const due = await dueProposals(db, clientId, year, month, e.id);
+    // Adjustment schedules (rule 5a) and Jurnal berulang: an instalment of this month not yet posted needs the click (or the template's
+    // stop) or a note. One waiting for a second approver is asked, not due: the lock waits for its decision instead.
+    const due = [
+      ...(await dueProposals(db, clientId, year, month, e.id)).map((p) => ({ memo: p.memo, amount: p.installment.amount })),
+      ...(await recurringDue(db, clientId, year, month, e.id)).filter((d) => !d.waitingId).map((d) => ({ memo: `${d.template.memo} (${formatPeriod(d.year, d.month)})`, amount: d.amount })),
+    ];
     if (due.length) {
       const sKey = `sched:${e.id}`;
-      const list = due.slice(0, 3).map((p) => `${p.memo} ${fmt(p.installment.amount)}`);
+      const list = due.slice(0, 3).map((p) => `${p.memo} ${fmt(p.amount)}`);
       controls.push({
         key: sKey,
         title: "Jurnal terjadwal belum dicatat",
@@ -662,6 +667,9 @@ export async function laterLockedMonth(db: Db | Tx, clientId: string, year: numb
 }
 const mustCloseFirst = (p: { year: number; month: number }) => new CloseError(`Tutup buku ${formatPeriod(p.year, p.month)} dulu: bulan sebelumnya yang berisi transaksi harus ditutup lebih dulu.`);
 
+/** Schedules and Jurnal berulang templates with an instalment due by the month (rule 5a). */
+const dueBy = async (db: Db | Tx, clientId: string, year: number, month: number) => [...(await schedulesDueBy(db, clientId, year, month)), ...(await recurringDueBy(db, clientId, year, month))];
+
 export async function lockPeriod(db: Db, clientId: string, year: number, month: number, note: string, actorId?: string | null) {
   const before = await earlierOpenMonth(db, clientId, year, month);
   if (before) throw mustCloseFirst(before);
@@ -669,7 +677,7 @@ export async function lockPeriod(db: Db, clientId: string, year: number, month: 
   const waiting = await pendingJournalCount(db, clientId, year, month);
   if (waiting) throw new CloseError(pendingLockMessage(waiting));
   // Schedules due by this month known before the controls run: one created meanwhile was never checked, so the lock refuses (rule 5a).
-  const known = new Set(await schedulesDueBy(db, clientId, year, month));
+  const known = new Set(await dueBy(db, clientId, year, month));
   const controls = await runControls(db, clientId, year, month);
   const period = await db.period.upsert({
     where: { clientId_year_month: { clientId, year, month } },
@@ -692,7 +700,7 @@ export async function lockPeriod(db: Db, clientId: string, year: number, month: 
     if (raced) throw mustCloseFirst(raced);
     const asked = await pendingJournalCount(tx, clientId, year, month); // a request stored meanwhile (submits take the same lock)
     if (asked) throw new CloseError(pendingLockMessage(asked));
-    if ((await schedulesDueBy(tx, clientId, year, month)).some((id) => !known.has(id))) {
+    if ((await dueBy(tx, clientId, year, month)).some((id) => !known.has(id))) {
       throw new CloseError("Jadwal penyesuaian baru yang jatuh tempo sampai bulan ini ditambahkan saat tutup buku berjalan. Muat ulang halaman, periksa kontrolnya, lalu tutup lagi.");
     }
     return tx.period.update({ where: { id: period.id }, data: { status: "LOCKED", lockedAt: new Date(), lockNote: note, lockedById: actorId ?? null } });

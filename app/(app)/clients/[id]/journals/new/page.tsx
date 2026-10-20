@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { loadClientPage } from "@/lib/client-page";
 import { type SearchParams, withParams } from "@/lib/scope";
-import { formatDate, formatPeriod, toIsoDate } from "@/lib/format";
+import { formatDate, formatMonthShort, formatPeriod, toIsoDate } from "@/lib/format";
 import { ScopeBar } from "@/components/app/scope-bar";
 import { ScheduleProposals } from "@/components/app/schedule-proposals";
 import { SchedulePanel } from "@/components/app/schedule-panel";
@@ -16,10 +16,21 @@ import { firstOfNextMonth } from "@/lib/ledger/adjustment";
 import { accountGroup } from "@/lib/coa/options";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusPill } from "@/components/app/status";
-import { requireWorkspaceSession } from "@/lib/auth/session";
+import { accessView, requireWorkspaceSession } from "@/lib/auth/session";
 import { routeFor } from "@/lib/approvals/journals";
+import { dayLabel, recurringViews } from "@/lib/adjust/recurring";
+import { RecurringList, RepeatJournal } from "@/components/app/recurring-journals";
 
 export const metadata = { title: "Jurnal Penyesuaian" };
+
+/** Where *Ulangi tiap bulan* starts for a journal dated `d`: the next month, on the same day (the month's last when `d` was its last). */
+function repeatFrom(d: Date) {
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth() + 1;
+  const next = m === 12 ? { y: y + 1, m: 1 } : { y, m: m + 1 };
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate() === d.getUTCDate();
+  return { start: `${next.y}-${String(next.m).padStart(2, "0")}`, startLabel: formatMonthShort(next.y, next.m), day: dayLabel(last ? 0 : d.getUTCDate()) };
+}
 
 export default async function NewJournalPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: SearchParams }) {
   const { client, period, periodOptions, sp } = await loadClientPage(params, searchParams);
@@ -46,6 +57,13 @@ export default async function NewJournalPage({ params, searchParams }: { params:
     routeFor(prisma, client.id, { id: session.member.id, role: session.member.role }, "MANUAL"),
     prisma.journalApproval.findMany({ where: { clientId: client.id, status: "PENDING", source: { in: ["MANUAL", "REVERSAL"] } }, include: { entity: { select: { shortName: true, functionalCurrency: true } } }, orderBy: { createdAt: "desc" } }),
   ]);
+  const { canWrite } = accessView(session);
+  // Jurnal berulang: the client's templates, and the journals already repeated (no second *Ulangi* on them).
+  const [recurring, repeated] = await Promise.all([
+    recurringViews(prisma, client.id),
+    prisma.recurringJournal.findMany({ where: { clientId: client.id, stoppedAt: null, sourceEntryId: { not: null } }, select: { sourceEntryId: true } }),
+  ]);
+  const repeatedIds = new Set(repeated.map((r) => r.sourceEntryId));
   const kotakHref = (d: Date) => withParams(`/clients/${client.id}/approvals`, { period: `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`, jenis: "kedua" });
   const recent = await prisma.journalEntry.findMany({
     where: { entity: { clientId: client.id }, kind: "ADJUSTMENT" },
@@ -131,6 +149,13 @@ export default async function NewJournalPage({ params, searchParams }: { params:
                       <>
                         {" · "}
                         <Link href={withParams(`/clients/${client.id}/journals/new`, { period: period.key, salin: e.id })} className="drill" aria-label={`Salin jurnal ${e.memo}`}>Salin</Link>
+                        {/* *Ulangi tiap bulan*: not for a reversal, a schedule's or a template's instalment, or a journal already repeated. */}
+                        {canWrite && !e.reversesId && !e.scheduleId && !e.recurringId && !repeatedIds.has(e.id) && (
+                          <>
+                            {" · "}
+                            <RepeatJournal clientId={client.id} entryId={e.id} memo={e.memo} {...repeatFrom(e.date)} />
+                          </>
+                        )}
                       </>
                     )}
                   </div>
@@ -142,6 +167,7 @@ export default async function NewJournalPage({ params, searchParams }: { params:
           </CardContent>
         </Card>
       </div>
+      <RecurringList clientId={client.id} items={recurring} canWrite={canWrite} />
       <SchedulePanel clientId={client.id} entities={entities} accounts={accounts.filter((a) => !a.isBank && !a.isClearing).map((a) => ({ code: a.code, name: a.name, type: a.type, fsLine: a.fsLine }))} candidates={candidates} schedules={schedules} nextMonth={next} />
     </div>
   );

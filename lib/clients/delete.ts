@@ -60,6 +60,7 @@ export async function deleteClient(db: Db, input: { firmId: string; clientId: st
       await tx.journalEntry.updateMany({ where: { ...byEntity, reversesId: { not: null } }, data: { reversesId: null } }); // self-reference first
       await tx.journalEntry.deleteMany({ where: byEntity }); // lines cascade
       await tx.adjustmentSchedule.deleteMany({ where: { clientId } });
+      await tx.recurringJournal.deleteMany({ where: { clientId } }); // Jurnal berulang: its entries and requests went above
       await tx.ckpnSetting.deleteMany({ where: byEntity });
       await tx.bankTransaction.deleteMany({ where: { bankAccountId: { in: bankIds } } });
       await tx.statementImport.deleteMany({ where: { bankAccountId: { in: bankIds } } });
