@@ -33,6 +33,9 @@ const TEMPLATES: { label: string; memo: string; lines: Line[] }[] = [
   { label: "Penyusutan", memo: "Penyusutan aset tetap bulanan", lines: [{ accountCode: "6180", debit: "", credit: "" }, { accountCode: "1219", debit: "", credit: "" }] },
   { label: "Akrual beban", memo: "Akrual beban yang belum dibayar", lines: [{ accountCode: "6190", debit: "", credit: "" }, { accountCode: "2150", debit: "", credit: "" }] },
   { label: "Piutang usaha", memo: "Pengakuan piutang atas penjualan belum dibayar", lines: [{ accountCode: "1130", debit: "", credit: "" }, { accountCode: "4100", debit: "", credit: "" }] },
+  // Money that never touches a statement (the incumbents' kas keluar / kas masuk); the bank's own lines come from the rekening koran.
+  { label: "Kas kecil keluar", memo: "Pengeluaran kas kecil", lines: [{ accountCode: "6190", debit: "", credit: "" }, { accountCode: "1110", debit: "", credit: "" }] },
+  { label: "Kas kecil masuk", memo: "Penerimaan kas kecil", lines: [{ accountCode: "1110", debit: "", credit: "" }, { accountCode: "4100", debit: "", credit: "" }] },
 ];
 
 /** `lockedMonths` ("YYYY-MM"): closed months; a date in one is refused by the server, so the form says so before anything is typed. */
