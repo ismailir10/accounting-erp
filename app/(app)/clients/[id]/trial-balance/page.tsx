@@ -13,24 +13,69 @@ import { sourceTrialBalance } from "@/lib/reports/source";
 import { AccountViewTabs } from "@/components/app/account-view-tabs";
 import { TbTable, type TbTableRow } from "@/components/app/tb-table";
 import { LedgerDownloads } from "@/components/app/ledger-downloads";
+import { LinkTabs } from "@/components/app/link-tabs";
+import { WorksheetTable } from "@/components/app/worksheet-table";
+import { buttonVariants } from "@/components/ui/button";
+import { neracaLajur } from "@/lib/reports/worksheet";
+import { parseRange, rangeBounds } from "@/lib/reports/general-ledger";
+import { rangeLabel } from "@/lib/reports/ledger-workbook";
+import Link from "next/link";
 
 export const metadata = { title: "Neraca Saldo" };
 
 export default async function TrialBalancePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: SearchParams }) {
   const { client, period, scope, periodOptions, entityOptions, base, scopeLabel, currency, mixed, sp } = await loadClientPage(params, searchParams);
   const note = currencyNote(currency, mixed);
-  const view = await clientAccountsView(scope, sp);
+  // Neraca Lajur (`?bentuk=lajur`) reads the Buku chart: the ten-column worksheet has no client-account form.
+  const lajur = sp.bentuk === "lajur";
+  const view = lajur ? { available: false, active: false } : await clientAccountsView(scope, sp);
   const q = { period: period.key, entity: scope.value };
   const header = (
     <>
       <PageHeader
-        title="Neraca Saldo"
+        title={lajur ? "Neraca Lajur" : "Neraca Saldo"}
         description={`${scopeLabel} · ${formatPeriod(period.year, period.month)}${note ? ` · ${note}` : ""}`}
-        actions={<><ScopeBar entities={entityOptions} periods={periodOptions} entity={scope.value} period={period.key} />{!view.active && currency === "IDR" && <LedgerDownloads href={`${base}/trial-balance/export`} query={q} testId="tb-download" />}</>}
+        actions={<><ScopeBar entities={entityOptions} periods={periodOptions} entity={scope.value} period={period.key} />{!view.active && currency === "IDR" && <LedgerDownloads href={`${base}/trial-balance/export`} query={{ ...q, bentuk: lajur ? "lajur" : undefined }} testId={lajur ? "neraca-lajur-download" : "tb-download"} />}</>}
+      />
+      <LinkTabs
+        label="Bentuk neraca saldo"
+        items={[
+          { href: withParams(`${base}/trial-balance`, q), label: "Neraca Saldo", active: !lajur },
+          { href: withParams(`${base}/trial-balance`, { ...q, view: "buku", bentuk: "lajur" }), label: "Neraca Lajur", active: lajur },
+        ]}
       />
       {view.available && <AccountViewTabs clientView={view.active} href={(v) => withParams(`${base}/trial-balance`, { ...q, view: v })} />}
     </>
   );
+
+  if (lajur) {
+    if (mixed) return <div className="space-y-6">{header}<NextStep>Neraca lajur disusun per mata uang. Pilih satu perusahaan di kanan atas.</NextStep></div>;
+    const range = parseRange(sp.range);
+    const bounds = await rangeBounds(prisma, client.id, range, period);
+    const w = await neracaLajur(prisma, { clientId: client.id, entityIds: scope.entityIds }, bounds.start, bounds.end);
+    const lq = { ...q, view: "buku", bentuk: "lajur" };
+    return (
+      <div className="space-y-6">
+        {header}
+        <NextStep>
+          Penyesuaian = jurnal penyesuaian {range === "ytd" ? `${rangeLabel(range, bounds.start, bounds.end)}` : `bulan ${formatPeriod(period.year, period.month)}`} (termasuk pembalik, penyusutan dan
+          jurnal pajak). Neraca Saldo Disesuaikan sama dengan Neraca Saldo; laba bersih menyeimbangkan Laba Rugi dan Neraca.
+        </NextStep>
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Rentang penyesuaian">
+          {(["month", "ytd"] as const).map((r) => (
+            <Link key={r} href={withParams(`${base}/trial-balance`, { ...lq, range: r === "ytd" ? "ytd" : undefined })} aria-current={range === r ? "page" : undefined} className={buttonVariants({ variant: range === r ? "secondary" : "ghost", size: "sm" })}>
+              {r === "ytd" ? "Tahun buku s.d. bulan ini" : "Bulan ini"}
+            </Link>
+          ))}
+        </div>
+        <Card>
+          <CardContent className="px-0">
+            {w.lines.length ? <WorksheetTable w={w} currency={currency} href={(code) => withParams(`${base}/ledger/${code}`, q)} /> : <p className="px-6 py-8 text-center text-sm text-muted-foreground">Belum ada saldo per akhir {formatPeriod(period.year, period.month)}.</p>}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (view.active) {
     // The client's own accounts, as in their file; lines without one (bank, adjustments) under their Buku account.
