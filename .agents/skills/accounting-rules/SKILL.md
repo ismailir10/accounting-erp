@@ -40,6 +40,11 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
    **Nomor bukti:** every entry gets `number` = `PREFIX-YYMM-NNNN` from its company's series per prefix and month (`lib/ledger/number.ts`:
    SA, BM/BK by the bank line's side, RK, JP, JI, FJ/FB by the receivable/payable line), taken by `postJournal` in the posting
    transaction (`JournalSequence`, row-locked, so a rollback returns the number); the database refuses changing or clearing it.
+   **Arsip akun:** `postJournal` refuses an account with `archivedAt` set; pickers, the AI scope (`isClassifiable`) and the import
+   classifier skip it (a rule or memory for it falls through to Review). Archiving (`lib/coa/manage.ts`) needs an editable account with a
+   zero balance-sheet balance, no line in an open month and no running schedule or registered asset.
+   **Lampiran jurnal** (`lib/ledger/attachments.ts`) are evidence beside an entry, never ledger data: never read for amounts or sent to a
+   model, removable only while the entry's month and every later month are open; an import whose entries carry one is not removed.
    A bank GL account belongs to one entity (`BankAccount.entityId`): another entity's entry may not use it — money between
    entities goes through 1190 in each entity's own books (rule 10). The only exception clears what older books left there (a
    line moving that entity's balance on the account toward zero); close control `bank-entity:` (REVIEW) shows such leftovers.
