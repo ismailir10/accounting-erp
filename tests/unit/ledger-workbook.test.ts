@@ -26,37 +26,38 @@ const acct = (code: string, name: string, normalBalance: "DEBIT" | "CREDIT") => 
 describe("ledger workbooks", () => {
   it("Jurnal Umum: a header row per journal, its lines, and SUM totals that balance", async () => {
     const entries: RegisterEntry[] = [
-      { id: "a", date: dateOnly(2026, 9, 3), entity: "PT Uji", kind: "ADJUSTMENT", memo: "Gaji September", source: null, origin: null, postedBy: "Sari", postedAt: new Date(), reversedOn: null, lines: [{ code: "6100", name: "Beban Gaji", memo: null, debit: 12_000_000n, credit: 0n }, { code: "1110", name: "Kas Kecil", memo: null, debit: 0n, credit: 12_000_000n }] },
-      { id: "b", date: dateOnly(2026, 9, 5), entity: "PT Uji", kind: "BANK", memo: "TRSF CR MITRA", source: "BCA Giro · bca.csv, baris 2", origin: "Usulan AI 4100 (92 %) disetujui", postedBy: "Sistem", postedAt: new Date(), reversedOn: null, lines: [{ code: "1101", name: "Bank BCA", memo: null, debit: 4_250_000n, credit: 0n }, { code: "4100", name: "Penjualan", memo: null, debit: 0n, credit: 4_250_000n }] },
+      { id: "a", number: "JP-2609-0001", date: dateOnly(2026, 9, 3), entity: "PT Uji", kind: "ADJUSTMENT", memo: "Gaji September", source: null, origin: null, postedBy: "Sari", postedAt: new Date(), reversedOn: null, lines: [{ code: "6100", name: "Beban Gaji", memo: null, debit: 12_000_000n, credit: 0n }, { code: "1110", name: "Kas Kecil", memo: null, debit: 0n, credit: 12_000_000n }] },
+      { id: "b", number: "BM-2609-0001", date: dateOnly(2026, 9, 5), entity: "PT Uji", kind: "BANK", memo: "TRSF CR MITRA", source: "BCA Giro · bca.csv, baris 2", origin: "Usulan AI 4100 (92 %) disetujui", postedBy: "Sistem", postedAt: new Date(), reversedOn: null, lines: [{ code: "1101", name: "Bank BCA", memo: null, debit: 4_250_000n, credit: 0n }, { code: "4100", name: "Penjualan", memo: null, debit: 0n, credit: 4_250_000n }] },
     ];
     const ws = await read(await journalWorkbook(meta, "September 2026", entries));
     const r = rows(ws);
     expect(r[0]).toEqual(["PT Uji Sejahtera"]);
     expect(r[1]).toEqual(["Jurnal Umum"]);
-    expect(r.find((x) => x[0] === "2026-09-03")).toEqual(["2026-09-03", "Penyesuaian", "PT Uji", "Gaji September", null, null, null, null, "Dicatat oleh Sari"]);
+    expect(r.find((x) => x[0] === "2026-09-03")).toEqual(["2026-09-03", "JP-2609-0001", "Penyesuaian", "PT Uji", "Gaji September", null, null, null, null, "Dicatat oleh Sari"]);
     // The source column names the proposal the entry was approved from after its source row.
-    expect(r.find((x) => x[8] === "BCA Giro · bca.csv, baris 2 · Usulan AI 4100 (92 %) disetujui")?.[1]).toBe("Mutasi bank");
-    expect(r.at(-1)!.slice(3)).toEqual(["Jumlah (2 jurnal)", null, null, "=SUM(G9:G14)→16250000", "=SUM(H9:H14)→16250000"]);
+    expect(r.find((x) => x[9] === "BCA Giro · bca.csv, baris 2 · Usulan AI 4100 (92 %) disetujui")?.slice(1, 3)).toEqual(["BM-2609-0001", "Mutasi bank"]);
+    expect(r.at(-1)!.slice(4)).toEqual(["Jumlah (2 jurnal)", null, null, "=SUM(H9:H14)→16250000", "=SUM(I9:I14)→16250000"]);
   });
 
   it("Buku Besar: opening, running-balance formulas on the normal side, closing; prior-year profit named", async () => {
     const accounts: GlAccount[] = [
       { account: acct("1110", "Kas Kecil", "DEBIT"), opening: 640_000_000n, priorYearProfit: 0n, debit: 0n, credit: 15_500_000n, closing: 624_500_000n, lines: [
-        { date: dateOnly(2026, 9, 3), entity: "PT Uji", kind: "ADJUSTMENT", memo: "Gaji", source: null, debit: 0n, credit: 12_000_000n, balance: 628_000_000n },
-        { date: dateOnly(2026, 9, 20), entity: "PT Uji", kind: "ADJUSTMENT", memo: "Sewa", source: null, debit: 0n, credit: 3_500_000n, balance: 624_500_000n },
+        { date: dateOnly(2026, 9, 3), number: "JP-2609-0001", entity: "PT Uji", kind: "ADJUSTMENT", memo: "Gaji", source: null, debit: 0n, credit: 12_000_000n, balance: 628_000_000n },
+        { date: dateOnly(2026, 9, 20), number: "JP-2609-0002", entity: "PT Uji", kind: "ADJUSTMENT", memo: "Sewa", source: null, debit: 0n, credit: 3_500_000n, balance: 624_500_000n },
       ] },
       { account: acct("3200", "Saldo Laba", "CREDIT"), opening: 100_000_000n, priorYearProfit: 100_000_000n, debit: 0n, credit: 0n, closing: 100_000_000n, lines: [] },
     ];
     const r = rows(await read(await ledgerWorkbook(meta, "September 2026", accounts)));
     const i = r.findIndex((x) => x[0] === "1110 Kas Kecil");
-    expect(r[i + 1]).toEqual([null, "Saldo awal", null, null, null, null, null, 640_000_000]);
-    expect(r[i + 2].at(-1)).toBe(`=H${10}+F11-G11→628000000`);
-    expect(r[i + 4].slice(1)).toEqual(["Saldo akhir", null, null, null, "=SUM(F11:F12)→undefined", "=SUM(G11:G12)→15500000", "=H12→624500000"]);
+    expect(r[i + 1]).toEqual([null, null, "Saldo awal", null, null, null, null, null, 640_000_000]);
+    expect(r[i + 2].slice(0, 3)).toEqual(["2026-09-03", "JP-2609-0001", "Gaji"]);
+    expect(r[i + 2].at(-1)).toBe(`=I${10}+G11-H11→628000000`);
+    expect(r[i + 4].slice(2)).toEqual(["Saldo akhir", null, null, null, "=SUM(G11:G12)→undefined", "=SUM(H11:H12)→15500000", "=I12→624500000"]);
     const j = r.findIndex((x) => x[0] === "3200 Saldo Laba");
-    expect(r[j + 1][1]).toBe("Saldo awal (termasuk laba rugi tahun-tahun lalu)");
-    expect(r[j + 2].at(-1)).toMatch(/^=H\d+→100000000$/);
+    expect(r[j + 1][2]).toBe("Saldo awal (termasuk laba rugi tahun-tahun lalu)");
+    expect(r[j + 2].at(-1)).toMatch(/^=I\d+→100000000$/);
     // No movement: zero, never a SUM over its own closing row (Excel would call that circular).
-    expect(r[j + 2].slice(1, 7)).toEqual(["Saldo akhir", null, null, null, 0, 0]);
+    expect(r[j + 2].slice(2, 8)).toEqual(["Saldo akhir", null, null, null, 0, 0]);
   });
 
   it("Neraca Saldo: six columns with SUM totals, debit = credit", async () => {
@@ -76,7 +77,7 @@ describe("ledger workbooks", () => {
 
   it("an empty export totals to zero instead of a circular SUM", async () => {
     const r = rows(await read(await journalWorkbook(meta, "September 2026", [])));
-    expect(r.at(-1)!.slice(3)).toEqual(["Jumlah (0 jurnal)", null, null, 0, 0]);
+    expect(r.at(-1)!.slice(4)).toEqual(["Jumlah (0 jurnal)", null, null, 0, 0]);
   });
 
   it("names files and ranges", () => {

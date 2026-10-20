@@ -86,6 +86,7 @@ export async function accountLedger(
     const t = l.entry.bankTransaction;
     return {
       id: l.id,
+      number: l.entry.number,
       date: formatDate(l.date),
       entity: l.entry.entity.shortName,
       memo: l.entry.memo,

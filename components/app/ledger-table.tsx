@@ -21,6 +21,8 @@ import { formNotice, type SourceRoute } from "@/lib/approvals/second";
 
 export type LedgerRow = {
   id: string;
+  /** Nomor bukti of the entry (lib/ledger/number.ts). */
+  number?: string | null;
   date: string;
   entity: string;
   memo: string;
@@ -134,7 +136,7 @@ export function LedgerTable({ rows, opening, priorYearProfit, currency = "IDR", 
               <TableCell className="max-w-md">
                 <button type="button" className="block max-w-full truncate text-left drill" onClick={(e) => { e.stopPropagation(); show(r); }}>{r.memo}</button>
                 <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                  {KIND[r.kind]} · {r.entity}
+                  {r.number && <span className="num" data-testid="ledger-row-number">{r.number} · </span>}{KIND[r.kind]} · {r.entity}
                   {(r.source || r.fileSource) && <FileText className="size-3" aria-label="Ada sumber" />}
                 </div>
               </TableCell>
@@ -150,7 +152,7 @@ export function LedgerTable({ rows, opening, priorYearProfit, currency = "IDR", 
           {open && (
             <>
               <SheetHeader>
-                <SheetTitle>{KIND[open.kind]} · {open.date}</SheetTitle>
+                <SheetTitle>{open.number ? `${open.number} · ` : ""}{KIND[open.kind]} · {open.date}</SheetTitle>
                 <SheetDescription>
                   {open.memo}
                   {open.postedBy && <span className="mt-1 block text-xs">Dicatat oleh {open.postedBy}</span>}

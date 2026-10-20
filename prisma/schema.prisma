@@ -459,6 +459,7 @@ model Entity {
   subledgerImports   SubledgerImport[]
   journalApprovals   JournalApproval[]
   budgets            Budget[]
+  journalSequences   JournalSequence[]
 
   @@index([clientId])
 }
@@ -809,12 +810,27 @@ model JournalEntry {
   postedById        String?
   postedBy          FirmMember?          @relation("EntryPostedBy", fields: [postedById], references: [id])
   createdAt         DateTime             @default(now())
+  /// Nomor bukti, e.g. "JP-2512-0003" (PREFIX-YYMM-NNNN): set by postJournal() from the company's series, never changed (DB trigger).
+  number            String?
   lines             JournalLine[]
 
   @@unique([scheduleId, installment])
+  @@unique([entityId, number])
   @@index([entityId, date])
   @@index([bankTransactionId])
   @@index([ledgerImportId])
+}
+
+/// Nomor bukti series: the last number given per company, prefix (SA, BM, BK, RK, JP, JI, FJ, FB) and month (lib/ledger/number.ts).
+model JournalSequence {
+  entityId String
+  entity   Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  prefix   String
+  year     Int
+  month    Int
+  last     Int
+
+  @@id([entityId, prefix, year, month])
 }
 
 /// DB CHECK constraints (see migration): debit >= 0, credit >= 0, exactly one side non-zero.

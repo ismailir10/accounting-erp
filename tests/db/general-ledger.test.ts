@@ -113,11 +113,13 @@ describe("journal register (Jurnal Umum)", () => {
 
 describe("search parsing", () => {
   it("reads Indonesian amounts and keeps text as text", () => {
-    expect(parseSearch("1.250.000", "IDR")).toEqual({ text: "1.250.000", amount: 1_250_000n });
-    expect(parseSearch("Rp 1.250.000", "IDR")).toEqual({ text: "Rp 1.250.000", amount: 1_250_000n });
-    expect(parseSearch("(15.000)", "IDR")).toEqual({ text: "(15.000)", amount: 15_000n });
-    expect(parseSearch("gaji 2026", "IDR")).toEqual({ text: "gaji 2026", amount: null });
-    expect(parseSearch("1,5", "IDR")).toEqual({ text: "1,5", amount: null });
+    expect(parseSearch("1.250.000", "IDR")).toEqual({ text: "1.250.000", amount: 1_250_000n, number: null });
+    expect(parseSearch("Rp 1.250.000", "IDR")).toEqual({ text: "Rp 1.250.000", amount: 1_250_000n, number: null });
+    expect(parseSearch("(15.000)", "IDR")).toEqual({ text: "(15.000)", amount: 15_000n, number: null });
+    expect(parseSearch("gaji 2026", "IDR")).toEqual({ text: "gaji 2026", amount: null, number: null });
+    expect(parseSearch("1,5", "IDR")).toEqual({ text: "1,5", amount: null, number: null });
     expect(parseSearch("  ", "IDR")).toBeNull();
+    // A nomor bukti is found by its number in any common spelling (lib/ledger/number.ts).
+    expect(parseSearch("jp-2512-3", "IDR")).toEqual({ text: "jp-2512-3", amount: null, number: "JP-2512-0003" });
   });
 });

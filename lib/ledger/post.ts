@@ -2,6 +2,7 @@ import type { Tx } from "@/lib/db";
 import type { EntryKind } from "@/lib/generated/prisma/enums";
 import { formatPeriod } from "@/lib/format";
 import { convertMinor, isCurrency } from "@/lib/fx/currency";
+import { nextNumber, numberPrefix } from "@/lib/ledger/number";
 
 /**
  * The ONLY writer of JournalEntry/JournalLine. Enforces (accounting-rules):
@@ -9,6 +10,7 @@ import { convertMinor, isCurrency } from "@/lib/fx/currency";
  *  2. period open (locked periods reject every write)
  *  3. every account belongs to the entity's client COA; every source account belongs to the entity
  *  4. foreign-currency lines: currency ≠ functional, round(fxAmount × fxRate) = amount ± 1 minor unit (rule 6b)
+ * and gives the entry its nomor bukti (lib/ledger/number.ts) in the same transaction.
  * Amounts are minor units of the entity's functional currency (IDR = whole Rupiah).
  * Posted entries are immutable — corrections go through a new RECLASS/ADJUSTMENT entry.
  */
@@ -126,7 +128,7 @@ async function validate(tx: Tx, input: Pick<PostInput, "entityId" | "lines">) {
     const diff = expected > actual ? expected - actual : actual - expected;
     if (diff > 1n) throw new LedgerError(`Nominal ${actual} tidak sama dengan ${l.fx.amount} ${l.fx.currency} × kurs ${l.fx.rate}`);
   }
-  return { lines, entity };
+  return { lines, entity, accounts };
 }
 
 const closed = (p: { year: number; month: number }) => new LedgerError(`Periode ${formatPeriod(p.year, p.month)} sudah ditutup`);
@@ -144,9 +146,11 @@ export async function checkJournal(tx: Tx, input: Pick<PostInput, "entityId" | "
 }
 
 export async function postJournal(tx: Tx, input: PostInput) {
-  const { lines, entity } = await validate(tx, input);
+  const { lines, entity, accounts } = await validate(tx, input);
   const period = await getOrCreatePeriod(tx, entity.firmId, entity.clientId, input.date);
   if (period.status === "LOCKED") throw closed(period);
+  const byId = new Map(accounts.map((a) => [a.id, a]));
+  const number = await nextNumber(tx, entity.id, numberPrefix(input.kind, lines.map((l) => ({ ...l, account: byId.get(l.accountId)! }))), input.date);
 
   return tx.journalEntry.create({
     data: {
@@ -163,6 +167,7 @@ export async function postJournal(tx: Tx, input: PostInput) {
       installment: input.installment,
       reversesId: input.reversesId,
       postedById: input.actorId ?? null,
+      number,
       lines: {
         create: lines.map((l) => ({
           firmId: entity.firmId,

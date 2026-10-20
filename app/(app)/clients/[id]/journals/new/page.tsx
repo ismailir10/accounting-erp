@@ -124,7 +124,7 @@ export default async function NewJournalPage({ params, searchParams }: { params:
                 <div className="min-w-0">
                   <div className="truncate">{e.memo}</div>
                   <div className="text-xs text-muted-foreground">
-                    {formatDate(e.date)} · {e.entity.shortName}
+                    {e.number && <span className="num">{e.number} · </span>}{formatDate(e.date)} · {e.entity.shortName}
                     {e.reversedBy && ` · dibalik ${formatDate(e.reversedBy.date)}`}
                     {/* A foreign-currency journal is not copied: its rate must be typed again (the copy would open empty). */}
                     {!e.lines.some((l) => l.currency) && (

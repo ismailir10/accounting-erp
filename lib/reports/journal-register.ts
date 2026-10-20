@@ -6,6 +6,7 @@ import { ENTRY_SOURCE_SELECT, entrySource } from "@/lib/reports/entry-source";
 import { entryOrigins } from "@/lib/reports/entry-origin";
 import { approvalLines } from "@/lib/approvals/pending";
 import type { Scope } from "@/lib/reports/ledger";
+import { parseNumberQuery } from "@/lib/ledger/number";
 
 /** The kinds Jurnal Umum filters by (`?jenis=`). A bank line's later reclassification belongs with the bank lines. */
 export const KIND_FILTERS: { value: string; label: string; kinds: EntryKind[] | null }[] = [
@@ -20,10 +21,11 @@ export const KIND_FILTERS: { value: string; label: string; kinds: EntryKind[] | 
 export const parseKindFilter = (v: unknown) => KIND_FILTERS.find((k) => k.value === v) ?? KIND_FILTERS[0];
 
 /**
- * What a search box text looks for: always the text itself (memo, bank row, account code or name), and — when it reads as an amount in
- * the scope's currency ("1.250.000", "Rp 1.250.000", "1250000") — lines of exactly that amount on either side.
+ * What a search box text looks for: always the text itself (memo, bank row, account code or name, part of a nomor bukti), when it reads
+ * as an amount in the scope's currency ("1.250.000", "Rp 1.250.000", "1250000") lines of exactly that amount on either side, and when
+ * it reads as a nomor bukti ("jp-2512-3") that journal.
  */
-export function parseSearch(q: string | undefined, currency: string): { text: string; amount: bigint | null } | null {
+export function parseSearch(q: string | undefined, currency: string): { text: string; amount: bigint | null; number: string | null } | null {
   const text = (q ?? "").trim().slice(0, 100);
   if (!text) return null;
   let amount: bigint | null = null;
@@ -35,10 +37,10 @@ export function parseSearch(q: string | undefined, currency: string): { text: st
       if (!(e instanceof MoneyError)) throw e;
     }
   }
-  return { text, amount };
+  return { text, amount, number: parseNumberQuery(text) };
 }
 
-export type RegisterFilter = { start: Date; end: Date; kinds: EntryKind[] | null; search: { text: string; amount: bigint | null } | null };
+export type RegisterFilter = { start: Date; end: Date; kinds: EntryKind[] | null; search: { text: string; amount: bigint | null; number?: string | null } | null };
 
 function entryWhere(scope: Scope, f: RegisterFilter): Prisma.JournalEntryWhereInput {
   const contains = (s: string) => ({ contains: s, mode: "insensitive" as const });
@@ -50,6 +52,8 @@ function entryWhere(scope: Scope, f: RegisterFilter): Prisma.JournalEntryWhereIn
       ? {
           OR: [
             { memo: contains(f.search.text) },
+            { number: contains(f.search.text) },
+            ...(f.search.number ? [{ number: f.search.number }] : []),
             { sourceRef: contains(f.search.text) },
             { bankTransaction: { description: contains(f.search.text) } },
             { lines: { some: { OR: [{ account: { code: f.search.text } }, { account: { name: contains(f.search.text) } }, { memo: contains(f.search.text) }] } } },
@@ -63,6 +67,8 @@ function entryWhere(scope: Scope, f: RegisterFilter): Prisma.JournalEntryWhereIn
 export type RegisterLine = { code: string; name: string; memo: string | null; debit: bigint; credit: bigint };
 export type RegisterEntry = {
   id: string;
+  /** Nomor bukti (lib/ledger/number.ts); null only for a journal written outside postJournal() in a test. */
+  number: string | null;
   date: Date;
   entity: string;
   kind: EntryKind;
@@ -97,6 +103,7 @@ export async function journalRegister(db: Db, scope: Scope, f: RegisterFilter, p
       ...(page === "all" ? {} : { skip: (Math.max(1, page) - 1) * PAGE_SIZE, take: PAGE_SIZE }),
       select: {
         id: true,
+        number: true,
         date: true,
         memo: true,
         createdAt: true,
@@ -112,6 +119,7 @@ export async function journalRegister(db: Db, scope: Scope, f: RegisterFilter, p
   const [origins, approvals] = await Promise.all([entryOrigins(db, rows.map((e) => e.id)), approvalLines(db, rows)]);
   const entries: RegisterEntry[] = rows.map((e) => ({
     id: e.id,
+    number: e.number,
     date: e.date,
     entity: e.entity.shortName,
     kind: e.kind,

@@ -109,6 +109,7 @@ export default async function JournalsPage({ params, searchParams }: { params: P
                   <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                     <div className="min-w-0">
                       <p className="text-xs text-muted-foreground">
+                        {e.number && <><span className="num font-medium text-foreground" data-testid="entry-number">{e.number}</span> · </>}
                         <span className="num">{formatDate(e.date)}</span> · {ENTRY_KIND_LABEL[e.kind]}
                         {scope.mode === "combined" && ` · ${e.entity}`}
                         {e.reversedOn && <span className="text-review"> · dibalik {formatDateLong(e.reversedOn)}</span>}
