@@ -253,7 +253,7 @@ const TYPE_LABEL: Record<AccountType, string> = { ASET: "Aset", LIABILITAS: "Lia
 
 /** Accounts a source account may map to: the client chart minus bank GL (tied to statements), suspense and clearing. */
 async function mappableAccounts(db: Db | Tx, clientId: string): Promise<ClientAccount[]> {
-  const all = await db.account.findMany({ where: { clientId }, orderBy: { code: "asc" } });
+  const all = await db.account.findMany({ where: { clientId, archivedAt: null }, orderBy: { code: "asc" } });
   return all.filter((a) => !a.isBank && !a.isSuspense && !a.isClearing);
 }
 

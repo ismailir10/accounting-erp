@@ -60,7 +60,7 @@ export default async function ReceivablesPage({ params, searchParams }: { params
   // A line tagged with its contact is allocated: its rest is that contact's advance, not a to-do.
   const loose = view.unsettled.filter((l) => !l.contact);
   const overdue = view.aging.flatMap((a) => (BigInt(a.totals.OVER_90) > 0n ? [`${a.entity} ${formatMoney(BigInt(a.totals.OVER_90), a.currency)}`] : []));
-  const pick = (f: (a: (typeof accounts)[number]) => boolean) => accounts.filter(f).map((a) => ({ code: a.code, name: a.name }));
+  const pick = (f: (a: (typeof accounts)[number]) => boolean) => accounts.filter((a) => !a.archivedAt && f(a)).map((a) => ({ code: a.code, name: a.name })); // never an archived account
 
   return (
     <div className="space-y-6">
@@ -153,7 +153,7 @@ async function Reconcile({ client, period, scope, periodOptions, entityOptions, 
   }));
   // The accounts an aging can stand for, the trade ones ticked (what the client's aging normally covers).
   const options = (lines: string[], trade: string, normal: "DEBIT" | "CREDIT") =>
-    accounts.filter((a) => lines.includes(a.fsLine) && !a.isClearing && !a.isIntercompany).map((a) => ({ code: a.code, name: a.name, checked: a.fsLine === trade && a.normalBalance === normal }));
+    accounts.filter((a) => lines.includes(a.fsLine) && !a.isClearing && !a.isIntercompany && !a.archivedAt).map((a) => ({ code: a.code, name: a.name, checked: a.fsLine === trade && a.normalBalance === normal }));
   const open = views.filter((v) => v.finding?.status === "OPEN");
   return (
     <div className="space-y-6">

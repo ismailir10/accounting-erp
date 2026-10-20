@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { SimpleSelect } from "@/components/app/simple-select";
 import { Money } from "@/components/app/money";
-import { createAccountAction, removeAccountAction, updateAccountAction } from "@/app/actions";
+import { archiveAccountAction, createAccountAction, removeAccountAction, updateAccountAction } from "@/app/actions";
 
 type Option = { value: string; label: string };
 export type AccountRow = {
@@ -32,12 +32,15 @@ export type AccountRow = {
   keep: string | null;
   /** Report lines it may move to (same type and normal side). */
   targets: Option[];
+  /** Arsip akun: hidden from pickers and refused by the ledger until reactivated. */
+  archived: boolean;
 };
 export type AccountSection = { key: string; title: string; rows: AccountRow[] };
 
 /**
  * Bagan akun: every account by statement and report line, with *Tambah akun* (one primary button) and *Ubah* per row (name, report line,
- * Hapus while no journal line uses it). The server re-checks everything and its refusal is shown verbatim.
+ * Hapus while no journal line uses it, else *Arsipkan*); archived accounts in their own section with *Aktifkan lagi*. The server re-checks
+ * everything and its refusal is shown verbatim.
  */
 export function ChartOfAccounts({ clientId, sections, lines, proposed, canWrite, hasLocked, currency }: { clientId: string; sections: AccountSection[]; lines: Option[]; proposed: Record<string, string>; canWrite: boolean; hasLocked: boolean; currency: string }) {
   const [editing, setEditing] = useState<AccountRow | null>(null);
@@ -83,7 +86,9 @@ export function ChartOfAccounts({ clientId, sections, lines, proposed, canWrite,
                     <TableCell className="text-right align-top">{r.balance === null ? "" : <Money value={BigInt(r.balance)} currency={currency} />}</TableCell>
                     {canWrite && (
                       <TableCell className="pr-6 text-right align-top">
-                        {!r.locked && (
+                        {r.archived ? (
+                          <Reactivate clientId={clientId} account={r} />
+                        ) : !r.locked && (
                           <Button variant="ghost" size="sm" onClick={() => setEditing(r)} aria-label={`Ubah ${r.code} ${r.name}`}>
                             Ubah
                           </Button>
@@ -99,6 +104,32 @@ export function ChartOfAccounts({ clientId, sections, lines, proposed, canWrite,
       ))}
       {editing && <EditAccount key={editing.id} clientId={clientId} account={editing} hasLocked={hasLocked} onClose={() => setEditing(null)} />}
     </div>
+  );
+}
+
+function Reactivate({ clientId, account }: { clientId: string; account: AccountRow }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      disabled={busy}
+      aria-label={`Aktifkan lagi ${account.code} ${account.name}`}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          const r = await archiveAccountAction(clientId, account.id, false);
+          if (!r.ok) return void toast.error(r.error);
+          toast.success(`Akun ${account.code} ${account.name} aktif lagi`);
+          router.refresh();
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      Aktifkan lagi
+    </Button>
   );
 }
 
@@ -194,6 +225,16 @@ function EditAccount({ clientId, account, hasLocked, onClose }: { clientId: stri
       setBusy(false);
     }
   }
+  async function archive() {
+    setBusy(true);
+    try {
+      const r = await archiveAccountAction(clientId, account.id, true);
+      if (!r.ok) return void toast.error(r.error);
+      done(`Akun ${account.code} ${account.name} diarsipkan`);
+    } finally {
+      setBusy(false);
+    }
+  }
   async function remove() {
     setBusy(true);
     try {
@@ -230,10 +271,15 @@ function EditAccount({ clientId, account, hasLocked, onClose }: { clientId: stri
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
           {account.keep ? (
             <span className="max-w-xs text-xs text-muted-foreground">{account.keep}</span>
-          ) : account.lines === 0 ? (
-            <Button variant="ghost" className="text-fail" onClick={remove} disabled={busy}>Hapus akun</Button>
           ) : (
-            <span className="text-xs text-muted-foreground">Dipakai {account.lines.toLocaleString("id-ID")} baris jurnal, jadi tidak bisa dihapus.</span>
+            <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              {account.lines === 0 ? (
+                <Button variant="ghost" className="text-fail" onClick={remove} disabled={busy}>Hapus akun</Button>
+              ) : (
+                `Dipakai ${account.lines.toLocaleString("id-ID")} baris jurnal, jadi tidak bisa dihapus.`
+              )}
+              <Button variant="ghost" size="sm" onClick={archive} disabled={busy}>Arsipkan</Button>
+            </span>
           )}
           <div className="flex gap-2">
             <Button variant="ghost" onClick={onClose} disabled={busy}>Batal</Button>

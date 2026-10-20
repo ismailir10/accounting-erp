@@ -38,7 +38,7 @@ export async function explainInput(db: Db, clientId: string, year: number, month
   // Prive (3300) is an owner's withdrawal from a sole proprietorship or a CV partner; a PT or foreign company's draft never uses it.
   const noPrive = entity !== null && (entity.kind === "PT" || entity.kind === "BADAN_USAHA_ASING");
   // Transfers are paired by the matcher or decided by the reviewer, never drafted by the model (accounting-rules 13): no 1190/1199.
-  const accounts = aiAccounts(await db.account.findMany({ where: { clientId, isBank: false, ...(noPrive ? { fsLine: { not: "PRIVE" } } : {}) }, select: { code: true, name: true }, orderBy: { code: "asc" } }));
+  const accounts = aiAccounts(await db.account.findMany({ where: { clientId, archivedAt: null, isBank: false, ...(noPrive ? { fsLine: { not: "PRIVE" } } : {}) }, select: { code: true, name: true }, orderBy: { code: "asc" } }));
   const input: ControlExplainInput = { client: client.name, period: formatPeriod(year, month), currency: entity?.functionalCurrency ?? client.entities[0]?.functionalCurrency ?? "IDR", accounts, control: reviewed, canDraft: entity !== null, entities };
   return { input, entity };
 }

@@ -204,5 +204,5 @@ export const TAX_TAG_LABEL: Record<TaxTag, string> = {
 };
 
 /** Accounts a classifier (rules aside) may propose for a bank line: never a bank, the suspense, retained earnings or an opening difference. */
-export const isClassifiable = (a: { isBank: boolean; isSuspense: boolean; isRetained: boolean; fsLine: string }) =>
-  !a.isBank && !a.isSuspense && !a.isRetained && a.fsLine !== "SELISIH_SALDO_AWAL";
+export const isClassifiable = (a: { isBank: boolean; isSuspense: boolean; isRetained: boolean; fsLine: string; archivedAt?: Date | null }) =>
+  !a.isBank && !a.isSuspense && !a.isRetained && !a.archivedAt && a.fsLine !== "SELISIH_SALDO_AWAL";

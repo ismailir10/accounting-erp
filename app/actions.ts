@@ -81,7 +81,7 @@ import { infraErrorMessage } from "@/lib/db-errors";
 import { deleteClient, DeleteClientError } from "@/lib/clients/delete";
 import { EntityEditError, removeBankAccount, removeEntity, renameEntity, updateBankAccount } from "@/lib/clients/entities";
 import { AccessError, requireCapability } from "@/lib/auth/session";
-import { AccountEditError, createAccount, removeAccount, updateAccount } from "@/lib/coa/manage";
+import { AccountEditError, archiveAccount, createAccount, removeAccount, unarchiveAccount, updateAccount } from "@/lib/coa/manage";
 import { BudgetError, saveBudget, type BudgetCellInput } from "@/lib/budget";
 import type { Capability } from "@/lib/auth/permissions";
 import { OrgError } from "@/lib/org";
@@ -1934,6 +1934,19 @@ export async function removeAccountAction(clientId: string, accountId: string): 
     const client = await writeClient(clientId);
     const member = await getCurrentMember();
     await removeAccount(prisma, { clientId: client.id, accountId, actorId: member.id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Arsip akun (lib/coa/manage.ts): *Arsipkan* an account nothing still counts on, *Aktifkan lagi* to bring it back. Everyday books work. */
+export async function archiveAccountAction(clientId: string, accountId: string, archived: boolean): Promise<Result> {
+  try {
+    const client = await writeClient(clientId);
+    const member = await getCurrentMember();
+    await (archived ? archiveAccount : unarchiveAccount)(prisma, { clientId: client.id, accountId, actorId: member.id });
     revalidatePath(`/clients/${client.id}`, "layout");
     return { ok: true };
   } catch (e) {

@@ -242,7 +242,8 @@ export async function importStatement(
   const memoryMap = new Map(memories.filter((m) => !isGenericKey(m.merchantKey)).map((m) => [`${m.merchantKey}|${m.direction}`, m]));
 
   const accounts = await db.account.findMany({ where: { clientId: client.id }, orderBy: { code: "asc" } });
-  const codes = new Set(accounts.map((a) => a.code));
+  // An archived account is never proposed (Arsip akun): a rule or a remembered choice for it falls through to the next source or Review.
+  const codes = new Set(accounts.filter((a) => !a.archivedAt).map((a) => a.code));
 
   const result = new Map<string, Classification>();
   const pendingAi: { key: string; direction: Direction; sample: string }[] = [];
@@ -255,7 +256,7 @@ export async function importStatement(
       matchRule(rules, it.description, it.direction, codes) ??
       (() => {
         const m = memoryMap.get(`${it.merchantKey}|${it.direction}`);
-        return m
+        return m && codes.has(m.accountCode)
           ? ({ method: "MEMORY", accountCode: m.accountCode, taxTag: m.taxTag, confidence: 0.95, reason: `Pernah dikonfirmasi ${m.hits}× untuk "${m.merchantKey}"` } as Classification)
           : null;
       })() ??

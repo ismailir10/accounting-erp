@@ -159,3 +159,48 @@ export async function removeAccount(db: Db, input: { clientId: string; accountId
     await recordEvent(tx, { clientId: input.clientId, kind: "ACCOUNT", subject: `account:${a.code}`, summary: `Akun ${a.code} ${a.name} dihapus`, before: { code: a.code, name: a.name, fsLine: a.fsLine }, actorId: input.actorId });
   });
 }
+
+/**
+ * Arsip akun (cycle 2026-10-20-lampiran-arsip): an account the client stopped using leaves every picker and the classifier, and
+ * postJournal() refuses it; reports keep its history. Archived only when nothing still counts on it: an editable account (not a system,
+ * bank or guess account), no line in a month that is still open, a zero balance-sheet balance, and no running schedule or registered asset
+ * on it. *Aktifkan lagi* undoes it at any time. Both are in Riwayat.
+ */
+export async function archiveAccount(db: Db, input: { clientId: string; accountId: string; actorId?: string | null }) {
+  await db.$transaction(async (tx) => {
+    const a = await tx.account.findFirst({ where: { id: input.accountId, clientId: input.clientId } });
+    if (!a) throw new AccountEditError("Akun tidak ditemukan.");
+    if (a.archivedAt) return;
+    const blocked = protection(a) ?? removalBlock(a);
+    if (blocked) throw new AccountEditError(blocked.replace("dihapus", "diarsipkan"));
+    // Under the account's row lock, as a removal: a posting that commits first is counted.
+    await tx.$queryRaw`SELECT id FROM "Account" WHERE id = ${a.id} FOR UPDATE`;
+    const open = await tx.journalLine.findFirst({ where: { accountId: a.id, entry: { period: { status: "OPEN" } } }, orderBy: { date: "desc" }, select: { date: true } });
+    if (open) throw new AccountEditError(`Akun ${a.code} ${a.name} masih dipakai di bulan yang belum ditutup (${open.date.getUTCMonth() + 1}/${open.date.getUTCFullYear()}). Tutup bukunya dulu, atau pindahkan saldonya.`);
+    if (a.type !== "PENDAPATAN" && a.type !== "BEBAN") {
+      const sum = await tx.journalLine.aggregate({ where: { accountId: a.id }, _sum: { debit: true, credit: true } });
+      if ((sum._sum.debit ?? 0n) !== (sum._sum.credit ?? 0n)) throw new AccountEditError(`Akun ${a.code} ${a.name} masih bersaldo. Nolkan saldonya lewat jurnal dulu, baru arsipkan.`);
+    }
+    const [schedules, assets] = await Promise.all([
+      tx.adjustmentSchedule
+        .findMany({ where: { stoppedAt: null, OR: [{ debitAccountId: a.id }, { creditAccountId: a.id }] }, select: { months: true, reverse: true, _count: { select: { entries: true } } } })
+        .then((ss) => ss.filter((x) => x._count.entries < x.months * (x.reverse ? 2 : 1)).length), // a finished schedule doesn't hold the account
+      tx.fixedAsset.count({ where: { disposedOn: null, OR: [{ assetAccountId: a.id }, { accumulatedAccountId: a.id }] } }),
+    ]);
+    if (schedules || assets) throw new AccountEditError(`Akun ${a.code} ${a.name} masih dipakai ${[schedules ? `${schedules} jadwal penyesuaian berjalan` : "", assets ? `${assets} aset tetap` : ""].filter(Boolean).join(" dan ")}.`);
+    await tx.account.update({ where: { id: a.id }, data: { archivedAt: new Date() } });
+    await bump(tx, input.clientId);
+    await recordEvent(tx, { clientId: input.clientId, kind: "ACCOUNT", subject: `account:${a.code}`, summary: `Akun ${a.code} ${a.name} diarsipkan`, actorId: input.actorId });
+  });
+}
+
+export async function unarchiveAccount(db: Db, input: { clientId: string; accountId: string; actorId?: string | null }) {
+  await db.$transaction(async (tx) => {
+    const a = await tx.account.findFirst({ where: { id: input.accountId, clientId: input.clientId } });
+    if (!a) throw new AccountEditError("Akun tidak ditemukan.");
+    if (!a.archivedAt) return;
+    await tx.account.update({ where: { id: a.id }, data: { archivedAt: null } });
+    await bump(tx, input.clientId);
+    await recordEvent(tx, { clientId: input.clientId, kind: "ACCOUNT", subject: `account:${a.code}`, summary: `Akun ${a.code} ${a.name} diaktifkan lagi`, actorId: input.actorId });
+  });
+}

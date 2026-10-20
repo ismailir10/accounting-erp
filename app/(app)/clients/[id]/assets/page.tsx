@@ -18,7 +18,7 @@ export default async function AssetsPage({ params, searchParams }: { params: Pro
     scheduleLinkViews(prisma, client.id, scope.entityIds),
     prisma.account.findMany({ where: { clientId: client.id }, orderBy: { code: "asc" } }),
   ]);
-  const pick = (f: (a: (typeof accounts)[number]) => boolean) => accounts.filter(f).map((a) => ({ code: a.code, name: a.name }));
+  const pick = (f: (a: (typeof accounts)[number]) => boolean) => accounts.filter((a) => !a.archivedAt && f(a)).map((a) => ({ code: a.code, name: a.name })); // never an archived account
   const label = formatPeriod(period.year, period.month);
   const unposted = registers.reduce((n, r) => n + r.rows.reduce((m, row) => m + row.unposted, 0), 0);
   const mismatch = registers.filter((r) => r.ledger && !r.ledger.equal);

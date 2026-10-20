@@ -45,10 +45,10 @@ export default async function ApprovalsPage({ params, searchParams }: { params: 
   const present = APPROVAL_KINDS.filter((k) => q.counts[k.key] > 0);
   const chosen = present.find((k) => k.param === sp.jenis);
   const kinds: ApprovalKind[] = chosen ? [chosen.key] : present.map((k) => k.key);
-  const draftAccounts = q.drafts.length ? await prisma.account.findMany({ where: { clientId: client.id, isBank: false }, select: { code: true, name: true }, orderBy: { code: "asc" } }) : [];
+  const draftAccounts = q.drafts.length ? await prisma.account.findMany({ where: { clientId: client.id, isBank: false, archivedAt: null }, select: { code: true, name: true }, orderBy: { code: "asc" } }) : [];
   // An accrual's *Ubah*: never a bank, clearing (1190/1199) or 1999 account; the credit a liability (the writer checks again).
   const accrualChart = q.accruals.length
-    ? await prisma.account.findMany({ where: { clientId: client.id, isBank: false, isClearing: false, isIntercompany: false, isSuspense: false }, select: { code: true, name: true, type: true }, orderBy: { code: "asc" } })
+    ? await prisma.account.findMany({ where: { clientId: client.id, isBank: false, isClearing: false, isIntercompany: false, isSuspense: false, archivedAt: null }, select: { code: true, name: true, type: true }, orderBy: { code: "asc" } })
     : [];
   const accrualAccounts = q.accruals.length
     ? { debit: accrualChart.map(({ code, name }) => ({ code, name })), credit: accrualChart.filter((a) => a.type === "LIABILITAS").map(({ code, name }) => ({ code, name })) }

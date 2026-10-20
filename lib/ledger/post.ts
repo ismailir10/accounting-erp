@@ -9,7 +9,7 @@ import { nextNumber, numberPrefix } from "@/lib/ledger/number";
  *  1. Σdebit = Σcredit, ≥ 2 lines, each line exactly one positive side (also DB CHECK)
  *  2. period open (locked periods reject every write), and no later month of the client locked: a journal dated before a closed month
  *     changes that month's Neraca (an earlier month may stay open only while it is empty, `lockPeriod`)
- *  3. every account belongs to the entity's client COA; every source account belongs to the entity
+ *  3. every account belongs to the entity's client COA and is not archived (Arsip akun); every source account belongs to the entity
  *  4. foreign-currency lines: currency ≠ functional, round(fxAmount × fxRate) = amount ± 1 minor unit (rule 6b)
  * and gives the entry its nomor bukti (lib/ledger/number.ts) in the same transaction.
  * Amounts are minor units of the entity's functional currency (IDR = whole Rupiah).
@@ -85,6 +85,8 @@ async function validate(tx: Tx, input: Pick<PostInput, "entityId" | "lines">) {
   if (accounts.length !== accountIds.length || accounts.some((a) => a.clientId !== entity.clientId)) {
     throw new LedgerError("Akun tidak termasuk bagan akun klien ini");
   }
+  const archived = accounts.find((a) => a.archivedAt);
+  if (archived) throw new LedgerError(`Akun ${archived.code} ${archived.name} sudah diarsipkan. Aktifkan lagi di Bagan akun untuk memakainya.`);
   // A bank GL account belongs to one entity (BankAccount.entityId): another entity's books never touch it — money between
   // entities goes through 1190 in each entity's own books (rule 10), else its reconciliation breaks with no pointer to why.
   // The one exception clears what older books left there: a move toward zero of this entity's balance on that account.
