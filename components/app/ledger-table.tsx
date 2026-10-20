@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { FileText } from "lucide-react";
+import { FileText, Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SplitDialog, SplitSummary, type SplitPartView } from "@/components/app/split-dialog";
 import { AccountPicker, type AccountOption } from "@/components/app/account-picker";
@@ -23,6 +23,8 @@ export type LedgerRow = {
   id: string;
   /** Nomor bukti of the entry (lib/ledger/number.ts). */
   number?: string | null;
+  /** Lampiran of the entry, each with its download link. */
+  attachments?: { href: string; fileName: string }[];
   date: string;
   entity: string;
   memo: string;
@@ -266,6 +268,16 @@ export function LedgerTable({ rows, opening, priorYearProfit, currency = "IDR", 
                       ))}
                     </TableBody>
                   </Table>
+                  {open.attachments?.length ? (
+                    <ul className="space-y-1 text-sm" data-testid="ledger-attachments">
+                      {open.attachments.map((a) => (
+                        <li key={a.href} className="flex items-center gap-1">
+                          <Paperclip className="size-3 text-muted-foreground" aria-hidden />
+                          <a href={a.href} download className="drill">{a.fileName}</a>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </section>
                 {open.reversal && (
                   <section data-testid="reverse-entry" className="space-y-2">

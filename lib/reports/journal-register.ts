@@ -7,6 +7,7 @@ import { entryOrigins } from "@/lib/reports/entry-origin";
 import { approvalLines } from "@/lib/approvals/pending";
 import type { Scope } from "@/lib/reports/ledger";
 import { parseNumberQuery } from "@/lib/ledger/number";
+import { attachmentsOf } from "@/lib/ledger/attachments";
 
 /** The kinds Jurnal Umum filters by (`?jenis=`). A bank line's later reclassification belongs with the bank lines. */
 export const KIND_FILTERS: { value: string; label: string; kinds: EntryKind[] | null }[] = [
@@ -82,6 +83,8 @@ export type RegisterEntry = {
   approval?: string | null;
   /** The date of the journal that reversed this one (*Balik jurnal*), if any. */
   reversedOn: Date | null;
+  /** Lampiran jurnal (lib/ledger/attachments.ts), without their bytes. */
+  attachments: { id: string; fileName: string; size: number }[];
   lines: RegisterLine[];
 };
 
@@ -116,7 +119,7 @@ export async function journalRegister(db: Db, scope: Scope, f: RegisterFilter, p
       },
     }),
   ]);
-  const [origins, approvals] = await Promise.all([entryOrigins(db, rows.map((e) => e.id)), approvalLines(db, rows)]);
+  const [origins, approvals, files] = await Promise.all([entryOrigins(db, rows.map((e) => e.id)), approvalLines(db, rows), attachmentsOf(db, rows.map((e) => e.id))]);
   const entries: RegisterEntry[] = rows.map((e) => ({
     id: e.id,
     number: e.number,
@@ -130,6 +133,7 @@ export async function journalRegister(db: Db, scope: Scope, f: RegisterFilter, p
     postedAt: e.createdAt,
     approval: approvals.get(e.id) ?? null,
     reversedOn: e.reversedBy?.date ?? null,
+    attachments: files.get(e.id) ?? [],
     lines: [...e.lines]
       .sort((a, b) => Number(b.debit > 0n) - Number(a.debit > 0n))
       .map((l) => ({ code: l.account.code, name: l.account.name, memo: l.memo, debit: l.debit, credit: l.credit })),

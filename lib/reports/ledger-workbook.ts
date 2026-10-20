@@ -39,7 +39,7 @@ export async function journalWorkbook(meta: WorkbookMeta, subtitle: string, entr
   head(ws, ["Tanggal", "No. bukti", "Jenis", "Entitas", "Keterangan", "Kode", "Akun", "Debit", "Kredit", "Sumber"]);
   const first = ws.rowCount + 1;
   for (const e of entries) {
-    const r = ws.addRow([day(e.date), e.number, ENTRY_KIND_LABEL[e.kind], e.entity, e.memo, null, null, null, null, [e.source, e.origin, e.reversedOn ? `dibalik ${formatDateLong(e.reversedOn)}` : null].filter(Boolean).join(" · ") || `Dicatat oleh ${e.postedBy}`]);
+    const r = ws.addRow([day(e.date), e.number, ENTRY_KIND_LABEL[e.kind], e.entity, e.memo, null, null, null, null, [e.source, e.origin, e.reversedOn ? `dibalik ${formatDateLong(e.reversedOn)}` : null, e.attachments.length ? `lampiran: ${e.attachments.map((a) => a.fileName).join(", ")}` : null].filter(Boolean).join(" · ") || `Dicatat oleh ${e.postedBy}`]);
     r.font = { bold: true };
     r.getCell(1).numFmt = DATE;
     for (const l of e.lines) ws.addRow([null, null, null, null, l.memo, l.code, l.name, amount(l.debit), amount(l.credit), null]);

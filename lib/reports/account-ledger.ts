@@ -9,6 +9,7 @@ import { formatRateId } from "@/lib/fx/currency";
 import { sourceAccountLabel } from "@/lib/ledger-import/code";
 import { entryOrigins } from "@/lib/reports/entry-origin";
 import { approvalLines } from "@/lib/approvals/pending";
+import { attachmentsOf } from "@/lib/ledger/attachments";
 
 /**
  * One account's ledger for a month: opening balance, lines with running balance, and the source behind each line
@@ -77,6 +78,7 @@ export async function accountLedger(
   // The proposal an entry was approved from (Kotak persetujuan), shown in its drawer.
   const origins = await entryOrigins(db, lines.map((l) => l.entryId));
   // Persetujuan kedua: who asked and who approved, instead of only who posted.
+  const files = await attachmentsOf(db, [...new Set(lines.map((l) => l.entryId))]);
   const approvals = await approvalLines(db, [...new Map(lines.map((l) => [l.entryId, { id: l.entryId, reversesId: l.entry.reversesId }])).values()]);
   const sign = args.normalBalance === "DEBIT" ? 1n : -1n;
   const priorYearProfit = ((priorPl?._sum.debit ?? 0n) - (priorPl?._sum.credit ?? 0n)) * sign;
@@ -87,6 +89,7 @@ export async function accountLedger(
     return {
       id: l.id,
       number: l.entry.number,
+      attachments: (files.get(l.entryId) ?? []).map((f) => ({ href: `/clients/${l.entry.entity.clientId}/journals/lampiran/${f.id}`, fileName: f.fileName })),
       date: formatDate(l.date),
       entity: l.entry.entity.shortName,
       memo: l.entry.memo,

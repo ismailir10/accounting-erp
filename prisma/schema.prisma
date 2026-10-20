@@ -481,6 +481,8 @@ model Account {
   isSuspense      Boolean              @default(false)
   isRetained      Boolean              @default(false)
   taxTag          TaxTag?
+  /// Arsip akun (cycle 2026-10-20-lampiran-arsip): hidden from every picker and refused by postJournal(); reports keep its history.
+  archivedAt      DateTime?
   lines           JournalLine[]
   bankAccounts    BankAccount[]
   sourceAccounts  SourceAccount[]
@@ -812,6 +814,8 @@ model JournalEntry {
   createdAt         DateTime             @default(now())
   /// Nomor bukti, e.g. "JP-2512-0003" (PREFIX-YYMM-NNNN): set by postJournal() from the company's series, never changed (DB trigger).
   number            String?
+  /// Lampiran: evidence files attached to the journal (never read for amounts).
+  attachments       JournalAttachment[]
   lines             JournalLine[]
 
   @@unique([scheduleId, installment])
@@ -819,6 +823,24 @@ model JournalEntry {
   @@index([entityId, date])
   @@index([bankTransactionId])
   @@index([ledgerImportId])
+}
+
+/// Lampiran jurnal (cycle 2026-10-20-lampiran-arsip): a receipt, invoice or approval kept with a journal. Evidence only: it never
+/// changes a number and is never sent to a model. PDF, JPG or PNG up to 5 MB, at most 10 per journal (lib/ledger/attachments.ts).
+model JournalAttachment {
+  id           String       @id @default(cuid())
+  firmId       String
+  entryId      String
+  entry        JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  fileName     String
+  contentType  String
+  size         Int
+  data         Bytes
+  uploadedById String?
+  uploadedBy   FirmMember?  @relation("AttachmentUploadedBy", fields: [uploadedById], references: [id])
+  createdAt    DateTime     @default(now())
+
+  @@index([entryId])
 }
 
 /// Nomor bukti series: the last number given per company, prefix (SA, BM, BK, RK, JP, JI, FJ, FB) and month (lib/ledger/number.ts).
@@ -1556,6 +1578,7 @@ model FirmMember {
   reopensAsked         ReopenRequest[]       @relation("ReopenRequester")
   reopensDecided       ReopenRequest[]       @relation("ReopenDecider")
   unlocksRequested     PeriodUnlockLog[]     @relation("PeriodUnlockRequestedBy")
+  attachmentsUploaded  JournalAttachment[]   @relation("AttachmentUploadedBy")
 
   @@index([firmId])
 }

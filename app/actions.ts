@@ -87,6 +87,7 @@ import type { Capability } from "@/lib/auth/permissions";
 import { OrgError } from "@/lib/org";
 import { acceptDefault, addTask, markTask, removeTask, setSignoff, updateTask, type MarkStep, type NewTask, type TaskEdit } from "@/lib/checklist/write";
 import { ChecklistError } from "@/lib/checklist/rules";
+import { addAttachments, AttachmentError, removeAttachment } from "@/lib/ledger/attachments";
 import type { FsLine } from "@/lib/coa/template";
 import type { MapMethod } from "@/lib/generated/prisma/enums";
 
@@ -99,7 +100,7 @@ type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; needs
 function fail(e: unknown): { ok: false; error: string; needsPassword?: boolean; needsYear?: boolean; yearGuess?: number | null } {
   if (e instanceof PdfPasswordError) return { ok: false, error: e.message, needsPassword: true };
   if (e instanceof YearNeededError) return { ok: false, error: e.message, needsYear: true, yearGuess: e.guess };
-  if (e instanceof DeleteClientError || e instanceof EntityEditError || e instanceof AccountEditError || e instanceof BudgetError || e instanceof AccessError || e instanceof OrgError || e instanceof ReasoningError || e instanceof ApprovalError) return { ok: false, error: e.message };
+  if (e instanceof DeleteClientError || e instanceof EntityEditError || e instanceof AccountEditError || e instanceof BudgetError || e instanceof AccessError || e instanceof OrgError || e instanceof ReasoningError || e instanceof ApprovalError || e instanceof AttachmentError) return { ok: false, error: e.message };
   if (e instanceof ParseError || e instanceof LedgerError || e instanceof CloseError || e instanceof OpeningError || e instanceof FindingError || e instanceof RemoveImportError || e instanceof MoneyError || e instanceof RateError || e instanceof RevaluationError || e instanceof LedgerImportError || e instanceof MappingError || e instanceof EntitySettingsError || e instanceof FormatError || e instanceof SubledgerError || e instanceof FakturError || e instanceof BupotError || e instanceof ChecklistError) return { ok: false, error: e.message };
   const infra = infraErrorMessage(e);
   console.error(e);
@@ -666,6 +667,39 @@ export async function adjustmentAction(input: {
     const o = await submitAdjustment(prisma, { clientId: client.id, entityId: input.entityId, date: new Date(`${input.date}T00:00:00Z`), memo: input.memo, lines: input.lines, reverseNextMonth: input.reverseNextMonth === true, maker: member });
     revalidatePath(`/clients/${client.id}`, "layout");
     return { ok: true, ...saved(o) };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Lampiran jurnal (lib/ledger/attachments.ts): files from FormData (`clientId`, `entryId`, `files`) added to one of the client's journals,
+ * and one removed while its month is open. Evidence only: nothing in the ledger changes.
+ */
+export async function addAttachmentsAction(formData: FormData): Promise<Result<{ added: number }>> {
+  try {
+    const client = await writeClient(String(formData.get("clientId")));
+    const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
+    if (files.some((f) => f.size > MAX_UPLOAD)) return { ok: false, error: "File terlalu besar (maks. 5 MB)." };
+    const added = await addAttachments(prisma, {
+      clientId: client.id,
+      entryId: String(formData.get("entryId")),
+      files: await Promise.all(files.map(async (f) => ({ name: f.name, data: Buffer.from(await f.arrayBuffer()) }))),
+      actorId: (await getCurrentMember()).id,
+    });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true, added: added.length };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function removeAttachmentAction(clientId: string, attachmentId: string): Promise<Result> {
+  try {
+    const client = await writeClient(clientId);
+    await removeAttachment(prisma, { clientId: client.id, attachmentId, actorId: (await getCurrentMember()).id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
   } catch (e) {
     return fail(e);
   }

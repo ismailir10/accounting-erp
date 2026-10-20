@@ -36,6 +36,7 @@ async function entriesOf(tx: Tx, where: { bankTransactionId?: { in: string[] }; 
       schedulesFrom: { select: { memo: true } },
       assetsFrom: { select: { name: true } },
       reversedBy: { select: { id: true } },
+      _count: { select: { attachments: true } },
     },
   });
   const locked = [...new Set(entries.filter((e) => e.period.status === "LOCKED").map((e) => formatPeriod(e.period.year, e.period.month)))];
@@ -49,6 +50,9 @@ async function entriesOf(tx: Tx, where: { bankTransactionId?: { in: string[] }; 
   }
   const resting = [...entries.flatMap((e) => e.schedulesFrom.map((s) => `jadwal "${s.memo}"`)), ...entries.flatMap((e) => e.assetsFrom.map((a) => `aset tetap "${a.name}"`))];
   if (resting.length) throw new RemoveImportError(`Jurnal dari impor ini dipakai oleh ${resting.slice(0, 3).join(", ")}${resting.length > 3 ? ` dan ${resting.length - 3} lainnya` : ""}. Hapus atau hentikan itu dulu.`);
+  // Lampiran are evidence the accountant added by hand: removing the import would delete them with its journals.
+  const attached = entries.filter((e) => e._count.attachments > 0);
+  if (attached.length) throw new RemoveImportError(`${attached.length} jurnal dari impor ini punya lampiran (${attached.slice(0, 3).map((e) => e.number ?? e.memo).join(", ")}). Hapus lampirannya di Jurnal Umum dulu, lalu hapus impor ini.`);
   if (entries.some((e) => e.reversedBy)) throw new RemoveImportError("Ada jurnal dari impor ini yang sudah dibalik. Hapus jurnal pembaliknya dulu.");
   const nets = new Map<string, bigint>();
   for (const e of entries) for (const l of e.lines) nets.set(`${l.account.code} ${l.account.name}`, (nets.get(`${l.account.code} ${l.account.name}`) ?? 0n) + l.debit - l.credit);
