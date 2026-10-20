@@ -7,6 +7,7 @@ import { closeLock } from "@/lib/adjust/schedules";
 import { formatMoney, parseMoney, PPN_EFFECTIVE_PERCENT } from "@/lib/money";
 import { recordEvent } from "@/lib/audit";
 import { checkWithholding, withholdingFor } from "@/lib/tax/withholding";
+import { assertAfterOpening } from "@/lib/ledger/opening-date";
 
 /**
  * Receivable/payable subledger (accounting-rules 5c). An invoice is recorded by the accountant and posts its journal through
@@ -107,6 +108,8 @@ export async function createInvoice(db: Db, input: InvoiceInput) {
     if (!opening) throw new LedgerError("Catat Saldo Awal entitas ini dulu; faktur saldo awal adalah rincian saldonya.");
     if (+issueDate > +opening.date) throw new LedgerError(`Faktur saldo awal harus bertanggal paling lambat ${formatDate(opening.date)} (tanggal Saldo Awal).`);
     openingMonth = { year: opening.date.getUTCFullYear(), month: opening.date.getUTCMonth() + 1 };
+  } else {
+    await assertAfterOpening(db, entity, issueDate, `, atau centang “${sales ? "Faktur" : "Tagihan"} saldo awal” bila sudah termasuk di Saldo Awal`);
   }
 
   const description = input.description?.trim() || (sales ? `Penjualan kepada ${contactName}` : `Pembelian dari ${contactName}`);

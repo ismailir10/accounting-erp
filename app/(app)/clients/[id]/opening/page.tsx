@@ -21,7 +21,7 @@ export default async function OpeningPage({ params }: { params: Promise<{ id: st
   const client = (await findClientForMember(id)) ?? notFound();
   const [ctx, accounts] = await Promise.all([
     openingContext(prisma, client.id),
-    prisma.account.findMany({ where: { clientId: client.id, isBank: false, code: { notIn: [ACCOUNT_CODES.SUSPENSE, ACCOUNT_CODES.RETAINED, ACCOUNT_CODES.CLEARING, ACCOUNT_CODES.OPENING_DIFFERENCE] } }, orderBy: { code: "asc" } }),
+    prisma.account.findMany({ where: { clientId: client.id, isBank: false, type: { notIn: ["PENDAPATAN", "BEBAN"] }, code: { notIn: [ACCOUNT_CODES.SUSPENSE, ACCOUNT_CODES.RETAINED, ACCOUNT_CODES.CLEARING, ACCOUNT_CODES.OPENING_DIFFERENCE] } }, orderBy: { code: "asc" } }),
   ]);
   const setup = await setupProgress(prisma, client.id);
   // Entities whose ledger import brought its own opening rows don't need a separate Saldo Awal.

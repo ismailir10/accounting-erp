@@ -113,6 +113,9 @@ export async function postOpening(db: Db, input: { clientId: string; entityId: s
   if (first && +input.date >= +first.date) {
     throw new OpeningError(`Tanggal saldo awal harus sebelum transaksi bank pertama (${formatDate(first.date)}).`);
   }
+  // A journal already typed on or before that date would sit inside the balances being entered (lib/ledger/opening-date.ts).
+  const typed = await db.journalEntry.findFirst({ where: { entityId: entity.id, date: { lte: input.date } }, orderBy: { date: "asc" }, select: { date: true, memo: true } });
+  if (typed) throw new OpeningError(`Tanggal saldo awal harus sebelum jurnal pertama entitas ini (${formatDate(typed.date)}: ${typed.memo}).`);
 
   const accounts = new Map((await db.account.findMany({ where: { clientId: input.clientId } })).map((a) => [a.code, a]));
   const lines: PostLine[] = [];
@@ -125,6 +128,11 @@ export async function postOpening(db: Db, input: { clientId: string; entityId: s
     if (dr === 0n && cr === 0n) continue;
     const acc = accounts.get(l.accountCode);
     if (!acc) throw new OpeningError("Pilih akun untuk setiap baris yang berisi nominal.");
+    // Saldo Awal is a position at a date: a result earned before it sits in Saldo Laba. An income or expense balance here would be a flow
+    // before the books start, counted in a Laba Rugi labelled from the day after (cycle 2026-10-20-paritas-inti).
+    if (acc.type === "PENDAPATAN" || acc.type === "BEBAN") {
+      throw new OpeningError(`${acc.code} ${acc.name} adalah akun laba rugi. Saldo awal berisi posisi neraca: masukkan laba (rugi) sampai tanggal ini ke ${ACCOUNT_CODES.RETAINED} Saldo Laba, atau impor buku besar klien untuk laba rugi setahun penuh.`);
+    }
     lines.push({ accountId: acc.id, debit: dr, credit: cr });
     debit += dr;
     credit += cr;

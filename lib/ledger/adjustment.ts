@@ -3,6 +3,7 @@ import { LedgerError, postJournal } from "@/lib/ledger/post";
 import { mirrorLines, reversalMemo } from "@/lib/ledger/reverse";
 import { dateOnly, formatDate } from "@/lib/format";
 import { parseMoney } from "@/lib/money";
+import { assertAfterOpening } from "@/lib/ledger/opening-date";
 
 export type AdjustmentLineInput = { accountCode: string; debit: string; credit: string; memo?: string };
 
@@ -35,6 +36,7 @@ export async function prepareAdjustment(
   const memo = input.memo.trim();
   if (!memo) throw new LedgerError("Isi keterangan jurnal.");
   if (Number.isNaN(+input.date)) throw new LedgerError("Pilih tanggal jurnal.");
+  await assertAfterOpening(db, entity, input.date, ", atau koreksi lewat jurnal bertanggal sesudah Saldo Awal");
   const accounts = new Map((await db.account.findMany({ where: { clientId: input.clientId } })).map((a) => [a.code, a]));
   const lines = input.lines
     .filter((l) => l.accountCode)
