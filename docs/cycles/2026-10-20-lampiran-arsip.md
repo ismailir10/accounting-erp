@@ -84,5 +84,10 @@ Decisions taken while building:
 - Removing an import whose journals carry a lampiran is refused (the cascade would delete evidence silently).
 
 ## Verification
+Verified locally — 1aba287.
+- `npm run lint && npm run typecheck && npm test`: exit 0; **334 files, 3063 tests passed** (dedicated test database), including
+  `tests/db/attachments.test.ts` and `tests/db/archive-account.test.ts`.
+- `npm run build && npm run demo:reset && npm run verify:books`: **ALL PASS — 1765 checks**; `db:drift` clean.
+- `npm run test:e2e` on the production build with CI's env: **134 passed**, `e2e/lampiran-arsip.spec.ts` among them.
 
 ## Ship Notes

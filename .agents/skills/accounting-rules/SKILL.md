@@ -117,6 +117,17 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     through `postJournal()` (kind `ADJUSTMENT`), carrying `scheduleId` + `installment` (unique: posts once). Never edited after posting —
     stop and create a new one (a stop is checked under a row lock when posting; installments due through the month of the stop stay owed and proposed until posted, later ones are dropped; a stopped accrual still reverses what it posted). An installment stays proposed from its month until posted, in every later month too, unless its month is locked; a schedule with any installment (or reversal) in an already locked month is refused at creation (under a per-client close lock that closing a month also takes; a close refuses if a schedule due by that month, overdue ones included, appeared while its controls ran). Candidates (fixed-asset purchase, prepayment, deferred revenue; never an accrual — see *Usulan akrual* below) are
     deterministic suggestions only; a schedule made from an entry stores that line (`sourceEntryId` + `sourceAccountId`, which it must release: an asset by depreciation — an expense debited, accumulated depreciation or that asset credited — a prepayment or deferred revenue by amortisation, the prepayment on credit, the deferred revenue on debit) and covers only it; schedules made before the line was stored are matched one to one by memo, then amount. A due, unposted installment is a REVIEW control `sched:`.
+    **Jurnal berulang** (`lib/adjust/recurring.ts` + `recurring-post.ts`, cycle 2026-10-21-jurnal-berulang): *Ulangi tiap bulan* on a
+    posted Jurnal Penyesuaian (not a reversal, a schedule's or a template's instalment, or a foreign-currency journal) stores a
+    `RecurringJournal` — company, memo, lines in minor units with their notes, the day (0 = the month's last; a shorter month takes its
+    last day), *Balik otomatis*, start (the next month) and an optional end. Lines never change: stop it and repeat a newer journal. Every
+    month from start to end not yet posted is **proposed at read time, posted only by a click** through `submitPrepared` — Jurnal
+    Penyesuaian's own route (rule 2a: above the *Jurnal manual* threshold it is a request carrying `recurringId` + `recurringMonth`,
+    and the month counts as waiting, not due; a rejection makes it due again) — with `recurringId` + `recurringMonth` on the entry
+    (unique: posts once; the reversal carries neither). Posting takes the close lock and the template's row lock, refusing a stopped
+    template, a waiting or posted month. A month at or before the client's latest locked month is never proposed (it could not post). A
+    stop proposes nothing more, overdue months included; posted stays. A due, unwaiting instalment joins the `sched:` REVIEW control and
+    the close's race check (`recurringDueBy`). Create, post and stop are Riwayat `RECURRING`.
     **Usulan akrual** (`lib/adjust/accruals.ts`, cycle 2026-10-18-usulan-akrual): a cost that recurs per counterparty and is missing
     from a month is proposed as an accrual — deterministic, no AI, computed at read time, nothing stored until decided.
     - **Bucket** = company, expense account (BEBAN on *Beban umum & administrasi*, *Beban penjualan*, *Beban lain-lain*, except 7190,
