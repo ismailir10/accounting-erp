@@ -59,8 +59,9 @@ describe("keluarkan dokumen (UC-B5)", () => {
     await lock(g, 2026, 8);
     await expect(voidInvoice(db, { clientId: g.client.id, invoiceId: a.id, reason: "Nota dobel dengan N-0" })).rejects.toThrow("Agustus 2026 sudah dikunci, dan faktur N-1 dibalik pada tanggal aslinya (5 Agu 2026). Buka kunci bulan itu dulu.");
 
-    await postOpening(db, { clientId: g.client.id, entityId: g.pt.entity.id, date: dateOnly(2026, 6, 30), lines: [{ accountCode: "1130", debit: "3000000", credit: "0" }] });
+    // A locked August also freezes the months before it (accounting-rules 4): reopen it before Saldo Awal goes in.
     await db.period.update({ where: { clientId_year_month: { clientId: g.client.id, year: 2026, month: 8 } }, data: { status: "OPEN" } });
+    await postOpening(db, { clientId: g.client.id, entityId: g.pt.entity.id, date: dateOnly(2026, 6, 30), lines: [{ accountCode: "1130", debit: "3000000", credit: "0" }] });
     const o = await sale(g, "SA-1", "3000000", { opening: true, issueDate: "2026-06-20" });
     const entries = await db.journalEntry.count();
     const v = await voidInvoice(db, { clientId: g.client.id, invoiceId: o.id, reason: "Rincian saldo awal salah pelanggan" });

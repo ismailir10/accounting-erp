@@ -5,6 +5,7 @@ import { importKindLabel } from "@/lib/ledger-import/code";
 import { formatDate, formatPeriod } from "@/lib/format";
 import { formatMoney } from "@/lib/money";
 import { can } from "@/lib/auth/permissions";
+import { lockedAfter } from "@/lib/ledger/post";
 import type { MemberRole } from "@/lib/generated/prisma/enums";
 
 /**
@@ -39,6 +40,13 @@ async function entriesOf(tx: Tx, where: { bankTransactionId?: { in: string[] }; 
   });
   const locked = [...new Set(entries.filter((e) => e.period.status === "LOCKED").map((e) => formatPeriod(e.period.year, e.period.month)))];
   if (locked.length) throw new RemoveImportError(`Bulan ${locked.join(", ")} sudah ditutup. Buka kembali dulu di Tutup Buku (tercatat dengan alasannya), lalu hapus impor ini.`);
+  // A closed month after the import's journals would change too (accounting-rules 4).
+  const earliest = entries.reduce<Date | null>((m, e) => (!m || +e.date < +m ? e.date : m), null);
+  if (earliest) {
+    const { clientId } = await tx.entity.findUniqueOrThrow({ where: { id: entries[0].entityId }, select: { clientId: true } });
+    const later = await lockedAfter(tx, clientId, earliest.getUTCFullYear(), earliest.getUTCMonth() + 1);
+    if (later) throw new RemoveImportError(`${formatPeriod(later.year, later.month)} sudah ditutup, dan menghapus jurnal dari impor ini yang bertanggal sebelumnya mengubah saldo bulan itu. Buka kembali dulu di Tutup Buku, lalu hapus impor ini.`);
+  }
   const resting = [...entries.flatMap((e) => e.schedulesFrom.map((s) => `jadwal "${s.memo}"`)), ...entries.flatMap((e) => e.assetsFrom.map((a) => `aset tetap "${a.name}"`))];
   if (resting.length) throw new RemoveImportError(`Jurnal dari impor ini dipakai oleh ${resting.slice(0, 3).join(", ")}${resting.length > 3 ? ` dan ${resting.length - 3} lainnya` : ""}. Hapus atau hentikan itu dulu.`);
   if (entries.some((e) => e.reversedBy)) throw new RemoveImportError("Ada jurnal dari impor ini yang sudah dibalik. Hapus jurnal pembaliknya dulu.");

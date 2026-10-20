@@ -7,7 +7,8 @@ import { nextNumber, numberPrefix } from "@/lib/ledger/number";
 /**
  * The ONLY writer of JournalEntry/JournalLine. Enforces (accounting-rules):
  *  1. Σdebit = Σcredit, ≥ 2 lines, each line exactly one positive side (also DB CHECK)
- *  2. period open (locked periods reject every write)
+ *  2. period open (locked periods reject every write), and no later month of the client locked: a journal dated before a closed month
+ *     changes that month's Neraca (an earlier month may stay open only while it is empty, `lockPeriod`)
  *  3. every account belongs to the entity's client COA; every source account belongs to the entity
  *  4. foreign-currency lines: currency ≠ functional, round(fxAmount × fxRate) = amount ± 1 minor unit (rule 6b)
  * and gives the entry its nomor bukti (lib/ledger/number.ts) in the same transaction.
@@ -133,6 +134,18 @@ async function validate(tx: Tx, input: Pick<PostInput, "entityId" | "lines">) {
 
 const closed = (p: { year: number; month: number }) => new LedgerError(`Periode ${formatPeriod(p.year, p.month)} sudah ditutup`);
 
+/** The first locked month after `year`/`month` of the client, if any: writing before it would change its balances. */
+export async function lockedAfter(db: Pick<Tx, "period">, clientId: string, year: number, month: number) {
+  return db.period.findFirst({
+    where: { clientId, status: "LOCKED", OR: [{ year: { gt: year } }, { year, month: { gt: month } }] },
+    orderBy: [{ year: "asc" }, { month: "asc" }],
+    select: { year: true, month: true },
+  });
+}
+
+const closedAfter = (p: { year: number; month: number }) =>
+  new LedgerError(`${formatPeriod(p.year, p.month)} sudah ditutup, dan jurnal bertanggal sebelumnya mengubah saldo bulan itu. Buka kembali ${formatPeriod(p.year, p.month)} dulu di Tutup Buku.`);
+
 /**
  * The same checks postJournal() makes, writing nothing: used where a journal is held back as a request (Persetujuan kedua) so the request
  * is refused now, not at approval, when it could never post. A month without a Period row yet is open.
@@ -143,12 +156,16 @@ export async function checkJournal(tx: Tx, input: Pick<PostInput, "entityId" | "
   const month = input.date.getUTCMonth() + 1;
   const period = await tx.period.findUnique({ where: { clientId_year_month: { clientId: entity.clientId, year, month } }, select: { status: true } });
   if (period?.status === "LOCKED") throw closed({ year, month });
+  const later = await lockedAfter(tx, entity.clientId, year, month);
+  if (later) throw closedAfter(later);
 }
 
 export async function postJournal(tx: Tx, input: PostInput) {
   const { lines, entity, accounts } = await validate(tx, input);
   const period = await getOrCreatePeriod(tx, entity.firmId, entity.clientId, input.date);
   if (period.status === "LOCKED") throw closed(period);
+  const later = await lockedAfter(tx, entity.clientId, period.year, period.month);
+  if (later) throw closedAfter(later);
   const byId = new Map(accounts.map((a) => [a.id, a]));
   const number = await nextNumber(tx, entity.id, numberPrefix(input.kind, lines.map((l) => ({ ...l, account: byId.get(l.accountId)! }))), input.date);
 

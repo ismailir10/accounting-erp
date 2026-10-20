@@ -3,7 +3,7 @@ import { fiscalEndMonth, fiscalYearStart } from "@/lib/fiscal";
 import type { Db, Tx } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
 import type { Prisma } from "@/lib/generated/prisma/client";
-import { postJournal, type PostLine } from "@/lib/ledger/post";
+import { lockedAfter, postJournal, type PostLine } from "@/lib/ledger/post";
 import { ACCOUNT_CODES } from "@/lib/coa/template";
 import { formatDate, formatPeriod } from "@/lib/format";
 import { loadRates, lookupRate, upsertFileRate } from "@/lib/fx/rates";
@@ -381,10 +381,16 @@ async function lockedMonthChecks(db: Db, clientId: string, entries: PlanEntry[])
   const months = [...new Map(entries.map((e) => [`${e.date.getUTCFullYear()}-${e.date.getUTCMonth() + 1}`, { year: e.date.getUTCFullYear(), month: e.date.getUTCMonth() + 1 }])).values()];
   if (!months.length) return [];
   const locked = await db.period.findMany({ where: { clientId, status: "LOCKED", OR: months }, orderBy: [{ year: "asc" }, { month: "asc" }] });
-  return locked.map((p) => {
+  // A closed month after the file's journals would change too (accounting-rules 4): the earliest journal decides.
+  const first = months.reduce((a, b) => (a.year * 12 + a.month <= b.year * 12 + b.month ? a : b));
+  const later = await lockedAfter(db, clientId, first.year, first.month);
+  const after = later && !locked.some((p) => p.year === later.year && p.month === later.month)
+    ? [{ severity: "BLOCK" as const, code: "PERIOD_LOCKED", message: `Bulan ${formatPeriod(later.year, later.month)} sudah ditutup, dan jurnal dari file ini bertanggal sebelumnya mengubah saldo bulan itu. Buka kembali dulu di Tutup Buku (tercatat dengan alasannya), lalu unggah ulang.`, refs: cap(entries.filter((e) => e.date.getUTCFullYear() * 12 + e.date.getUTCMonth() + 1 < later.year * 12 + later.month).map((e) => e.ref)) }]
+    : [];
+  return [...after, ...locked.map((p) => {
     const refs = entries.filter((e) => e.date.getUTCFullYear() === p.year && e.date.getUTCMonth() + 1 === p.month).map((e) => e.ref);
     return { severity: "BLOCK" as const, code: "PERIOD_LOCKED", message: `Bulan ${formatPeriod(p.year, p.month)} sudah ditutup: ${refs.length} jurnal dari file ini jatuh di bulan itu. Buka kembali dulu di Tutup Buku (tercatat dengan alasannya), lalu unggah ulang.`, refs: cap(refs) };
-  });
+  })];
 }
 
 /** Rule 5: one opening entry per entity. */
