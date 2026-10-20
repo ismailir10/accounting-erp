@@ -15,7 +15,7 @@ describe("rate lookup rules", () => {
   it("closing = SPOT in the same month, direct or inverse", () => {
     expect(closingRate(rows, "SGD", "IDR", dateOnly(2024, 12, 31))).toBe("12050");
     expect(closingRate(rows, "SGD", "IDR", dateOnly(2025, 1, 31))).toBeNull(); // stale — never reused silently
-    expect(closingRate(rows, "SGD", "USD", dateOnly(2025, 3, 31))).toBe("0.7462686567");
+    expect(closingRate(rows, "SGD", "USD", dateOnly(2025, 3, 31))).toBe("0.7462686567164179104"); // 1 / 1,34 to 18 significant digits
     expect(lookupRate(rows, "SGD", "IDR", dateOnly(2025, 1, 31))).toBe("12050");
   });
   it("average = first AVERAGE on/after the period end within the year", () => {

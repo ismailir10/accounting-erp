@@ -83,9 +83,14 @@ export function convertMinor(amount: bigint, from: string, to: string, rate: str
   return divRound(numer, denom);
 }
 
-/** Inverse of a rate as a decimal string with `digits` decimals (for quoting IDR per SGD vs SGD per IDR). */
-export function invertRate(rate: string, digits = 10): string {
+/**
+ * Inverse of a rate as a decimal string with `significant` significant digits (for quoting IDR per SGD vs SGD per IDR). Fixed decimals
+ * lost cents: 1/15.873 at 10 decimals is 0,0000630001, so Rp 10 miliar became USD 630.001,00 instead of 630.000,63.
+ */
+export function invertRate(rate: string, significant = 18): string {
   const r = parseRate(rate);
+  // 1 / (num / 10^scale) has about (digits of num − scale) zeros after the point; keep `significant` digits beyond them.
+  const digits = Math.max(10, r.num.toString().length - r.scale + significant);
   const q = divRound(10n ** BigInt(r.scale + digits), r.num);
   return formatRate({ num: q, scale: digits });
 }

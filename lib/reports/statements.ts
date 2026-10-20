@@ -194,6 +194,8 @@ export type CashFlow = {
   financing: CashItem[];
   totals: Record<CashSection, bigint>;
   net: bigint;
+  /** Pengaruh perubahan kurs terhadap kas (PSAK 207): the month-end revaluation of foreign-currency cash, outside the three sections. */
+  fxEffect: bigint;
   openingCash: bigint;
   closingCash: bigint;
 };
@@ -386,7 +388,7 @@ export async function cashFlow(db: Db, scope: Scope, to: Date): Promise<CashFlow
   // one "non-kas" line, where it offsets the other side (the payable, the obligation). Non-cash entries within one section stay as they are.
   const lines = await db.journalLine.findMany({
     where: { entityId: { in: scope.entityIds }, date: { gte: from, lte: to }, entry: { kind: { not: "OPENING" } } },
-    select: { id: true, entryId: true, debit: true, credit: true, entry: { select: { bankTransactionId: true } }, account: { select: { code: true, type: true, fsLine: true, isIntercompany: true } } },
+    select: { id: true, entryId: true, debit: true, credit: true, currency: true, fxAmount: true, entry: { select: { bankTransactionId: true } }, account: { select: { code: true, type: true, fsLine: true, isIntercompany: true } } },
     orderBy: [{ date: "asc" }, { id: "asc" }],
   });
   const byEntry = new Map<string, typeof lines>();
@@ -400,9 +402,28 @@ export async function cashFlow(db: Db, scope: Scope, to: Date): Promise<CashFlow
   const isProceeds = (l: (typeof lines)[number]) => l.account.fsLine !== "ASET_TETAP" && l.account.fsLine !== "AKUM_PENYUSUTAN" && l.account.type !== "PENDAPATAN" && l.account.type !== "BEBAN";
   const collectedBy = await collectedProceeds(db, scope.entityIds, to, [...byEntry.values()].filter((e) => disposals.has(e[0].entryId)).flat().filter((l) => isProceeds(l) && l.debit - l.credit > 0n));
   const sectionOf = (a: (typeof lines)[number]["account"]) => (a.type === "PENDAPATAN" || a.type === "BEBAN" ? "OPERATING" : (lineOf(a)?.section ?? "CASH"));
+  let fxEffect = 0n;
   for (const entry of byEntry.values()) {
     // A bank-derived entry is cash even without a cash line: a statement row is posted to 1999 first and moved by a RECLASS entry.
     if (entry[0].entry.bankTransactionId) continue;
+    // A month-end revaluation (lines in a currency with fx amount 0, lib/fx/revalue.ts) moves no cash (PSAK 207): its cash part is the
+    // effect of exchange rates on cash, shown apart; the rest — the revalued receivable or loan and the unrealised 7200 — leaves the
+    // sections, the gain or loss shown as a non-cash adjustment of the profit.
+    if (entry.some((l) => l.currency && l.fxAmount === 0n)) {
+      let unrealised = 0n;
+      for (const l of entry) {
+        const net = l.debit - l.credit;
+        const section = sectionOf(l.account);
+        if (section === "CASH") fxEffect += net;
+        else if (l.account.type === "PENDAPATAN" || l.account.type === "BEBAN") unrealised += net;
+        else {
+          const line = lineOf(l.account);
+          if (line) add(line.key, line.label, line.section, net);
+        }
+      }
+      if (unrealised) add("FX_UNREALISED", "Laba/rugi selisih kurs belum direalisasi", "OPERATING", unrealised);
+      continue;
+    }
     if (disposals.has(entry[0].entryId)) {
       const assetLines = entry.filter((l) => l.account.fsLine === "ASET_TETAP");
       const cost = -assetLines.reduce((t, l) => t + l.debit - l.credit, 0n);
@@ -484,5 +505,5 @@ export async function cashFlow(db: Db, scope: Scope, to: Date): Promise<CashFlow
   const totals = { OPERATING: netProfit + operating.reduce((t, i) => t + i.amount, 0n), INVESTING: investing.reduce((t, i) => t + i.amount, 0n), FINANCING: financing.reduce((t, i) => t + i.amount, 0n) };
   const cash = (xs: Movement[]) => xs.filter((m) => m.account.fsLine === "KAS_SETARA_KAS").reduce((t, m) => t + m.net, 0n);
   const openingCash = cash(opening);
-  return { from, to, openedAt: start.openedOn ?? before, netProfit, operating, investing, financing, totals, net: totals.OPERATING + totals.INVESTING + totals.FINANCING, openingCash, closingCash: openingCash + cash(moved) };
+  return { from, to, openedAt: start.openedOn ?? before, netProfit, operating, investing, financing, totals, net: totals.OPERATING + totals.INVESTING + totals.FINANCING, fxEffect, openingCash, closingCash: openingCash + cash(moved) };
 }

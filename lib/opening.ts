@@ -2,6 +2,7 @@ import type { Db } from "@/lib/db";
 import { postJournal, type PostLine } from "@/lib/ledger/post";
 import { formatDate } from "@/lib/format";
 import { parseMoney } from "@/lib/money";
+import { divRound, exponentOf, formatRate, isCurrency } from "@/lib/fx/currency";
 import { ACCOUNT_CODES } from "@/lib/coa/template";
 import { templateAccounts } from "@/lib/coa/ensure";
 import { closeLock } from "@/lib/adjust/schedules";
@@ -15,7 +16,19 @@ import { findingLabel, openFinding, openingQuestion } from "@/lib/findings";
  */
 export class OpeningError extends Error {}
 
-export type OpeningLineInput = { accountCode: string; debit: string; credit: string };
+/**
+ * One typed Saldo Awal line in major units of the entity's currency. A balance held in another currency (a dollar account, a dollar
+ * receivable or loan) also gives its foreign amount (`fxAmount`, major units of `currency`): it posts as a foreign-currency line at the
+ * rate the two amounts imply, so month-end revaluation sees the whole balance, not only what moved after Saldo Awal.
+ */
+export type OpeningLineInput = { accountCode: string; debit: string; credit: string; currency?: string; fxAmount?: string };
+
+/** The rate (functional per 1 foreign unit) two amounts imply, with enough decimals that `convertMinor(fx, rate)` gives `amount` back. */
+export function impliedRate(amount: bigint, fx: bigint, currency: string, functional: string): string {
+  const scale = 12;
+  const num = divRound(amount * 10n ** BigInt(exponentOf(currency) + scale), fx * 10n ** BigInt(exponentOf(functional)));
+  return formatRate({ num, scale });
+}
 
 export async function openingContext(db: Db, clientId: string) {
   const entities = await db.entity.findMany({
@@ -133,7 +146,16 @@ export async function postOpening(db: Db, input: { clientId: string; entityId: s
     if (acc.type === "PENDAPATAN" || acc.type === "BEBAN") {
       throw new OpeningError(`${acc.code} ${acc.name} adalah akun laba rugi. Saldo awal berisi posisi neraca: masukkan laba (rugi) sampai tanggal ini ke ${ACCOUNT_CODES.RETAINED} Saldo Laba, atau impor buku besar klien untuk laba rugi setahun penuh.`);
     }
-    lines.push({ accountId: acc.id, debit: dr, credit: cr });
+    let fx: PostLine["fx"] = null;
+    if (l.currency || l.fxAmount?.trim()) {
+      const label = `${acc.code} ${acc.name}`;
+      if (!isCurrency(l.currency) || l.currency === entity.functionalCurrency) throw new OpeningError(`Pilih mata uang valas untuk ${label}.`);
+      if (acc.type !== "ASET" && acc.type !== "LIABILITAS") throw new OpeningError(`${label} bukan aset atau liabilitas: saldo valas hanya untuk kas, piutang, utang dan sejenisnya.`);
+      const amount = parseMoney(l.fxAmount ?? "", l.currency);
+      if (amount <= 0n) throw new OpeningError(`Isi nominal ${l.currency} untuk ${label}.`);
+      fx = { currency: l.currency, amount, rate: impliedRate(dr + cr, amount, l.currency, entity.functionalCurrency) };
+    }
+    lines.push({ accountId: acc.id, debit: dr, credit: cr, fx });
     debit += dr;
     credit += cr;
   }

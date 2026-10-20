@@ -365,7 +365,7 @@ export function planLedger(
 
   for (const [k, list] of missingRate) {
     const [ek, cur, date] = k.split("|");
-    checks.push({ severity: "BLOCK", code: "MISSING_RATE", message: `Kurs ${cur} tanggal ${date} belum ada. Isi di halaman Kurs atau di kolom kurs file.`, refs: cap(list.map((r) => r.ref)), entityKey: ek });
+    checks.push({ severity: "BLOCK", code: "MISSING_RATE", message: `Kurs ${cur} tanggal ${date} belum ada (Buku memakai kurs bulan itu atau bulan sebelumnya, tidak yang lebih lama). Isi di halaman Kurs atau di kolom kurs file.`, refs: cap(list.map((r) => r.ref)), entityKey: ek });
   }
   for (const [k, list] of noRate) {
     const [ek, cur] = k.split("|");

@@ -1,7 +1,8 @@
 import type { Db, Tx } from "@/lib/db";
 import { closeLock } from "@/lib/adjust/schedules";
 import { ACCOUNT_CODES } from "@/lib/coa/template";
-import { convertMinor } from "@/lib/fx/currency";
+import { convertMinor, formatRateId } from "@/lib/fx/currency";
+import { formatMoney } from "@/lib/money";
 import { closingRate, loadRates } from "@/lib/fx/rates";
 import { formatPeriod, periodBounds } from "@/lib/format";
 import { postJournal, type PostLine } from "@/lib/ledger/post";
@@ -19,12 +20,14 @@ export class RevaluationError extends Error {}
 
 /**
  * Non-monetary balance-sheet items stay at their historical rate (PSAK 210): fixed assets and their depreciation, inventory, prepayments,
- * intangibles and investments, and revenue received in advance. Everything else (cash, receivables, payables, loans) is monetary.
+ * intangibles and other non-current assets, and revenue received in advance. Everything else (cash, receivables, payables, loans) is
+ * monetary — and so is 1260, where Buku files time deposits and placements (a right to a fixed number of dollars, PSAK 221).
  */
 const NON_MONETARY_LINES = new Set(["ASET_TETAP", "AKUM_PENYUSUTAN", "PERSEDIAAN", "BIAYA_DIBAYAR_DIMUKA", "ASET_TIDAK_LANCAR_LAIN"]);
 const NON_MONETARY_CODES = new Set(["2160"]);
+const MONETARY_CODES = new Set<string>([ACCOUNT_CODES.DEPOSIT]);
 const monetary = (a: { type: string; fsLine: string; code: string }) =>
-  (a.type === "ASET" || a.type === "LIABILITAS") && !NON_MONETARY_LINES.has(a.fsLine) && !NON_MONETARY_CODES.has(a.code);
+  (a.type === "ASET" || a.type === "LIABILITAS") && (MONETARY_CODES.has(a.code) || (!NON_MONETARY_LINES.has(a.fsLine) && !NON_MONETARY_CODES.has(a.code)));
 
 export async function revaluationProposals(db: Db | Tx, clientId: string, year: number, month: number): Promise<RevalProposal[]> {
   const { end } = periodBounds(year, month);
@@ -83,7 +86,7 @@ export async function postRevaluation(db: Db, clientId: string, entityId: string
     let total = 0n;
     for (const l of proposal.lines) {
       const abs = l.diff < 0n ? -l.diff : l.diff;
-      lines.push({ accountId: l.accountId, debit: l.diff > 0n ? abs : 0n, credit: l.diff < 0n ? abs : 0n, memo: `${l.currency} ${l.fxBalance} @ ${l.rate}`, fx: { currency: l.currency, amount: 0n, rate: l.rate, revaluation: true } });
+      lines.push({ accountId: l.accountId, debit: l.diff > 0n ? abs : 0n, credit: l.diff < 0n ? abs : 0n, memo: `${formatMoney(l.fxBalance, l.currency)} × kurs ${formatRateId(l.rate)}`, fx: { currency: l.currency, amount: 0n, rate: l.rate, revaluation: true } });
       total += l.diff;
     }
     // Gain (total > 0) credits 7200, loss debits it.

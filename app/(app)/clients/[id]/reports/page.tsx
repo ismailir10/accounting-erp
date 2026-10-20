@@ -296,7 +296,7 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 {emkm ? "Laporan Arus Kas (informasi tambahan)" : "Laporan Arus Kas"}
-                {cash && <StatusPill status={cash.openingCash + cash.net === cash.closingCash ? "PASS" : "FAIL"} label={cash.openingCash + cash.net === cash.closingCash ? "Sama dengan kas di Neraca" : "Beda dengan kas di Neraca"} />}
+                {cash && <StatusPill status={cash.openingCash + cash.net + cash.fxEffect === cash.closingCash ? "PASS" : "FAIL"} label={cash.openingCash + cash.net + cash.fxEffect === cash.closingCash ? "Sama dengan kas di Neraca" : "Beda dengan kas di Neraca"} />}
               </CardTitle>
               <CardDescription>Metode tidak langsung, dari perubahan pos neraca · {ytdLabel} · {unit}</CardDescription>
             </CardHeader>

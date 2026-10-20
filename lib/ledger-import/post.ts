@@ -5,7 +5,7 @@ import { formatMoney } from "@/lib/money";
 import type { Prisma } from "@/lib/generated/prisma/client";
 import { lockedAfter, postJournal, type PostLine } from "@/lib/ledger/post";
 import { ACCOUNT_CODES } from "@/lib/coa/template";
-import { formatDate, formatPeriod } from "@/lib/format";
+import { dateOnly, formatDate, formatPeriod } from "@/lib/format";
 import { loadRates, lookupRate, upsertFileRate } from "@/lib/fx/rates";
 import { formatRate, formatRateId, isCurrency, parseRate } from "@/lib/fx/currency";
 import { ParseError } from "@/lib/import/types";
@@ -119,7 +119,7 @@ export async function stageImport(db: Db, input: StageInput): Promise<StageResul
     const existingNames = new Map<string, string>();
     for (const [label, ei] of entityInfos) for (const s of existing.filter((x) => x.entityId === ei.entityId)) existingNames.set(accountKey(label, s.code), s.name);
     const rates = currencyMode === "CONVERT" ? await loadRates(db, input.firmId) : [];
-    plan = planLedger(read.rows, { entities: entityInfos, currencyMode, rateFor: (c, f, d) => lookupRate(rates, c, f, d), existingNames, totals: read.totals, dateOrder: read.dateOrder });
+    plan = planLedger(read.rows, { entities: entityInfos, currencyMode, rateFor: (c, f, d) => lookupRate(rates, c, f, d, "SPOT", dateOnly(d.getUTCFullYear(), d.getUTCMonth(), 1)), existingNames, totals: read.totals, dateOrder: read.dateOrder });
     plan.checks.push(...(await ledgerBookChecks(db, plan, entityInfos)));
     // The file's period follows the dates that will post (a year typo, once accepted, posts on its corrected date).
     const dates = plan.entries.length ? plan.entries.map((e) => +e.date) : read.rows.filter((r) => r.date).map((r) => +r.date!);
