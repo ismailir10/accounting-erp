@@ -140,8 +140,13 @@ export async function masaReport(db: Db, input: { clientId: string; entityId: st
   const codes = [...TAXES.map((t) => t.code), PPN_MASUKAN];
   const accounts = await db.account.findMany({ where: { clientId, code: { in: codes } }, select: { id: true, code: true } });
   const codeOf = new Map(accounts.map((a) => [a.id, a.code]));
-  // From January of the previous masa's year: the PPN lebih bayar carried forward is rebuilt from there.
-  const from = dateOnly(prev.year, 1, 1);
+  // From the company's first tax line (at the latest January of the previous masa's year): the PPN lebih bayar carried forward is rebuilt
+  // from there, across year ends, as a December lebih bayar is compensated in January and on.
+  const first = await db.journalLine.findFirst({ where: { entityId, accountId: { in: accounts.map((a) => a.id) } }, orderBy: { date: "asc" }, select: { date: true } });
+  const yearStart = dateOnly(prev.year, 1, 1);
+  const from = first && +first.date < +yearStart ? dateOnly(first.date.getUTCFullYear(), first.date.getUTCMonth() + 1, 1) : yearStart;
+  // An opening line belongs to the masa before its date (owedIn below): start the chain one month earlier so it is counted.
+  const chainStart = shift({ year: from.getUTCFullYear(), month: from.getUTCMonth() + 1 }, -1);
   const raw = await db.journalLine.findMany({
     where: { entityId, accountId: { in: accounts.map((a) => a.id) }, date: { gte: from, lte: end } },
     select: { accountId: true, date: true, debit: true, credit: true, entry: { select: { kind: true, sourceRef: true, lines: { where: { credit: { gt: 0 }, account: { isBank: true } }, select: { id: true }, take: 1 } } } },
@@ -169,7 +174,7 @@ export async function masaReport(db: Db, input: { clientId: string; entityId: st
       const masukan = lines.filter((l) => l.code === PPN_MASUKAN);
       const owed = new Map<number, { keluaran: bigint; masukan: bigint; carryIn: bigint; carryOut: bigint; owed: bigint }>();
       let carry = 0n;
-      for (let m: Masa = { year: prev.year, month: 1 }; keyOf(m) <= keyOf(masa); m = shift(m, 1)) {
+      for (let m: Masa = keyOf(chainStart) < keyOf({ year: prev.year, month: 1 }) ? chainStart : { year: prev.year, month: 1 }; keyOf(m) <= keyOf(masa); m = shift(m, 1)) {
         // Net of corrections: a reclass that takes PPN back off (Dr 2130, Cr 1150) lowers the masa; a remittance to 2130 is a payment, not
         // keluaran. On 1150 a purchase's own bank credit is not a payment, so masukan nets every line of the month. The compensation
         // journal is neither.

@@ -268,6 +268,7 @@ async function collectedProceeds(db: Db, entityIds: string[], to: Date, proceeds
   }
   const queues = new Map<string, { tag: string | null; left: bigint }[]>();
   const surplus = new Map<string, bigint>(); // credits with nothing open yet (an advance): they absorb the next debit
+  const surplusCash = new Map<string, bigint>(); // the cash part of that advance: a disposal it absorbs was collected by it
   const cleared = new Map<string, { key: string; tag: string | null; amount: bigint; cash: bigint; advance: boolean }[]>(); // per bank line, to take back
   for (const r of rows) {
     const key = `${r.entityId}:${r.account.code}`;
@@ -284,7 +285,10 @@ async function collectedProceeds(db: Db, entityIds: string[], to: Date, proceeds
         const undo = c.amount < net ? c.amount : net;
         const nonCash = c.amount - c.cash;
         const cashBack = undo > nonCash ? undo - nonCash : 0n;
-        if (c.advance) surplus.set(key, (surplus.get(key) ?? 0n) - undo);
+        if (c.advance) {
+          surplus.set(key, (surplus.get(key) ?? 0n) - undo);
+          surplusCash.set(key, (surplusCash.get(key) ?? 0n) - cashBack);
+        }
         else {
           q.unshift({ tag: c.tag, left: undo });
           if (c.tag && cashBack > 0n) collected.set(c.tag, (collected.get(c.tag) ?? 0n) - cashBack);
@@ -300,6 +304,11 @@ async function collectedProceeds(db: Db, entityIds: string[], to: Date, proceeds
       const adv = surplus.get(key) ?? 0n;
       const absorbed = adv < net ? adv : net;
       surplus.set(key, adv - absorbed);
+      // A deposit received before the disposal (a buyer's advance) collected that much of its proceeds.
+      const advCash = surplusCash.get(key) ?? 0n;
+      const cashAbsorbed = advCash < absorbed ? advCash : absorbed;
+      surplusCash.set(key, advCash - cashAbsorbed);
+      if (tagged.has(r.id) && cashAbsorbed > 0n) collected.set(r.id, (collected.get(r.id) ?? 0n) + cashAbsorbed);
       net -= absorbed;
       if (net > 0n) q.push({ tag: tagged.has(r.id) ? r.id : null, left: net });
     } else if (net < 0n) {
@@ -327,6 +336,7 @@ async function collectedProceeds(db: Db, entityIds: string[], to: Date, proceeds
       }
       if (credit > 0n) {
         surplus.set(key, (surplus.get(key) ?? 0n) + credit);
+        surplusCash.set(key, (surplusCash.get(key) ?? 0n) + cashLeft);
         note(null, credit, cashLeft, true);
       }
     }
@@ -343,10 +353,17 @@ export async function cashFlow(db: Db, scope: Scope, to: Date): Promise<CashFlow
   const opening = start.rows;
   const isPl = (a: Account) => a.type === "PENDAPATAN" || a.type === "BEBAN";
   const netProfit = moved.filter((m) => isPl(m.account)).reduce((t, m) => t - m.net, 0n);
-  // Each intercompany account's side at the period end decides its section (cashLine).
+  // Each intercompany account's side at the period end decides its section (cashLine); a balance settled to zero by the period end keeps the
+  // side it opened with (a loan given and repaid is still lending).
   const icNet = new Map<string, bigint>();
+  const icOpen = new Map<string, bigint>();
+  for (const m of opening) if (m.account.isIntercompany) icOpen.set(m.account.code, (icOpen.get(m.account.code) ?? 0n) + m.net);
   for (const m of [...opening, ...moved]) if (m.account.isIntercompany) icNet.set(m.account.code, (icNet.get(m.account.code) ?? 0n) + m.net);
-  const lineOf = (a: Pick<Account, "code" | "fsLine" | "isIntercompany">) => cashLine(a, a.isIntercompany && (icNet.get(a.code) ?? 0n) > 0n);
+  const lentOut = (code: string) => {
+    const end = icNet.get(code) ?? 0n;
+    return end !== 0n ? end > 0n : (icOpen.get(code) ?? 0n) > 0n;
+  };
+  const lineOf = (a: Pick<Account, "code" | "fsLine" | "isIntercompany">) => cashLine(a, a.isIntercompany && lentOut(a.code));
   const groups = new Map<string, CashItem & { section: CashSection }>();
   for (const m of moved) {
     if (isPl(m.account) || m.net === 0n) continue;
@@ -419,6 +436,24 @@ export async function cashFlow(db: Db, scope: Scope, to: Date): Promise<CashFlow
       // … and show it in operating. Interest accrued on a lease liability is part of the rent, which is paid (and shown) in financing.
       if (LEASE_CODES.has(l.account.code)) add("LEASE_INTEREST", "Bunga dan reklasifikasi liabilitas sewa (dibayar di pendanaan)", "OPERATING", -net, l.account.code);
       else add("NONCASH", NONCASH, "OPERATING", -net, l.account.code);
+    }
+  }
+
+  // A disposal of an earlier year whose proceeds are collected in this period: the receipt only moved the receivable (operating above); the part
+  // of its proceeds collected between the year start and `to` is an investing inflow instead.
+  const earlier = await db.fixedAsset.findMany({ where: { entityId: { in: scope.entityIds }, disposalEntry: { date: { lt: from } } }, select: { disposalEntryId: true } });
+  if (earlier.length) {
+    const proceeds = (await db.journalLine.findMany({
+      where: { entryId: { in: earlier.map((d) => d.disposalEntryId!) } },
+      select: { id: true, entryId: true, debit: true, credit: true, account: { select: { code: true, type: true, fsLine: true, isIntercompany: true } } },
+    })).filter((l) => isProceeds(l as (typeof lines)[number]) && l.debit - l.credit > 0n);
+    const [byEnd, byStart] = await Promise.all([collectedProceeds(db, scope.entityIds, to, proceeds), collectedProceeds(db, scope.entityIds, before, proceeds)]);
+    for (const l of proceeds) {
+      const now = (byEnd.get(l.id) ?? 0n) - (byStart.get(l.id) ?? 0n);
+      if (now <= 0n) continue;
+      const line = lineOf(l.account);
+      if (line) add(line.key, line.label, line.section, -now, l.account.code);
+      add("DISPOSAL", "Hasil pelepasan aset tetap", "INVESTING", now);
     }
   }
 

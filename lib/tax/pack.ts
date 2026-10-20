@@ -109,6 +109,12 @@ export async function taxPack(db: Db, clientId: string, entityId: string, year: 
   if (depreciationDiff !== 0n) {
     corrections.push({ key: "auto:depreciation", label: "Selisih penyusutan komersial dan fiskal", direction: depreciationDiff > 0n ? "POSITIVE" : "NEGATIVE", kind: "TEMPORARY", amount: depreciationDiff < 0n ? -depreciationDiff : depreciationDiff, source: { type: "ASSETS" } });
   }
+  // An asset disposed this year: the fiscal gain or loss is reckoned on the fiscal book value, so the difference of the two depreciations
+  // so far reverses (without it a disposal in the acquisition year keeps a correction for a deduction that both sides end up equal on).
+  const disposalDiff = assets.reduce((t, r) => t + (r.disposalDifference ?? 0n), 0n);
+  if (disposalDiff !== 0n) {
+    corrections.push({ key: "auto:disposal", label: "Selisih laba/rugi pelepasan aset tetap komersial dan fiskal", direction: disposalDiff > 0n ? "POSITIVE" : "NEGATIVE", kind: "TEMPORARY", amount: disposalDiff < 0n ? -disposalDiff : disposalDiff, source: { type: "ASSETS" } });
+  }
   // Leases (rule 5f): the PSAK 116 depreciation + interest actually journalled (so an unposted month adds nothing the books don't carry)
   // out, rent straight line over the term in.
   const leases = (await db.lease.findMany({ where: { clientId, entityId, cancelEntryId: null }, include: { postings: { select: { month: true } } } }))

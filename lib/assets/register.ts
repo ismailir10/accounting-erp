@@ -225,6 +225,11 @@ export type RegisterRow = {
   fiscalBookValue: bigint | null;
   /** Book − fiscal this year: positive = koreksi fiskal positif. */
   difference: bigint | null;
+  /**
+   * Disposed this year: fiscal gain − book gain on the disposal = fiscal accumulated − book accumulated at disposal (the same proceeds on
+   * both sides), the reversal of the depreciation timing difference; positive = koreksi fiskal positif. Null otherwise.
+   */
+  disposalDifference: bigint | null;
   /** Installments due through the period but not posted. */
   unposted: number;
   scheduleId: string | null;
@@ -270,7 +275,8 @@ export async function assetRegister(db: Db, clientId: string, year: number, mont
     const amountOf = (e: (typeof posted)[number]) => e.lines.filter((l) => l.accountId === s!.creditAccountId).reduce((t, l) => t + l.credit - l.debit, 0n);
     const bookYtd = posted.filter((e) => +e.date >= +yearStart).reduce((t, e) => t + amountOf(e), 0n);
     const disposed = a.disposedOn !== null && +a.disposedOn <= +end;
-    const accumulated = disposed ? 0n : a.openingAccumulated + posted.reduce((t, e) => t + amountOf(e), 0n);
+    const bookAccumulated = a.openingAccumulated + posted.reduce((t, e) => t + amountOf(e), 0n);
+    const accumulated = disposed ? 0n : bookAccumulated;
     const cost = disposed ? 0n : a.cost;
     const postedK = new Set((s?.entries ?? []).map((e) => e.installment));
     const unposted = s ? installments(s).filter((i) => !i.reversal && owed(s.stoppedAt, i) && i.year * 12 + i.month <= upTo && !locked.has(i.year * 12 + i.month) && !postedK.has(i.k)).length : 0;
@@ -293,6 +299,7 @@ export async function assetRegister(db: Db, clientId: string, year: number, mont
       fiscalYtd: fiscal?.depreciation ?? null,
       fiscalBookValue: fiscal ? (disposed ? 0n : fiscal.bookValue) : null,
       difference: fiscal ? bookYtd - fiscal.depreciation : null,
+      disposalDifference: fiscal && disposed ? fiscal.accumulated - bookAccumulated : null,
       unposted,
       scheduleId: a.scheduleId,
       sourceEntryId: a.sourceEntryId,
