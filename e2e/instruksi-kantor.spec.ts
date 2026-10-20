@@ -101,7 +101,11 @@ test("Instruksi kantor on the demo: the preview offers the bank's abbreviation, 
       await expect(firmRow.getByRole("button", { name: "Matikan", exact: true })).toHaveCount(0);
       await akuntan.getByTestId("instruction-editor").getByRole("combobox", { name: "Berlaku untuk" }).click();
       await expect(akuntan.getByRole("option", { name: "Semua klien", exact: true })).toHaveCount(0);
-      await akuntan.keyboard.press("Escape");
+      // Escape before the popup has settled can leave it open, its options then intercepting the next click: close until it is gone.
+      await expect(async () => {
+        await akuntan.keyboard.press("Escape");
+        await expect(akuntan.getByRole("listbox")).toHaveCount(0, { timeout: 1_000 });
+      }).toPass();
       await compile(akuntan, AKUNTAN_SENTENCE, "PT Jasa Kreatif Digital");
       await expect(akuntan.getByTestId("instruction-compiled")).toContainText('"QA INSTRUKSI AKUNTAN" → 6190');
       await approveShown(akuntan);
