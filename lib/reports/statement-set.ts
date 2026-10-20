@@ -185,6 +185,7 @@ export async function statementSet(db: Db, scope: Scope, year: number, month: nu
       { label: "Kenaikan (penurunan) bersih kas dan setara kas", values: [cf.net], bold: true },
       ...(cf.fxEffect ? [{ label: "Pengaruh perubahan kurs terhadap kas dan setara kas", values: [cf.fxEffect] }] : []),
       { label: `Kas dan setara kas ${formatDateLong(cf.openedAt)}`, values: [cf.openingCash] },
+      ...(cf.joinedCash && cf.joinedOn ? [{ label: `Kas entitas yang bergabung (saldo awal ${formatDateLong(cf.joinedOn)})`, values: [cf.joinedCash] }] : []),
       { label: `Kas dan setara kas ${cur}`, values: [cf.closingCash], bold: true },
     ],
   });

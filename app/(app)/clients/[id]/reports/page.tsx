@@ -52,7 +52,7 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
   const emkm = framework === "SAK_EMKM";
   const href = (code: string) => withParams(`${base}/ledger/${code}`, { period: period.key, entity: scope.value });
   const tab = typeof sp.tab === "string" ? sp.tab : "pl";
-  const combinedNote = `Gabungan adalah pandangan manajemen, bukan konsolidasi menurut SAK (yang berlaku untuk induk–anak). Saldo antar entitas (1190) saling meniadakan bila kedua sisinya sudah tercatat; saldo 1190 yang masih tampil belum ada pasangannya di entitas lain.${
+  const combinedNote = `Gabungan adalah pandangan manajemen, bukan konsolidasi menurut SAK (yang berlaku untuk induk–anak). Saldo antar entitas (1190) saling meniadakan bila kedua sisinya sudah tercatat; saldo 1190 yang masih tampil belum ada pasangannya di entitas lain. Hanya saldo 1190 yang dieliminasi: pendapatan dan beban antar entitas (mis. jasa manajemen) serta investasi pada entitas grup tetap dijumlahkan apa adanya.${
     mixed ? " Entitas non-Rupiah dijabarkan: aset & liabilitas dengan kurs penutup, laba rugi dengan kurs rata-rata, ekuitas dengan kurs historis; selisihnya di akun 3900." : ""
   } Laporan manajemen, catatan manajemen dan paket kredit bank dibuat per perusahaan: pilih perusahaannya di atas.`;
   const note = currencyNote(currency, mixed);
@@ -296,7 +296,7 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 {emkm ? "Laporan Arus Kas (informasi tambahan)" : "Laporan Arus Kas"}
-                {cash && <StatusPill status={cash.openingCash + cash.net + cash.fxEffect === cash.closingCash ? "PASS" : "FAIL"} label={cash.openingCash + cash.net + cash.fxEffect === cash.closingCash ? "Sama dengan kas di Neraca" : "Beda dengan kas di Neraca"} />}
+                {cash && <StatusPill status={cash.openingCash + cash.joinedCash + cash.net + cash.fxEffect === cash.closingCash ? "PASS" : "FAIL"} label={cash.openingCash + cash.joinedCash + cash.net + cash.fxEffect === cash.closingCash ? "Sama dengan kas di Neraca" : "Beda dengan kas di Neraca"} />}
               </CardTitle>
               <CardDescription>Metode tidak langsung, dari perubahan pos neraca · {ytdLabel} · {unit}</CardDescription>
             </CardHeader>

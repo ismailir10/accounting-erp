@@ -42,7 +42,8 @@ export async function reportPeriods(db: Db, scope: Scope, year: number, month: n
   const beforeBooks = +booksStart > +asOf;
   let balanceComparative: ReportPeriods["balanceComparative"] = null;
   if (await entryBy(lastYearEnd)) {
-    const opening = openingAt !== null && +openingAt === +lastYearEnd;
+    // A Saldo Awal on that date is the column's source only when it opens the books: a company joining a group kept before it is not.
+    const opening = openingAt !== null && +openingAt === +lastYearEnd && !(await entryBy(new Date(+lastYearEnd - 86_400_000)));
     balanceComparative = { date: lastYearEnd, label: `${opening ? "Saldo awal " : ""}${formatDateLong(lastYearEnd)}`, opening };
   }
   else if (openingAt && +openingAt > +lastYearEnd && +openingAt < +asOf) balanceComparative = { date: openingAt, label: `Saldo awal ${formatDateLong(openingAt)}`, opening: true };

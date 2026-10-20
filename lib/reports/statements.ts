@@ -45,12 +45,34 @@ async function movements(db: Db, scope: Scope, from: Date | undefined, to: Date,
   });
 }
 
-/** Balances at the start of the financial year: everything to the day before it plus the year's Saldo Awal entries up to `to`, and the first such date. */
+/**
+ * Balances at the start of the financial year (`rows`): everything to the day before it, plus the year's Saldo Awal when it opens the scope's
+ * books (nothing of the scope dated before it; `openedOn` is then its date). A Saldo Awal of a company joining the scope later in the year —
+ * a CV opened in May beside a PT kept since January — is not the group's opening: it comes back apart (`joined`), so the opening row stays
+ * the group's position at its date and the year's movements stay the year's.
+ */
 async function yearOpening(db: Db, scope: Scope, from: Date, to: Date) {
   const before = new Date(+from - 86_400_000);
-  const [prior, inYear] = await Promise.all([movements(db, scope, undefined, before), movements(db, scope, from, to, "only")]);
-  const first = await db.journalEntry.findFirst({ where: { entityId: { in: scope.entityIds }, kind: "OPENING", date: { gte: from, lte: to } }, orderBy: { date: "asc" }, select: { date: true } });
-  return { rows: prior.map((m, i) => ({ ...m, debit: m.debit + inYear[i].debit, credit: m.credit + inYear[i].credit, net: m.net + inYear[i].net })), openedOn: first?.date ?? null };
+  const [prior, openings] = await Promise.all([
+    movements(db, scope, undefined, before),
+    db.journalEntry.findMany({ where: { entityId: { in: scope.entityIds }, kind: "OPENING", date: { gte: from, lte: to } }, orderBy: { date: "asc" }, select: { id: true, date: true } }),
+  ]);
+  const first = openings[0]?.date ?? null;
+  const opensBooks = first !== null && !(await db.journalLine.findFirst({ where: { entityId: { in: scope.entityIds }, date: { lt: first } }, select: { id: true } }));
+  const atStart = openings.filter((o) => opensBooks && +o.date === +first!).map((o) => o.id);
+  const later = openings.filter((o) => !atStart.includes(o.id)).map((o) => o.id);
+  const sums = async (entryIds: string[]) =>
+    entryIds.length
+      ? new Map((await db.journalLine.groupBy({ by: ["accountId"], where: { entryId: { in: entryIds } }, _sum: { debit: true, credit: true } })).map((r) => [r.accountId, { debit: r._sum.debit ?? 0n, credit: r._sum.credit ?? 0n }]))
+      : new Map<string, { debit: bigint; credit: bigint }>();
+  const [start, joinedSums] = await Promise.all([sums(atStart), sums(later)]);
+  const plus = (m: Movement, x?: { debit: bigint; credit: bigint }) => (x ? { ...m, debit: m.debit + x.debit, credit: m.credit + x.credit, net: m.net + x.debit - x.credit } : m);
+  const joined = prior.map((m) => {
+    const x = joinedSums.get(m.account.id);
+    return { account: m.account, debit: x?.debit ?? 0n, credit: x?.credit ?? 0n, net: (x?.debit ?? 0n) - (x?.credit ?? 0n) };
+  });
+  const joinedOn = later.length ? openings.find((o) => o.id === later[0])!.date : null;
+  return { rows: prior.map((m) => plus(m, start.get(m.account.id))), joined, joinedOn, openedOn: opensBooks ? first : null };
 }
 
 async function single(db: Db, scope: Scope) {
@@ -71,10 +93,11 @@ export async function otherComprehensiveIncome(db: Db, scope: Scope, from: Date,
 
 // ─── Laporan Perubahan Ekuitas ────────────────────────────────────────────────
 
-export const EQUITY_ROWS = ["opening", "profit", "oci", "capital", "prive", "retained", "closing"] as const;
+export const EQUITY_ROWS = ["opening", "joined", "profit", "oci", "capital", "prive", "retained", "closing"] as const;
 export type EquityRow = (typeof EQUITY_ROWS)[number];
 export const EQUITY_ROW_LABEL: Record<EquityRow, string> = {
   opening: "Saldo awal",
+  joined: "Ekuitas entitas yang bergabung (saldo awal)",
   profit: "Laba (rugi) tahun berjalan",
   oci: "Penghasilan komprehensif lain",
   capital: "Setoran (penarikan) modal",
@@ -110,10 +133,12 @@ export async function equityChanges(db: Db, scope: Scope, to: Date): Promise<Equ
   const zero = () => EQUITY_LINES.map(() => 0n);
   const values = Object.fromEntries(EQUITY_ROWS.map((r) => [r, zero()])) as Record<EquityRow, bigint[]>;
   const col = (a: Account) => EQUITY_LINES.indexOf(a.fsLine as FsLine);
-  for (const m of opening) {
-    // Every P&L account up to last year is last year's (and earlier) profit, folded into Saldo laba.
-    if (m.account.type === "PENDAPATAN" || m.account.type === "BEBAN") values.opening[1] -= m.net;
-    else if (m.account.type === "EKUITAS" && col(m.account) >= 0) values.opening[col(m.account)] -= m.net;
+  for (const [row, ms] of [["opening", opening], ["joined", start.joined]] as const) {
+    for (const m of ms) {
+      // Every P&L account up to last year is last year's (and earlier) profit, folded into Saldo laba.
+      if (m.account.type === "PENDAPATAN" || m.account.type === "BEBAN") values[row][1] -= m.net;
+      else if (m.account.type === "EKUITAS" && col(m.account) >= 0) values[row][col(m.account)] -= m.net;
+    }
   }
   for (const m of moved) {
     if (m.account.type !== "EKUITAS" || col(m.account) < 0 || m.net === 0n) continue;
@@ -126,7 +151,7 @@ export async function equityChanges(db: Db, scope: Scope, to: Date): Promise<Equ
   const pick = (xs: bigint[]) => used.map(({ i }) => xs[i]);
   const picked = Object.fromEntries(EQUITY_ROWS.map((r) => [r, pick(values[r])])) as Record<EquityRow, bigint[]>;
   const totals = Object.fromEntries(EQUITY_ROWS.map((r) => [r, picked[r].reduce((t, v) => t + v, 0n)])) as Record<EquityRow, bigint>;
-  const codesOf = (fs: FsLine) => [...new Set([...opening, ...moved].filter((m) => m.account.fsLine === fs && m.net !== 0n).map((m) => m.account.code))].sort();
+  const codesOf = (fs: FsLine) => [...new Set([...opening, ...start.joined, ...moved].filter((m) => m.account.fsLine === fs && m.net !== 0n).map((m) => m.account.code))].sort();
   return { from, to, openedAt: start.openedOn ?? before, columns: used.map(({ fs }) => ({ fsLine: fs, label: FS_LINES[fs].label, codes: codesOf(fs) })), values: picked, totals, balanceSheetEquity: bs.totals.equity };
 }
 
@@ -162,8 +187,10 @@ export async function fixedAssetMovement(db: Db, scope: Scope, to: Date): Promis
   });
   const rows: AssetMovementRow[] = [];
   start.rows.forEach((o, i) => {
-    const m = moved[i];
-    if (!isLine(o.account) || (o.net === 0n && m.debit === 0n && m.credit === 0n && movedAll[i].net === 0n)) return;
+    // A company joining the scope in the year brings its assets in as additions (and its accumulation as a charge).
+    const j = start.joined[i];
+    const m = { debit: moved[i].debit + j.debit, credit: moved[i].credit + j.credit };
+    if (!isLine(o.account) || (o.net === 0n && m.debit === 0n && m.credit === 0n && movedAll[i].net === 0n && j.net === 0n)) return;
     const cost = o.account.fsLine === "ASET_TETAP";
     rows.push({
       code: o.account.code,
@@ -172,7 +199,7 @@ export async function fixedAssetMovement(db: Db, scope: Scope, to: Date): Promis
       opening: o.net,
       additions: cost ? m.debit : -m.credit,
       deductions: cost ? -m.credit : m.debit,
-      closing: o.net + movedAll[i].net,
+      closing: o.net + j.net + movedAll[i].net,
     });
   });
   rows.sort((a, b) => (a.kind === b.kind ? a.code.localeCompare(b.code) : a.kind === "COST" ? -1 : 1));
@@ -197,6 +224,9 @@ export type CashFlow = {
   /** Pengaruh perubahan kurs terhadap kas (PSAK 207): the month-end revaluation of foreign-currency cash, outside the three sections. */
   fxEffect: bigint;
   openingCash: bigint;
+  /** Cash a company brought when it joined the scope in the year (its Saldo Awal, dated `joinedOn`): not a flow of the group's. */
+  joinedCash: bigint;
+  joinedOn: Date | null;
   closingCash: bigint;
 };
 
@@ -508,5 +538,6 @@ export async function cashFlow(db: Db, scope: Scope, to: Date): Promise<CashFlow
   const totals = { OPERATING: netProfit + operating.reduce((t, i) => t + i.amount, 0n), INVESTING: investing.reduce((t, i) => t + i.amount, 0n), FINANCING: financing.reduce((t, i) => t + i.amount, 0n) };
   const cash = (xs: Movement[]) => xs.filter((m) => m.account.fsLine === "KAS_SETARA_KAS").reduce((t, m) => t + m.net, 0n);
   const openingCash = cash(opening);
-  return { from, to, openedAt: start.openedOn ?? before, netProfit, operating, investing, financing, totals, net: totals.OPERATING + totals.INVESTING + totals.FINANCING, fxEffect, openingCash, closingCash: openingCash + cash(moved) };
+  const joinedCash = cash(start.joined);
+  return { from, to, openedAt: start.openedOn ?? before, netProfit, operating, investing, financing, totals, net: totals.OPERATING + totals.INVESTING + totals.FINANCING, fxEffect, openingCash, joinedCash, joinedOn: start.joinedOn, closingCash: openingCash + joinedCash + cash(moved) };
 }

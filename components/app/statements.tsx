@@ -106,6 +106,12 @@ export function CashFlowTable({ data, currency, accountHref, framework = "SAK_EP
           <TableCell className="py-1.5 pl-6 whitespace-normal">Kas dan setara kas {formatDate(data.openedAt)}</TableCell>
           <TableCell className="py-1.5 pr-6 text-right"><Money value={data.openingCash} currency={currency} /></TableCell>
         </TableRow>
+        {data.joinedCash !== 0n && data.joinedOn && (
+          <TableRow className="border-b-0" data-testid="cash-joined">
+            <TableCell className="py-1.5 pl-6 whitespace-normal">Kas entitas yang bergabung (saldo awal {formatDate(data.joinedOn)})</TableCell>
+            <TableCell className="py-1.5 pr-6 text-right"><Money value={data.joinedCash} currency={currency} /></TableCell>
+          </TableRow>
+        )}
         <TableRow className="font-semibold" data-testid="cash-closing">
           <TableCell className="py-2 pl-6 whitespace-normal">Kas dan setara kas {formatDate(data.to)}</TableCell>
           <TableCell className="py-2 pr-6 text-right"><Money value={data.closingCash} strong currency={currency} /></TableCell>

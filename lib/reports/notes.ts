@@ -83,7 +83,9 @@ export async function financialNotes(db: Db, scope: Scope, year: number, month: 
       ? `${names}, entitas-entitas dalam grup ${client.name}, menyajikan laporan keuangan gabungan untuk ${per.beforeBooks ? "" : "periode "}${periodText}.`
       : `${names} ("Entitas") menyajikan laporan keuangan untuk ${per.beforeBooks ? "" : "periode "}${periodText}.`,
     ...entities.filter((e) => e.npwp).map((e) => `${e.name}: NPWP ${e.npwp}.`),
-    entities.length > 1 ? "Laporan gabungan ini adalah pandangan manajemen atas entitas-entitas dalam grup, bukan laporan konsolidasian menurut SAK." : "",
+    entities.length > 1
+      ? "Laporan gabungan ini adalah pandangan manajemen atas entitas-entitas dalam grup, bukan laporan konsolidasian menurut SAK. Hanya piutang dan utang antar entitas yang saling dihapus; pendapatan dan beban antar entitas serta investasi pada entitas grup dijumlahkan apa adanya."
+      : "",
     ...entities.flatMap((e) => {
       const who = entities.length > 1 ? `${e.name} — ` : "";
       return [
