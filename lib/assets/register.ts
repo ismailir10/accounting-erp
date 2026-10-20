@@ -263,6 +263,16 @@ export async function assetRegister(db: Db, clientId: string, year: number, mont
   // An asset acquired before its entity's books started is part of the opening: listed (with its opening accumulation) from then.
   const openings = await db.journalEntry.groupBy({ by: ["entityId"], where: { kind: "OPENING", entityId: { in: [...new Set(assets.map((a) => a.entityId))] } }, _min: { date: true } });
   const openingOf = new Map(openings.map((o) => [o.entityId, o._min.date]));
+  // Books opened inside the (calendar) year with a balance sheet only start the month after the opening: the year's fiscal deduction counts
+  // from there, as the profit beside it does (the tax pack's months covered). An opening carrying income or expense holds the year so far.
+  const coveredFrom = new Map<string, number>();
+  for (const [entityId, opened] of openingOf) {
+    if (!opened) continue;
+    const start = new Date(+opened + 86_400_000);
+    if (start.getUTCFullYear() !== year || start.getUTCMonth() === 0) continue;
+    const pl = await db.journalLine.findFirst({ where: { entityId, entry: { kind: "OPENING" }, account: { type: { in: ["PENDAPATAN", "BEBAN"] } } }, select: { id: true } });
+    if (!pl) coveredFrom.set(entityId, start.getUTCMonth() + 1);
+  }
   const listed = assets.filter((a) => {
     const opened = openingOf.get(a.entityId);
     const from = opened && +a.acquiredOn < +opened ? opened : a.acquiredOn;
@@ -281,7 +291,7 @@ export async function assetRegister(db: Db, clientId: string, year: number, mont
     const postedK = new Set((s?.entries ?? []).map((e) => e.installment));
     const unposted = s ? installments(s).filter((i) => !i.reversal && owed(s.stoppedAt, i) && i.year * 12 + i.month <= upTo && !locked.has(i.year * 12 + i.month) && !postedK.has(i.k)).length : 0;
     const idr = a.entity.functionalCurrency === "IDR";
-    const fiscal = idr && endMonth === 12 ? fiscalDepreciation({ ...a, disposedOn: a.disposedOn }, year, month) : null;
+    const fiscal = idr && endMonth === 12 ? fiscalDepreciation({ ...a, disposedOn: a.disposedOn }, year, month, coveredFrom.get(a.entityId) ?? 1) : null;
     return {
       id: a.id,
       name: a.name,

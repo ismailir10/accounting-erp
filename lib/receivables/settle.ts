@@ -6,6 +6,7 @@ import { checkWithholding, WITHHOLDING_LABEL } from "@/lib/tax/withholding";
 import { formatPeriod } from "@/lib/format";
 import { formatMoney, parseMoney } from "@/lib/money";
 import { recordEvent } from "@/lib/audit";
+import { openingDates, subledgerFrom } from "@/lib/receivables/aging";
 
 /**
  * Settlements (accounting-rules 5c): a bank line settles (part of) an invoice. The bank line already moved the GL when it was
@@ -42,6 +43,19 @@ async function lockedMonths(db: Db | Tx, clientId: string) {
   return new Set((await db.period.findMany({ where: { clientId, status: "LOCKED" }, select: { year: true, month: true } })).map((p) => p.year * 12 + p.month));
 }
 
+/**
+ * A closed month's line may still settle a document entering the subledger after every closed month when it is already that contact's
+ * money (their advance, UC-B5): a December advance applied to a January invoice. Every closed month's aging and proof read the same
+ * either way, since the document is in none of them. Withholding is the exception (its tax leg posts in the line's month), checked by
+ * the caller.
+ */
+async function appliesAfterClose(db: Db | Tx, line: { contactId: string | null }, invoice: { contactId: string; entityId: string; issueDate: Date; opening: boolean }, locked: Set<number>) {
+  if (!line.contactId || line.contactId !== invoice.contactId || !locked.size) return false;
+  const from = subledgerFrom(invoice, await openingDates(db, [invoice.entityId]));
+  return monthKey(from) > Math.max(...locked);
+}
+const closedMessage = (d: Date) => `${formatPeriod(d.getUTCFullYear(), d.getUTCMonth() + 1)} sudah ditutup. Buka periode dulu untuk mencocokkan mutasi ini.`;
+
 async function load(tx: Tx, input: SettleInput) {
   // Lock both rows: two clicks settling the same invoice or the same receipt serialise here. The bank line first, everywhere
   // (settleFifo and unsettle lock it before any invoice), so two paths over the same line never wait on each other in reverse.
@@ -58,12 +72,14 @@ async function load(tx: Tx, input: SettleInput) {
   if (t.direction !== (sales ? "IN" : "OUT")) throw new LedgerError(sales ? "Pelunasan piutang harus uang masuk." : "Pembayaran utang harus uang keluar.");
   // A line tagged with another contact is their money (their advance, UC-B5): it can't pay this contact's document.
   if (t.contactId && t.contactId !== invoice.contactId) throw new LedgerError(`Mutasi ini milik ${t.contact?.name ?? "kontak lain"} (uang muka atau pelunasannya). Hapus tandanya dulu bila memang salah.`);
-  if ((await lockedMonths(tx, input.clientId)).has(monthKey(t.date))) throw new LedgerError(`${formatPeriod(t.date.getUTCFullYear(), t.date.getUTCMonth() + 1)} sudah ditutup. Buka periode dulu untuk mencocokkan mutasi ini.`);
-  return { invoice, t };
+  const locked = await lockedMonths(tx, input.clientId);
+  const closed = locked.has(monthKey(t.date));
+  if (closed && !(await appliesAfterClose(tx, t, invoice, locked))) throw new LedgerError(closedMessage(t.date));
+  return { invoice, t, closed };
 }
 
 async function settleTx(tx: Tx, input: SettleInput) {
-  const { invoice, t } = await load(tx, input);
+  const { invoice, t, closed } = await load(tx, input);
   if (t.status === "NEEDS_REVIEW" || t.accountCode !== invoice.arApAccount.code) {
     throw new LedgerError(`Mutasi ini belum dicatat ke ${invoice.arApAccount.code} ${invoice.arApAccount.name}. Klasifikasikan dulu, atau pakai "Klasifikasikan lalu cocokkan".`);
   }
@@ -89,6 +105,7 @@ async function settleTx(tx: Tx, input: SettleInput) {
   const shortfall = open - cash;
   const withheld = explicitWht ?? (shortfall > 0n && expectedTax > 0n && shortfall <= expectedTax ? shortfall : 0n);
   const amount = cash + withheld;
+  if (closed && withheld > 0n) throw new LedgerError(`Pajak yang dipotong dicatat di bulan mutasinya, dan ${closedMessage(t.date)}`);
   if (amount > open) throw new LedgerError(`Melebihi sisa ${invoice.number} (${formatMoney(open, cur)}).`);
   const exists = await tx.invoiceSettlement.findUnique({ where: { invoiceId_bankTransactionId: { invoiceId: invoice.id, bankTransactionId: t.id } } });
   if (exists) throw new LedgerError("Mutasi ini sudah dicocokkan ke faktur ini. Hapus pencocokannya dulu untuk mengubah nominal.");
@@ -117,8 +134,9 @@ export async function settle(db: Db, input: SettleInput) {
 /** One click for a line still in review or on another account: classify it to the invoice's account (reviewer's writer), then settle. */
 export async function settleWithReclass(db: Db, input: SettleInput) {
   return db.$transaction(async (tx) => {
-    const { invoice, t } = await load(tx, input);
+    const { invoice, t, closed } = await load(tx, input);
     if (t.status === "NEEDS_REVIEW" || t.accountCode !== invoice.arApAccount.code) {
+      if (closed) throw new LedgerError(closedMessage(t.date)); // reclassifying posts in the line's month
       // The reviewer's writer refuses to move a line away from invoices it already settles on another account (one line, one account).
       await reviewTransactionTx(tx, { bankTxId: t.id, accountCode: invoice.arApAccount.code, taxTag: null, actorId: input.actorId });
     }
@@ -209,9 +227,13 @@ export async function tagAdvance(db: Db, input: { clientId: string; bankTransact
 }
 
 export async function unsettle(db: Db, input: { clientId: string; settlementId: string }) {
-  const s = await db.invoiceSettlement.findFirst({ where: { id: input.settlementId, invoice: { clientId: input.clientId } }, include: { bankTransaction: { select: { date: true, whtKind: true, whtAmount: true } } } });
+  const s = await db.invoiceSettlement.findFirst({ where: { id: input.settlementId, invoice: { clientId: input.clientId } }, include: { invoice: true, bankTransaction: { select: { date: true, whtKind: true, whtAmount: true, contactId: true } } } });
   if (!s) throw new LedgerError("Pencocokan tidak ditemukan.");
-  if ((await lockedMonths(db, input.clientId)).has(monthKey(s.bankTransaction.date))) throw new LedgerError("Periode mutasi ini sudah ditutup. Buka periode dulu untuk menghapus pencocokan.");
+  const locked = await lockedMonths(db, input.clientId);
+  // An advance applied after the close (above) may be taken back the same way; one that booked tax may not.
+  if (locked.has(monthKey(s.bankTransaction.date)) && (s.withheld > 0n || !(await appliesAfterClose(db, s.bankTransaction, s.invoice, locked)))) {
+    throw new LedgerError("Periode mutasi ini sudah ditutup. Buka periode dulu untuk menghapus pencocokan.");
+  }
   await db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "BankTransaction" WHERE id = ${s.bankTransactionId} FOR UPDATE`;
     await tx.invoiceSettlement.delete({ where: { id: s.id } });
@@ -257,6 +279,7 @@ export async function settleCandidates(db: Db, clientId: string, invoiceId: stri
   const net = expectedTax > 0n ? open - expectedTax : open;
   if (open <= 0n) return [];
   const locked = await lockedMonths(db, clientId);
+  const afterClose = await appliesAfterClose(db, { contactId: invoice.contactId }, invoice, locked);
   const lines = await db.bankTransaction.findMany({
     where: { entityId: invoice.entityId, direction: invoice.direction === "SALES" ? "IN" : "OUT", OR: [{ date: { gte: invoice.opening ? new Date(0) : invoice.issueDate } }, { contactId: invoice.contactId }] },
     include: { settlements: { select: { amount: true, withheld: true } } },
@@ -265,7 +288,7 @@ export async function settleCandidates(db: Db, clientId: string, invoiceId: stri
   const words = norm(invoice.contact.name).split(" ").filter((w) => w.length >= 3 && !FORMS.has(w));
   const number = norm(invoice.number);
   return lines
-    .filter((t) => !locked.has(monthKey(t.date)))
+    .filter((t) => !locked.has(monthKey(t.date)) || (t.contactId === invoice.contactId && afterClose))
     .map((t) => {
       const free = abs(t.amount) - cashUsed(t.settlements);
       const text = ` ${norm(t.description)} `;

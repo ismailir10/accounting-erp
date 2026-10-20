@@ -250,7 +250,7 @@ export function cashLine(a: Pick<Account, "code" | "fsLine" | "isIntercompany">,
  * earlier clearing back, so the receivable is open again. Conservative by construction: a collection is credited to the disposal only after every older
  * debit in the account has been cleared, and later debits never take from it.
  */
-async function collectedProceeds(db: Db, entityIds: string[], to: Date, proceedsLines: { id: string; entryId: string; account: { code: string } }[]) {
+export async function collectedProceeds(db: Db, entityIds: string[], to: Date, proceedsLines: { id: string; entryId: string; account: { code: string } }[]) {
   const collected = new Map<string, bigint>();
   if (!proceedsLines.length) return collected;
   const codes = [...new Set(proceedsLines.map((l) => l.account.code))];
@@ -487,11 +487,14 @@ export async function cashFlow(db: Db, scope: Scope, to: Date): Promise<CashFlow
   if (bills.length) {
     const debits = await db.journalLine.findMany({ where: { entryId: { in: bills.map((b) => b.entryId!) }, debit: { gt: 0n } }, select: { entryId: true, debit: true, account: { select: { code: true, type: true, fsLine: true, isIntercompany: true } } } });
     for (const bill of bills) {
-      const paid = bill.settlements.filter((x) => +x.bankTransaction.date >= +from && +x.bankTransaction.date <= +to).reduce((t, x) => t + x.amount - x.withheld, 0n); // cash only: the withheld part of a settlement is tax owed, not paid to the supplier
+      // Cash only: the withheld part of a settlement is tax owed, not paid to the supplier. Paid up to `to` less paid before `from`, each
+      // apportioned the same way, so a bill paid across two years adds up to its cost exactly (the rounding telescopes).
+      const paidBy = (until: Date) => bill.settlements.filter((x) => +x.bankTransaction.date <= +until).reduce((t, x) => t + x.amount - x.withheld, 0n);
+      const [paidTo, paidBefore] = [paidBy(to), paidBy(before)];
       for (const l of debits.filter((d) => d.entryId === bill.entryId)) {
         const line = lineOf(l.account);
         if (!line || line.section !== "INVESTING" || bill.total <= 0n) continue;
-        const part = (paid * l.debit) / bill.total;
+        const part = (paidTo * l.debit) / bill.total - (paidBefore * l.debit) / bill.total;
         add(line.key, line.label, "INVESTING", -part);
         add("NONCASH", NONCASH, "OPERATING", part, l.account.code);
       }

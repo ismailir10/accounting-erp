@@ -46,7 +46,7 @@ describe("receiptsVsRevenue", () => {
     await sale(7, 1_000_000n);
 
     const [jul] = await receiptsVsRevenue(db, { clientId: g.client.id, entityId: g.pt.entity.id, year: 2026, month: 7 });
-    expect(jul).toEqual({ year: 2026, month: 7, moneyIn: 4_910_000n, transfers: 500_000n, financing: 2_150_000n, unclassified: 700_000n, operating: 1_560_000n, revenue: 1_000_000n });
+    expect(jul).toEqual({ year: 2026, month: 7, moneyIn: 4_910_000n, transfers: 500_000n, financing: 2_150_000n, disposals: 0n, unclassified: 700_000n, operating: 1_560_000n, revenue: 1_000_000n });
     expect(receiptsRatio(jul)).toBe(1560n);
   });
 
@@ -90,7 +90,7 @@ describe("creditPackWorkbook", () => {
     const values = (name: string) => wb.getWorksheet(name)!.getSheetValues().flat().filter((v) => v !== null && v !== undefined);
     expect(values("Ringkasan")).toContain(1_000_000); // Pendapatan year to date
     const jul = wb.getWorksheet("Mutasi vs Omzet")!.getSheetValues().find((r) => Array.isArray(r) && r[1] === "Juli 2026") as unknown[];
-    expect(jul.slice(1, 9)).toEqual(["Juli 2026", 1_110_000, 0, 0, 0, 1_110_000, 1_000_000, 1.11]);
+    expect(jul.slice(1, 10)).toEqual(["Juli 2026", 1_110_000, 0, 0, 0, 0, 1_110_000, 1_000_000, 1.11]);
     expect(values("Umur Piutang").join(" ")).toContain("Tidak ada piutang terbuka");
     expect(values("Ringkasan").join(" ")).toContain("DRAF — bulan belum ditutup.");
   });

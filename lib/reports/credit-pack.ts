@@ -4,7 +4,7 @@ import { fiscalEndMonth, financialYear } from "@/lib/fiscal";
 import { balanceSheet, incomeStatement, trialBalance } from "@/lib/reports/ledger";
 import { addStatementSheets, newWorkbook, n, type WorkbookMeta } from "@/lib/reports/workbook";
 import { receiptsRatio, receiptsVsRevenue, sourceTrail } from "@/lib/reports/credit";
-import { agingByContact, BUCKETS, BUCKET_LABEL, invoicesAt } from "@/lib/receivables/aging";
+import { agingByContact, BUCKETS, BUCKET_LABEL, invoicesAt, subledgerVsLedger } from "@/lib/receivables/aging";
 import { assetRegister } from "@/lib/assets/register";
 
 /**
@@ -56,35 +56,44 @@ export async function creditPackWorkbook(db: Db, input: { clientId: string; enti
   await addStatementSheets(db, book, scope, year, month);
 
   // 3. Mutasi vs Omzet.
-  const mv = sheet("Mutasi vs Omzet", "Uang masuk di rekening bank dibandingkan pendapatan", `12 bulan sampai ${formatPeriod(year, month)}`, [16, 18, 18, 18, 18, 18, 18, 12]);
-  head(mv, ["Bulan", "Uang masuk", "Transfer antar rekening", "Pinjaman & modal", "Belum diklasifikasi", "Penerimaan usaha", "Pendapatan (Laba Rugi)", "Rasio"]);
+  const mv = sheet("Mutasi vs Omzet", "Uang masuk di rekening bank dibandingkan pendapatan", `12 bulan sampai ${formatPeriod(year, month)}`, [16, 18, 18, 18, 18, 18, 18, 18, 12]);
+  head(mv, ["Bulan", "Uang masuk", "Transfer antar rekening", "Pinjaman & modal", "Penjualan aset tetap", "Belum diklasifikasi", "Penerimaan usaha", "Pendapatan (Laba Rugi)", "Rasio"]);
   if (!receipts.length) mv.addRow(["Belum ada mutasi bank untuk perusahaan ini."]);
   for (const m of receipts) {
     const ratio = receiptsRatio(m);
-    const r = mv.addRow([formatPeriod(m.year, m.month), n(m.moneyIn), n(-m.transfers), n(-m.financing), n(-m.unclassified), n(m.operating), n(m.revenue), ratio === null ? "–" : Number(ratio) / 1000]);
-    r.getCell(8).numFmt = "0.00";
+    const r = mv.addRow([formatPeriod(m.year, m.month), n(m.moneyIn), n(-m.transfers), n(-m.financing), n(-m.disposals), n(-m.unclassified), n(m.operating), n(m.revenue), ratio === null ? "–" : Number(ratio) / 1000]);
+    r.getCell(9).numFmt = "0.00";
   }
   mv.addRow([]);
   for (const line of [
-    "Penerimaan usaha = uang masuk − transfer antar rekening sendiri (1199/1190) − pinjaman & modal (akun liabilitas/ekuitas) − yang belum diklasifikasi.",
+    "Penerimaan usaha = uang masuk − transfer antar rekening sendiri (1199/1190) − pinjaman & modal (akun liabilitas/ekuitas) − hasil penjualan aset tetap − yang belum diklasifikasi.",
     "Penerimaan memuat PPN dan pelunasan penjualan bulan sebelumnya, jadi rasio sekitar 1,00–1,15 wajar untuk PKP. Selisih besar perlu penjelasan.",
   ])
     mv.addRow([line]);
 
   // 4. Umur Piutang / Umur Utang.
-  for (const [name, title, items] of [["Umur Piutang", "Umur piutang usaha", receivables], ["Umur Utang", "Umur utang usaha", payables]] as const) {
+  for (const [name, title, items, direction] of [["Umur Piutang", "Umur piutang usaha", receivables, "SALES"], ["Umur Utang", "Umur utang usaha", payables, "PURCHASE"]] as const) {
     const ws = sheet(name, title, asOf, [40, 16, 16, 16, 16, 16, 18]);
     const rows = agingByContact(items);
     head(ws, ["Kontak", ...BUCKETS.map((b) => BUCKET_LABEL[b]), "Total"]);
     if (!rows.length) ws.addRow([`Tidak ada ${name === "Umur Piutang" ? "piutang" : "utang"} terbuka yang dicatat per faktur di Buku.`]);
     for (const r of rows) ws.addRow([r.contact.name, ...BUCKETS.map((b) => n(r.buckets[b])), n(r.total)]);
-    if (rows.length) ws.addRow(["Total", ...BUCKETS.map((b) => n(rows.reduce((s, r) => s + r.buckets[b], 0n))), n(rows.reduce((s, r) => s + r.total, 0n))]).font = { bold: true };
+    if (rows.length) {
+      // The Neraca's line nets what contacts paid ahead (and cash on the account not yet given to a document): the total ties to it.
+      const [proof] = await subledgerVsLedger(db, clientId, direction, end, [entityId]);
+      const advanceLabel = direction === "SALES" ? "Dikurangi uang muka / kelebihan bayar pelanggan" : "Dikurangi uang muka ke pemasok";
+      if (proof?.advances) ws.addRow([advanceLabel, ...BUCKETS.map(() => null), n(-proof.advances)]);
+      if (proof?.unallocated) ws.addRow(["Dikurangi mutasi yang belum dicocokkan ke faktur", ...BUCKETS.map(() => null), n(-proof.unallocated)]);
+      const total = rows.reduce((s, r) => s + r.total, 0n) - (proof?.advances ?? 0n) - (proof?.unallocated ?? 0n);
+      ws.addRow(["Total", ...BUCKETS.map((b) => n(rows.reduce((s, r) => s + r.buckets[b], 0n))), n(total)]).font = { bold: true };
+    }
   }
 
   // 5. Aset Tetap.
   const at = sheet("Aset Tetap", "Daftar aset tetap", asOf, [40, 14, 18, 18, 18]);
   head(at, ["Aset", "Diperoleh", "Harga perolehan", "Akumulasi penyusutan", "Nilai buku"]);
-  const live = assets.filter((a) => !a.disposedOn);
+  // Held at the pack's month end: an asset sold after it was still on that Neraca.
+  const live = assets.filter((a) => !a.disposedOn || +a.disposedOn > +end);
   if (!live.length) at.addRow(["Tidak ada aset tetap di register Buku."]);
   for (const a of live) {
     const r = at.addRow([a.name, formatDate(a.acquiredOn), n(a.cost), n(a.accumulated), n(a.bookValue)]);
