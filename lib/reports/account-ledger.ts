@@ -15,12 +15,14 @@ import { approvalLines } from "@/lib/approvals/pending";
  * (bank row, or file `sheet!row`). Either a Buku account (`accountId`) or one of the client's own accounts
  * (`sourceAccountId`). Balances follow `normalBalance`. The opening follows each posted line's own account, as the TBs do:
  * income & expense lines count from the start of the client's financial year (1 January for a calendar year; earlier years sit in the
- * prior-year result), balance-sheet lines from the start.
+ * prior-year result), balance-sheet lines from the start. Saldo laba (`isRetained`) opens with those earlier years' result folded in, as
+ * the trial balance and the Excel Buku Besar fold it (`priorYearProfit`, in the account's normal direction), so a drill-down shows the
+ * same number.
  */
 export async function accountLedger(
   db: Db,
   args: { entityIds: string[]; start: Date; end: Date; normalBalance: NormalBalance } & ({ accountId: string } | { sourceAccountId: string }),
-): Promise<{ opening: bigint; rows: LedgerRow[] }> {
+): Promise<{ opening: bigint; priorYearProfit: bigint; rows: LedgerRow[] }> {
   const which = "accountId" in args ? { accountId: args.accountId } : { sourceAccountId: args.sourceAccountId };
   const PL: AccountType[] = ["PENDAPATAN", "BEBAN"];
   const yearStart = fiscalYearStart(await fiscalEndMonthOfEntities(db, args.entityIds), args.start);
@@ -33,6 +35,10 @@ export async function accountLedger(
     },
     _sum: { debit: true, credit: true },
   });
+  const retained = "accountId" in args && (await db.account.findUnique({ where: { id: args.accountId }, select: { isRetained: true, clientId: true } }));
+  const priorPl = retained && retained.isRetained
+    ? await db.journalLine.aggregate({ where: { entityId: { in: args.entityIds }, date: { lt: yearStart }, account: { clientId: retained.clientId, type: { in: PL } } }, _sum: { debit: true, credit: true } })
+    : null;
   const lines = await db.journalLine.findMany({
     where: { ...which, entityId: { in: args.entityIds }, date: { gte: args.start, lte: args.end } },
     include: {
@@ -73,7 +79,8 @@ export async function accountLedger(
   // Persetujuan kedua: who asked and who approved, instead of only who posted.
   const approvals = await approvalLines(db, [...new Map(lines.map((l) => [l.entryId, { id: l.entryId, reversesId: l.entry.reversesId }])).values()]);
   const sign = args.normalBalance === "DEBIT" ? 1n : -1n;
-  const opening = ((before._sum.debit ?? 0n) - (before._sum.credit ?? 0n)) * sign;
+  const priorYearProfit = ((priorPl?._sum.debit ?? 0n) - (priorPl?._sum.credit ?? 0n)) * sign;
+  const opening = ((before._sum.debit ?? 0n) - (before._sum.credit ?? 0n)) * sign + priorYearProfit;
   const balances = lines.reduce<bigint[]>((acc, l) => [...acc, (acc.at(-1) ?? opening) + (l.debit - l.credit) * sign], []);
   const rows: LedgerRow[] = lines.map((l, idx) => {
     const t = l.entry.bankTransaction;
@@ -106,7 +113,7 @@ export async function accountLedger(
         : null,
     };
   });
-  return { opening, rows };
+  return { opening, priorYearProfit, rows };
 }
 
 const defaultNormal = (type: AccountType | null | undefined): NormalBalance => (type === "ASET" || type === "BEBAN" ? "DEBIT" : "CREDIT");

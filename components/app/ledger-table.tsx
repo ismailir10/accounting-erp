@@ -45,7 +45,7 @@ export type LedgerRow = {
 const KIND: Record<string, string> = ENTRY_KIND_LABEL;
 
 /** Every GL line opens its source: the full journal and — for bank lines — the original statement row, for imports the file row. */
-export function LedgerTable({ rows, opening, currency = "IDR", accounts, reverseRoute }: { rows: LedgerRow[]; opening: string; currency?: string; accounts?: AccountOption[]; /** Persetujuan kedua's *Jurnal manual* for this member: *Balik jurnal* above it waits. */ reverseRoute?: SourceRoute }) {
+export function LedgerTable({ rows, opening, priorYearProfit, currency = "IDR", accounts, reverseRoute }: { rows: LedgerRow[]; opening: string; /** Saldo laba only: earlier years' result folded into the opening, as in the Neraca Saldo. */ priorYearProfit?: string; currency?: string; accounts?: AccountOption[]; /** Persetujuan kedua's *Jurnal manual* for this member: *Balik jurnal* above it waits. */ reverseRoute?: SourceRoute }) {
   // The reversal's amount is the original's Σdebit, in the books' currency.
   const reverseNotice = (r: LedgerRow) => formNotice(reverseRoute, r.entry.lines.reduce((s, l) => s + BigInt(l.debit), 0n), currency);
   const router = useRouter();
@@ -122,7 +122,10 @@ export function LedgerTable({ rows, opening, currency = "IDR", accounts, reverse
         </TableHeader>
         <TableBody>
           <TableRow className="bg-muted/40">
-            <TableCell className="pl-6 text-muted-foreground" colSpan={4}>Saldo awal periode</TableCell>
+            <TableCell className="pl-6 text-muted-foreground" colSpan={4}>
+              Saldo awal periode
+              {priorYearProfit && BigInt(priorYearProfit) !== 0n && <span className="block text-xs" data-testid="ledger-prior-year">termasuk laba (rugi) tahun-tahun lalu {acc(priorYearProfit)}</span>}
+            </TableCell>
             <TableCell className="num pr-6 text-right font-medium">{acc(opening)}</TableCell>
           </TableRow>
           {rows.map((r) => (

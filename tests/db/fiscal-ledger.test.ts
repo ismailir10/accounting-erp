@@ -55,6 +55,19 @@ describe("financial year in the ledger", () => {
     expect(jan.find((r) => r.account.code === "4100")!.net).toBe(-100n * J);
   });
 
+  it("Saldo laba's account ledger opens with earlier years' profit folded in, equal to the trial balance", async () => {
+    const { g, scope } = await books(1);
+    const retained = (await db.account.findUniqueOrThrow({ where: { clientId_code: { clientId: g.client.id, code: "3200" } } })).id;
+    const led = await accountLedger(db, { entityIds: [g.pt.entity.id], start: dateOnly(2026, 8, 1), end: dateOnly(2026, 8, 31), normalBalance: "CREDIT", accountId: retained });
+    expect(led.opening).toBe(100n * J); // the year that ended 31 Jan 2026 earned 100
+    expect(led.priorYearProfit).toBe(100n * J);
+    const tb = await trialBalance(db, scope, dateOnly(2026, 8, 31));
+    expect(-tb.find((r) => r.account.code === "3200")!.net).toBe(led.opening);
+    // Inside that year nothing is folded yet.
+    const jan = await accountLedger(db, { entityIds: [g.pt.entity.id], start: dateOnly(2026, 1, 1), end: dateOnly(2026, 1, 31), normalBalance: "CREDIT", accountId: retained });
+    expect([jan.opening, jan.priorYearProfit]).toEqual([0n, 0n]);
+  });
+
   it("a calendar-year client counts from 1 January, as before", async () => {
     const { scope } = await books(12);
     const tb = await trialBalance(db, scope, dateOnly(2026, 8, 31));

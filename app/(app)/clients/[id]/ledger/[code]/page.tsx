@@ -44,7 +44,7 @@ export default async function AccountLedger({ params, searchParams }: { params: 
       </div>
     );
   }
-  const { opening, rows } = await accountLedger(prisma, { accountId: account.id, entityIds: scope.entityIds, start: period.start, end: period.end, normalBalance: account.normalBalance });
+  const { opening, priorYearProfit, rows } = await accountLedger(prisma, { accountId: account.id, entityIds: scope.entityIds, start: period.start, end: period.end, normalBalance: account.normalBalance });
   // Persetujuan kedua: *Balik jurnal* above the firm's *Jurnal manual* threshold waits for a second member.
   const { member } = await requireWorkspaceSession();
   const reverseRoute = rows.some((r) => r.reversal && !r.reversal.blocker) ? await routeFor(prisma, client.id, { id: member.id, role: member.role }, "REVERSAL") : undefined;
@@ -57,7 +57,7 @@ export default async function AccountLedger({ params, searchParams }: { params: 
       />
       <Card>
         <CardContent className="px-0">
-          <LedgerTable rows={rows} opening={opening.toString()} currency={currency} reverseRoute={reverseRoute} accounts={rows.some((r) => r.source) ? classifiableOptions(await prisma.account.findMany({ where: { clientId: client.id }, orderBy: { code: "asc" } })) : undefined} />
+          <LedgerTable rows={rows} opening={opening.toString()} priorYearProfit={priorYearProfit.toString()} currency={currency} reverseRoute={reverseRoute} accounts={rows.some((r) => r.source) ? classifiableOptions(await prisma.account.findMany({ where: { clientId: client.id }, orderBy: { code: "asc" } })) : undefined} />
           {rows.length === 0 && <p className="px-6 py-8 text-center text-sm text-muted-foreground">Tidak ada transaksi di periode ini.</p>}
         </CardContent>
       </Card>
