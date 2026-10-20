@@ -12,10 +12,16 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
 1. **GL is the single source of truth for Buku books.** Never store derived ledger balances. Versioned source-reported figures in `lib/evidence/` are evidence, explicitly labeled separately, and never feed Buku financial reports directly (ADR 0007). TB, Laba Rugi, Neraca, combined worksheet,
    charts and tax card are all derived from `JournalLine` at read time (`lib/reports/*`). So are the other comprehensive income (movement
    of the PKL equity lines), the changes in equity and the indirect cash flow (`lib/reports/statements.ts`: every balance-sheet account's
-   movement, classified by FS line — leases, employee benefits and deferred tax by code; single-currency scopes), whose opening is 31
-   December plus the year's Saldo Awal (kind OPENING) entries — never a flow — and each is checked against the Neraca. CALK and the Excel
+   movement, classified by FS line — leases, employee benefits and deferred tax by code; single-currency scopes), whose opening is the
+   previous year end plus the year's Saldo Awal (kind OPENING) when it opens the scope's books (nothing of the scope dated before it) —
+   never a flow — and each is checked against the Neraca. A Saldo Awal of a company joining the scope later in the year stays apart:
+   "Ekuitas entitas yang bergabung" in the changes in equity, "Kas entitas yang bergabung" in the cash flow, additions in the fixed-asset
+   movement; the Neraca's comparative is "Saldo awal" only when that Saldo Awal opened the books. A month-end FX revaluation (lines with a
+   currency and fx amount 0) moves no cash (PSAK 207): its cash part is "Pengaruh perubahan kurs terhadap kas" (`fxEffect`) outside the
+   three sections, the unrealised 7200 a non-cash adjustment of profit, and the revalued receivable or loan leaves its section. CALK and the Excel
    set (`lib/reports/notes.ts`, `workbook.ts`) reuse those functions and the registers; notes are never stored. In the cash flow a register disposal's **collected** proceeds (nothing links a receipt to a disposal, so the proceeds account is read first-in-first-out: cash credits clear its older debits first, later debits never take from it — conservative, an older unrelated receivable delays the disposal's inflow; a buyer's deposit received before the disposal counts as collected when the disposal absorbs it, and proceeds of an earlier year's disposal collected in this one are this year's investing inflow) and the paid part
-   of a purchase bill's investing debit (by the cash of its settlements, i.e. less the tax they withheld; any year) are investing; the rest of those entries is a non-cash operating line, so the sections still add up to the Neraca's change in cash.
+   of a purchase bill's investing debit (by the cash of its settlements, i.e. less the tax they withheld; any year — apportioned cumulatively,
+   paid by the period end less paid before it, so a bill paid across years adds up to its cost exactly) are investing; the rest of those entries is a non-cash operating line, so the sections still add up to the Neraca's change in cash.
    `Entity.reportingFramework` (SAK EMKM / EP / Umum, default EP; a group takes the most demanding) decides **wording only** — the standard the CALK
    names, statement titles, which policies are described (EMKM has no PSAK 109 matrix, right-of-use, deferred tax or OCI wording) and
    who signs (Direksi for PT / foreign, Pemilik/Pengurus for CV / individual) — through `lib/reports/framework.ts`; no figure may depend on it.
@@ -180,7 +186,9 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     `ar:`/`ap:` include it only from the opening date; it ages from its own due date). PPN is
     the tax invoice's amount (prefill = effective 11 %, rule 8). An `InvoiceSettlement` links a **bank line** to an invoice for an
     amount — a subledger link only, never a journal: the line must be the entity's, in the invoice's direction, **posted to the invoice's
-    receivable/payable account**, in an open month; Σ per invoice ≤ total and Σ per line ≤ its amount under row locks. A line elsewhere
+    receivable/payable account**, in an open month — or, already tagged as that contact's (their advance), in a closed month when the
+    document enters the subledger after every closed month and no tax is withheld (the closed months' aging and proof read the same);
+    Σ per invoice ≤ total and Σ per line ≤ its amount under row locks. A line elsewhere
     is first classified through the reviewer's writer (`reviewTransactionTx`, rule 3) in the same transaction. Suggestions (equal open
     amount, contact name or number in the description) are never applied on their own. Open amount at a date = total − settlements by
     bank lines dated by then; aging by days past due (0 / 1–30 / 31–60 / 61–90 / > 90).
@@ -192,7 +200,8 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
       the cash);
     - close controls `ar:` / `ap:` prove Σ open − advances − unallocated = GL balance of the accounts the documents use (a split line
       counts its parts there): unequal or unallocated cash = REVIEW; `overpaid:` (REVIEW) lists contacts whose advance exceeds what they
-      owe, never netting a receivable below zero silently;
+      owe, never netting a receivable below zero silently; every aging that sits beside the Neraca line (the CALK note, the credit pack's
+      Umur Piutang / Utang) subtracts advances and unallocated cash so its total is the line;
     - **a wrong document is voided, never deleted**: a reason (≥ 10 characters), refused while settled, its journal reversed by a mirror
       INVOICE entry dated on the original (`reversesId`, open month only); a Saldo Awal item is only marked. A voided document leaves open
       items, aging, CKPN, proofs and sales figures, and stays listed with its reason and audit event;
@@ -336,7 +345,11 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
    is per firm), and a differing one is shown as REVIEW `FX_FILE_RATE_DIFFERS` on the draft. Month-end revaluation is **proposed** to **7200 Laba/Rugi Selisih Kurs** and
    posted only by an explicit click, re-read under the client's close lock (a second click finds nothing left). Only **monetary** items are
    revalued: fixed assets and their depreciation, inventory, prepayments, other non-current assets and 2160 revenue received in advance
-   stay at their historical rate (PSAK 210).
+   stay at their historical rate (PSAK 210) — except 1260, where Buku files time deposits and placements (monetary, PSAK 221). A Saldo
+   Awal line on a balance-sheet account may give its foreign amount; it posts as a foreign-currency line at the rate the two amounts
+   imply, so revaluation sees the whole balance. A ledger import converts only at a Kurs rate of the row's month or the month before
+   (an older one is `MISSING_RATE`); an inverted rate keeps 18 significant digits. The revaluation line's memo reads in the currency
+   ("USD 1.000,00 × kurs 15.500").
 7. Dates are date-only `@db.Date` (UTC midnight). Read with `getUTC*`. Use `dateOnly()` / `periodBounds()`.
 8. PPN split: tagged lines split gross → DPP + PPN at `PPN_EFFECTIVE_PERCENT` (11% = 12% × 11/12). `dpp + ppn === gross` always. It's an estimate — label it.
 
@@ -356,8 +369,12 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     eliminated in the combined worksheet (receivable vs payable, matched = min). Residual ≠ 0 → REVIEW.
 11. PT + owner individual combined is a **management "Gabungan"**, not SAK consolidation. Keep the label + tooltip.
     Gabungan / Beranda are in IDR: non-IDR entities are translated — assets & liabilities at the closing rate, income & expense at
-    the period's average rate, equity at the historical rate; the residue is the equity line **3900 Selisih penjabaran**. A missing
-    rate shows the entity as *belum dijabarkan* — never a number computed with a guessed rate.
+    the period's average rate (the first AVERAGE on or after the period end within the same **financial** year; demanded when the
+    financial year so far holds income or expense), equity at the historical rate; the residue is the equity line **3900 Selisih
+    penjabaran**. A missing rate shows the entity as *belum dijabarkan* — never a number computed with a guessed rate. Only 1190
+    balances are eliminated: intra-group income and expense and investments in group companies stay summed, and the Gabungan note and
+    CALK say so. One 1190 per client nets every related party (a receivable from the CV against a payable to the owner): known gap,
+    next cycle.
 
 ## Import & classification (`lib/import/pipeline.ts`)
 12. Parse → continuity check (opening + Σ = every printed balance → closing) → dedupe by row hash → classify → post, all-or-nothing in one transaction.
