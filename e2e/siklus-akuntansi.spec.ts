@@ -71,6 +71,7 @@ async function classify(page: Page, text: string, account: string) {
   await page.keyboard.press("Enter");
   await item.getByTestId("accept").click();
   await expect(page.getByTestId("review-item").filter({ hasText: text })).toHaveCount(0);
+  await expect(page.getByTestId("review-saving")).toHaveCount(0); // accepts are optimistic: the save is done before the next page reads it
 }
 
 /** Opens Jurnal Penyesuaian for `period` and types the date once the form is interactive (a date typed before hydration is reset). */
