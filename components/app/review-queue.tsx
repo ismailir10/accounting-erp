@@ -12,6 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AccountPicker } from "@/components/app/account-picker";
 import { MethodBadge } from "@/components/app/status";
 import { SplitDialog } from "@/components/app/split-dialog";
+import { SimpleSelect } from "@/components/app/simple-select";
+import type { JournalDimensions } from "@/components/app/journal-form";
 import { acceptSimilarAction, reviewAction, suggestAgainAction } from "@/app/actions";
 import { formatMoney, PPN_EFFECTIVE_PERCENT } from "@/lib/money";
 import { DEFAULT_RATE, grossUpWithholding, WITHHOLDING_LABEL } from "@/lib/tax/withholding";
@@ -42,10 +44,13 @@ export type ReviewItem = {
   guess: boolean;
   /** The entity's kind (PT, CV, PERORANGAN…): only a business is a withholding agent in the hints. */
   entityKind?: string;
+  /** Departemen & Proyek the line already carries (lib/review.ts). */
+  departmentId?: string | null;
+  projectId?: string | null;
 };
 export type AccountOption = { code: string; name: string; group: string };
 /** `wht`: tax the counterparty or we withheld ("none" or a kind) at `rate` %, added to the net bank amount (accounting-rules 5h). */
-type Choice = { code: string; tax: string; rule: boolean; wht?: string; rate?: string };
+type Choice = { code: string; tax: string; rule: boolean; wht?: string; rate?: string; /** Departemen & Proyek ids, "" for none. */ dep?: string; proj?: string };
 
 // What the tag does to the journal: PPN splits the amount; the PPh tags mark a payment of that tax to the state (a remittance).
 const TAX = [
@@ -125,6 +130,7 @@ export function ReviewQueue({
   canSetUpAi = false,
   aiRun = null,
   focusId = null,
+  dimensions,
 }: {
   items: ReviewItem[];
   accounts: AccountOption[];
@@ -140,6 +146,8 @@ export function ReviewQueue({
   aiRun?: AiRunView | null;
   /** The line to start on (`?tx=`, Kotak persetujuan's *Ubah*): active and scrolled into view. */
   focusId?: string | null;
+  /** The client's active Departemen & Proyek: a card's pickers show only when there are any. */
+  dimensions?: JournalDimensions;
 }) {
   const router = useRouter();
   const ai = useAiRun(clientId, aiRun);
@@ -181,12 +189,16 @@ export function ReviewQueue({
   }, [activeId]);
   const nameOf = (code: string | null) => accounts.find((a) => a.code === code)?.name ?? "—";
 
-  const suggestion = (i: ReviewItem): Choice => ({ code: i.suggestedCode ?? "", tax: i.taxTag ?? "none", rule: false });
+  const suggestion = (i: ReviewItem): Choice => ({ code: i.suggestedCode ?? "", tax: i.taxTag ?? "none", rule: false, dep: i.departmentId ?? "", proj: i.projectId ?? "" });
+  const departments = dimensions?.departments ?? [];
+  const projects = dimensions?.projects ?? [];
+  const hasTags = departments.length > 0 || projects.length > 0;
+  const tagsChanged = (i: ReviewItem, c: Choice) => (c.dep ?? "") !== (i.departmentId ?? "") || (c.proj ?? "") !== (i.projectId ?? "");
   const get = (i: ReviewItem) => choice[i.id] ?? suggestion(i);
   // A save reads the store at the moment of the click, not the render the handler came from: an account picked a moment before
   // *Simpan* is the one saved, even if React has not re-rendered in between.
   const latest = (i: ReviewItem) => readDrafts()[i.id] ?? suggestion(i);
-  const isChanged = (i: ReviewItem, c: Choice) => c.code !== (i.suggestedCode ?? "") || c.tax !== (i.taxTag ?? "none") || (!!c.wht && c.wht !== "none");
+  const isChanged = (i: ReviewItem, c: Choice) => c.code !== (i.suggestedCode ?? "") || c.tax !== (i.taxTag ?? "none") || (!!c.wht && c.wht !== "none") || tagsChanged(i, c);
   const unsaved = (i: ReviewItem) => !!choice[i.id] && (isChanged(i, choice[i.id]) || choice[i.id].rule);
 
   const set = (i: ReviewItem, patch: Partial<Choice>) => {
@@ -227,7 +239,7 @@ export function ReviewQueue({
     inFlight.current += 1;
     setSaving(inFlight.current);
     const withholding = tax !== null ? { kind: c.wht as WithholdingKind, amount: formatMoney(tax, i.currency, { bare: true }) } : undefined;
-    const save = () => reviewAction({ bankTxId: i.id, accountCode: c.code, taxTag: c.tax === "none" ? null : (c.tax as never), createRule: c.rule, withholding }).then((r) => {
+    const save = () => reviewAction({ bankTxId: i.id, accountCode: c.code, taxTag: c.tax === "none" ? null : (c.tax as never), createRule: c.rule, withholding, ...(hasTags ? { tags: { departmentId: c.dep || null, projectId: c.proj || null } } : {}) }).then((r) => {
       if (!r.ok) {
         setDone((d) => {
           const n = new Set(d);
@@ -474,13 +486,15 @@ export function ReviewQueue({
                     )}
                   </span>
                 )}
+                {departments.length > 0 && <SimpleSelect label="Departemen" value={c.dep ?? ""} onChange={(v) => set(i, { dep: v })} options={[{ value: "", label: "Tanpa departemen" }, ...departments.map((d) => ({ value: d.id, label: `${d.code} · ${d.name}` }))]} className="w-48" />}
+                {projects.length > 0 && <SimpleSelect label="Proyek" value={c.proj ?? ""} onChange={(v) => set(i, { proj: v })} options={[{ value: "", label: "Tanpa proyek" }, ...projects.map((d) => ({ value: d.id, label: `${d.code} · ${d.name}` }))]} className="w-48" />}
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Checkbox id={`rule-${i.id}`} aria-label="Selalu gunakan akun ini" checked={c.rule} onCheckedChange={(v) => set(i, { rule: Boolean(v) })} />
                   <label htmlFor={`rule-${i.id}`} className="cursor-pointer">Selalu gunakan akun ini</label>
                 </div>
                 <div className="ml-auto flex flex-wrap items-center gap-2">
                   {unsaved(i) && <span className="text-xs font-medium text-review" data-testid="unsaved">Belum disimpan</span>}
-                  {i.similar > 1 && !(c.wht && c.wht !== "none") && (
+                  {i.similar > 1 && !(c.wht && c.wht !== "none") && !tagsChanged(i, c) && (
                     <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => acceptSimilar(i)}>
                       {busy === i.id && <Loader2 className="animate-spin" />}
                       {changed ? `Simpan untuk ${i.similar} serupa` : `Terima ${i.similar} serupa`}

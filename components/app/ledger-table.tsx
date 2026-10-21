@@ -7,7 +7,7 @@ import { FileText, Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SplitDialog, SplitSummary, type SplitPartView } from "@/components/app/split-dialog";
 import { AccountPicker, type AccountOption } from "@/components/app/account-picker";
-import { reverseEntryAction, reviewAction, unpairTransferAction } from "@/app/actions";
+import { reverseEntryAction, reviewAction, setBankTagsAction, unpairTransferAction } from "@/app/actions";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MethodBadge } from "@/components/app/status";
@@ -38,18 +38,28 @@ export type LedgerRow = {
   debit: string;
   credit: string;
   balance: string;
-  entry: { lines: { code: string; name: string; debit: string; credit: string; memo?: string | null }[] };
+  /** This line's Departemen & Proyek codes ("OUTLET-A · PRJ-01"), or null. */
+  tags?: string | null;
+  entry: { lines: { code: string; name: string; debit: string; credit: string; memo?: string | null; tags?: string | null }[] };
   /** Adjustments: whether *Balik jurnal* applies (blocker = why not, and where it is changed instead), and the entry's date. */
   reversal?: { entryId: string; blocker: string | null; date: string };
-  source: null | { bankTxId: string; accountCode: string | null; taxTag: string | null; whtKind: string | null; whtAmount: string; fileName: string; sheet: string | null; rowNumber: number; rawRow: string; description: string; amount: string; bank: string; method: string; reason: string; status: string; /** The other half of a transfer pair, when it has one. */ pairedWith?: string | null; /** A split line's parts (pecah transaksi). */ splits?: SplitPartView[]; /** Who changed this line, newest first (ADR 0013). */ history?: { at: string; actor: string; summary: string }[] };
+  source: null | { bankTxId: string; accountCode: string | null; taxTag: string | null; whtKind: string | null; whtAmount: string; fileName: string; sheet: string | null; rowNumber: number; rawRow: string; description: string; amount: string; bank: string; method: string; reason: string; status: string; /** Departemen & Proyek of the bank line (lib/review.ts `setBankTagsTx`). */ departmentId?: string | null; projectId?: string | null; /** The other half of a transfer pair, when it has one. */ pairedWith?: string | null; /** A split line's parts (pecah transaksi). */ splits?: SplitPartView[]; /** Who changed this line, newest first (ADR 0013). */ history?: { at: string; actor: string; summary: string }[] };
   /** Ledger / Neraca import: file, entry rows, this line's row, the client's own account, and the original fx amount. */
   fileSource?: null | { fileName: string; entryRef: string; lineRef: string | null; sourceAccount: string | null; lineMemo: string | null; fx: string | null };
 };
 
 const KIND: Record<string, string> = ENTRY_KIND_LABEL;
 
+/** The client's Departemen & Proyek for a bank line's pickers; an archived one is offered only to the line that already carries it. */
+export type LedgerDimension = { id: string; kind: "DEPARTEMEN" | "PROYEK"; code: string; name: string; archived: boolean };
+
+const tagChoices = (all: LedgerDimension[], kind: LedgerDimension["kind"], current: string | null | undefined, none: string) => [
+  { value: "", label: none },
+  ...all.filter((d) => d.kind === kind && (!d.archived || d.id === current)).map((d) => ({ value: d.id, label: `${d.code} · ${d.name}${d.archived ? " (diarsipkan)" : ""}` })),
+];
+
 /** Every GL line opens its source: the full journal and — for bank lines — the original statement row, for imports the file row. */
-export function LedgerTable({ rows, opening, priorYearProfit, currency = "IDR", accounts, reverseRoute }: { rows: LedgerRow[]; opening: string; /** Saldo laba only: earlier years' result folded into the opening, as in the Neraca Saldo. */ priorYearProfit?: string; currency?: string; accounts?: AccountOption[]; /** Persetujuan kedua's *Jurnal manual* for this member: *Balik jurnal* above it waits. */ reverseRoute?: SourceRoute }) {
+export function LedgerTable({ rows, opening, priorYearProfit, currency = "IDR", accounts, reverseRoute, dimensions = [] }: { rows: LedgerRow[]; opening: string; /** Saldo laba only: earlier years' result folded into the opening, as in the Neraca Saldo. */ priorYearProfit?: string; currency?: string; accounts?: AccountOption[]; /** Persetujuan kedua's *Jurnal manual* for this member: *Balik jurnal* above it waits. */ reverseRoute?: SourceRoute; /** Departemen & Proyek of the client: a bank line's tags can be changed here. */ dimensions?: LedgerDimension[] }) {
   // The reversal's amount is the original's Σdebit, in the books' currency.
   const reverseNotice = (r: LedgerRow) => formNotice(reverseRoute, r.entry.lines.reduce((s, l) => s + BigInt(l.debit), 0n), currency);
   const router = useRouter();
@@ -60,6 +70,8 @@ export function LedgerTable({ rows, opening, priorYearProfit, currency = "IDR", 
   const [whtKind, setWhtKind] = useState("");
   const [whtAmount, setWhtAmount] = useState("");
   const [reverseDate, setReverseDate] = useState("");
+  const [tagDep, setTagDep] = useState("");
+  const [tagProj, setTagProj] = useState("");
   const reverse = async () => {
     if (!open?.reversal) return;
     setSaving(true);
@@ -78,6 +90,8 @@ export function LedgerTable({ rows, opening, priorYearProfit, currency = "IDR", 
       setReverseDate(m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`);
     }
     setNewCode(r?.source?.accountCode ?? "");
+    setTagDep(r?.source?.departmentId ?? "");
+    setTagProj(r?.source?.projectId ?? "");
     setWhtKind(r?.source?.whtKind ?? "");
     setWhtAmount(r?.source && BigInt(r.source.whtAmount) > 0n ? formatMoney(BigInt(r.source.whtAmount), currency, { bare: true }) : "");
   };
@@ -97,6 +111,17 @@ export function LedgerTable({ rows, opening, priorYearProfit, currency = "IDR", 
     setSaving(false);
     if (!r.ok) return void toast.error(r.error);
     toast.success(`Dipindah ke ${newCode}`, { description: "Reklasifikasi dicatat · Buku Besar diperbarui" });
+    show(null);
+    router.refresh();
+  };
+  const tagsChanged = Boolean(open?.source) && (tagDep !== (open!.source!.departmentId ?? "") || tagProj !== (open!.source!.projectId ?? ""));
+  const saveTags = async () => {
+    if (!open?.source) return;
+    setSaving(true);
+    const r = await setBankTagsAction({ bankTxId: open.source.bankTxId, departmentId: tagDep || null, projectId: tagProj || null });
+    setSaving(false);
+    if (!r.ok) return void toast.error(r.error);
+    toast.success("Departemen & proyek disimpan", { description: "Reklasifikasi dicatat · Laba Rugi per departemen diperbarui" });
     show(null);
     router.refresh();
   };
@@ -140,6 +165,7 @@ export function LedgerTable({ rows, opening, priorYearProfit, currency = "IDR", 
                 <div className="flex items-center gap-1 text-xs text-muted-foreground">
                   {r.number && <span className="num" data-testid="ledger-row-number">{r.number} · </span>}{KIND[r.kind]} · {r.entity}
                   {(r.source || r.fileSource) && <FileText className="size-3" aria-label="Ada sumber" />}
+                  {r.tags && <span className="num" data-testid="ledger-row-tags"> · {r.tags}</span>}
                 </div>
               </TableCell>
               <TableCell className="num text-right">{m(r.debit)}</TableCell>
@@ -237,6 +263,17 @@ export function LedgerTable({ rows, opening, priorYearProfit, currency = "IDR", 
                         </>)}
                       </div>
                     )}
+                    {accounts && dimensions.length > 0 && (
+                      <div className="mt-4 space-y-2 border-t pt-4" data-testid="bank-tags">
+                        <h4 className="text-sm font-semibold">Departemen & proyek</h4>
+                        <p className="text-xs text-muted-foreground">Akun dan sisi bank tetap; Buku mencatat reklasifikasi ke departemen atau proyek yang baru.</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {dimensions.some((d) => d.kind === "DEPARTEMEN") && <SimpleSelect label="Departemen" value={tagDep} onChange={setTagDep} options={tagChoices(dimensions, "DEPARTEMEN", open.source.departmentId, "Tanpa departemen")} className="w-56" />}
+                          {dimensions.some((d) => d.kind === "PROYEK") && <SimpleSelect label="Proyek" value={tagProj} onChange={setTagProj} options={tagChoices(dimensions, "PROYEK", open.source.projectId, "Tanpa proyek")} className="w-56" />}
+                          <Button size="sm" variant="outline" disabled={saving || !tagsChanged} onClick={saveTags}>Simpan departemen & proyek</Button>
+                        </div>
+                      </div>
+                    )}
                   </section>
                 )}
                 {open.fileSource && (
@@ -261,7 +298,7 @@ export function LedgerTable({ rows, opening, priorYearProfit, currency = "IDR", 
                     <TableBody>
                       {open.entry.lines.map((l, i) => (
                         <TableRow key={i}>
-                          <TableCell className="truncate"><span className="num text-muted-foreground">{l.code}</span> {l.name}{l.memo && l.memo !== open.memo && <span className="block truncate text-xs text-muted-foreground">{l.memo}</span>}</TableCell>
+                          <TableCell className="truncate"><span className="num text-muted-foreground">{l.code}</span> {l.name}{l.memo && l.memo !== open.memo && <span className="block truncate text-xs text-muted-foreground">{l.memo}</span>}{l.tags && <span className="num block truncate text-xs text-muted-foreground">{l.tags}</span>}</TableCell>
                           <TableCell className="num text-right">{m(l.debit)}</TableCell>
                           <TableCell className="num text-right">{m(l.credit)}</TableCell>
                         </TableRow>

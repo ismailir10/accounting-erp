@@ -18,13 +18,14 @@ import { attachmentsOf } from "@/lib/ledger/attachments";
  * income & expense lines count from the start of the client's financial year (1 January for a calendar year; earlier years sit in the
  * prior-year result), balance-sheet lines from the start. Saldo laba (`isRetained`) opens with those earlier years' result folded in, as
  * the trial balance and the Excel Buku Besar fold it (`priorYearProfit`, in the account's normal direction), so a drill-down shows the
- * same number.
+ * same number. With `dimensionId` (Departemen & Proyek), only the lines carrying that department or project, the opening included.
  */
 export async function accountLedger(
   db: Db,
-  args: { entityIds: string[]; start: Date; end: Date; normalBalance: NormalBalance } & ({ accountId: string } | { sourceAccountId: string }),
+  args: { entityIds: string[]; start: Date; end: Date; normalBalance: NormalBalance; dimensionId?: string } & ({ accountId: string } | { sourceAccountId: string }),
 ): Promise<{ opening: bigint; priorYearProfit: bigint; rows: LedgerRow[] }> {
-  const which = "accountId" in args ? { accountId: args.accountId } : { sourceAccountId: args.sourceAccountId };
+  const tag = args.dimensionId ? { OR: [{ departmentId: args.dimensionId }, { projectId: args.dimensionId }] } : {};
+  const which = { ...("accountId" in args ? { accountId: args.accountId } : { sourceAccountId: args.sourceAccountId }), ...(args.dimensionId ? { AND: [tag] } : {}) };
   const PL: AccountType[] = ["PENDAPATAN", "BEBAN"];
   const yearStart = fiscalYearStart(await fiscalEndMonthOfEntities(db, args.entityIds), args.start);
   const before = await db.journalLine.aggregate({
@@ -38,7 +39,7 @@ export async function accountLedger(
   });
   const retained = "accountId" in args && (await db.account.findUnique({ where: { id: args.accountId }, select: { isRetained: true, clientId: true } }));
   const priorPl = retained && retained.isRetained
-    ? await db.journalLine.aggregate({ where: { entityId: { in: args.entityIds }, date: { lt: yearStart }, account: { clientId: retained.clientId, type: { in: PL } } }, _sum: { debit: true, credit: true } })
+    ? await db.journalLine.aggregate({ where: { entityId: { in: args.entityIds }, date: { lt: yearStart }, account: { clientId: retained.clientId, type: { in: PL } }, ...(args.dimensionId ? { AND: [tag] } : {}) }, _sum: { debit: true, credit: true } })
     : null;
   const lines = await db.journalLine.findMany({
     where: { ...which, entityId: { in: args.entityIds }, date: { gte: args.start, lte: args.end } },
@@ -80,6 +81,10 @@ export async function accountLedger(
   // Persetujuan kedua: who asked and who approved, instead of only who posted.
   const files = await attachmentsOf(db, [...new Set(lines.map((l) => l.entryId))]);
   const approvals = await approvalLines(db, [...new Map(lines.map((l) => [l.entryId, { id: l.entryId, reversesId: l.entry.reversesId }])).values()]);
+  // Departemen & Proyek codes of every line shown (the row's and its journal's), "OUTLET-A · PRJ-01".
+  const dimIds = [...new Set(lines.flatMap((l) => l.entry.lines.flatMap((x) => [x.departmentId, x.projectId])).filter((x): x is string => !!x))];
+  const dimCodes = new Map(dimIds.length ? (await db.dimension.findMany({ where: { id: { in: dimIds } }, select: { id: true, code: true } })).map((d) => [d.id, d.code]) : []);
+  const tagsOf = (x: { departmentId: string | null; projectId: string | null }) => [x.departmentId, x.projectId].flatMap((id) => (id && dimCodes.has(id) ? [dimCodes.get(id)!] : [])).join(" · ") || null;
   const sign = args.normalBalance === "DEBIT" ? 1n : -1n;
   const priorYearProfit = ((priorPl?._sum.debit ?? 0n) - (priorPl?._sum.credit ?? 0n)) * sign;
   const opening = ((before._sum.debit ?? 0n) - (before._sum.credit ?? 0n)) * sign + priorYearProfit;
@@ -100,10 +105,11 @@ export async function accountLedger(
       debit: l.debit.toString(),
       credit: l.credit.toString(),
       balance: balances[idx].toString(),
-      entry: { lines: l.entry.lines.map((x) => ({ code: x.account.code, name: x.account.name, debit: x.debit.toString(), credit: x.credit.toString(), memo: x.memo })) },
+      tags: tagsOf(l),
+      entry: { lines: l.entry.lines.map((x) => ({ code: x.account.code, name: x.account.name, debit: x.debit.toString(), credit: x.credit.toString(), memo: x.memo, tags: tagsOf(x) })) },
       reversal: l.entry.kind === "ADJUSTMENT" ? { entryId: l.entry.id, blocker: reversalBlocker(l.entry), date: toIsoDate(l.entry.date) } : undefined,
       source: t
-        ? { bankTxId: t.id, accountCode: t.accountCode, taxTag: t.taxTag, whtKind: t.whtKind, whtAmount: t.whtAmount.toString(), fileName: t.import.fileName, sheet: t.sourceSheet, rowNumber: t.rowNumber, rawRow: t.rawRow, description: t.description, amount: t.amount.toString(), bank: `${t.bankAccount.label} · ${t.bankAccount.number}`, method: t.method, reason: t.reason, status: t.status, pairedWith: t.matchedTxId ? (pairs.get(t.matchedTxId) ?? null) : null, history: history.get(t.id) ?? [], splits: t.splits.map((p) => ({ accountCode: p.accountCode, amount: p.amount.toString(), memo: p.memo })) }
+        ? { bankTxId: t.id, accountCode: t.accountCode, taxTag: t.taxTag, whtKind: t.whtKind, whtAmount: t.whtAmount.toString(), fileName: t.import.fileName, sheet: t.sourceSheet, rowNumber: t.rowNumber, rawRow: t.rawRow, description: t.description, amount: t.amount.toString(), bank: `${t.bankAccount.label} · ${t.bankAccount.number}`, method: t.method, reason: t.reason, status: t.status, departmentId: t.departmentId, projectId: t.projectId, pairedWith: t.matchedTxId ? (pairs.get(t.matchedTxId) ?? null) : null, history: history.get(t.id) ?? [], splits: t.splits.map((p) => ({ accountCode: p.accountCode, amount: p.amount.toString(), memo: p.memo })) }
         : null,
       fileSource: l.entry.ledgerImport
         ? {

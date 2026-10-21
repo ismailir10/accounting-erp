@@ -16,7 +16,7 @@ import { formatDate, formatPeriod } from "@/lib/format";
 import { createUploadLink, revokeUploadLink, uploadPath, UploadLinkError } from "@/lib/upload-links";
 import { importStatement, type ImportSummary } from "@/lib/import/pipeline";
 import { resolveProvider } from "@/lib/settings/ai";
-import { acceptSimilar, reviewTransaction, splitTransaction, unpairTransfer, type SplitPartInput } from "@/lib/review";
+import { acceptSimilar, reviewTransaction, setBankTagsTx, splitTransaction, unpairTransfer, type SplitPartInput } from "@/lib/review";
 import { CloseError, lockPeriod, runControls } from "@/lib/controls";
 import { cancelReopen, confirmReopen, rejectReopen, requestReopen } from "@/lib/approvals/reopen";
 import { LedgerError } from "@/lib/ledger/post";
@@ -345,7 +345,7 @@ export async function unpairTransferAction(input: { bankTxId: string }): Promise
   }
 }
 
-export async function reviewAction(input: { bankTxId: string; accountCode: string; taxTag: TaxTag | null; createRule?: boolean; /** Tax withheld (major units); undefined keeps the line's, null removes it. */ withholding?: { kind: WithholdingKind; amount: string } | null; /** Merge a split line back onto this one account (Buku Besar). */ replaceSplit?: boolean }): Promise<Result<{ learned: boolean }>> {
+export async function reviewAction(input: { bankTxId: string; accountCode: string; taxTag: TaxTag | null; createRule?: boolean; /** Tax withheld (major units); undefined keeps the line's, null removes it. */ withholding?: { kind: WithholdingKind; amount: string } | null; /** Merge a split line back onto this one account (Buku Besar). */ replaceSplit?: boolean; /** Departemen & Proyek; undefined keeps the line's. */ tags?: { departmentId: string | null; projectId: string | null } }): Promise<Result<{ learned: boolean }>> {
   try {
     const clientId = await assertTxInFirm(input.bankTxId);
     const { withholding, ...rest } = input;
@@ -358,6 +358,19 @@ export async function reviewAction(input: { bankTxId: string; accountCode: strin
     const { learned } = await reviewTransaction(prisma, { ...rest, withholding: parsed, actorId: (await getCurrentMember()).id });
     revalidatePath(`/clients/${clientId}`, "layout");
     return { ok: true, learned };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Departemen & Proyek of a bank line (Buku Besar): a RECLASS moves the classification side to the new tags (lib/review.ts). */
+export async function setBankTagsAction(input: { bankTxId: string; departmentId: string | null; projectId: string | null }): Promise<Result> {
+  try {
+    const clientId = await assertTxInFirm(input.bankTxId);
+    const actorId = (await getCurrentMember()).id;
+    await prisma.$transaction((tx) => setBankTagsTx(tx, { ...input, actorId }));
+    revalidatePath(`/clients/${clientId}`, "layout");
+    return { ok: true };
   } catch (e) {
     return fail(e);
   }

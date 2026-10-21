@@ -13,6 +13,8 @@ import { saveApprovals } from "@/lib/settings/approvals";
 import { createRecurring } from "@/lib/adjust/recurring";
 import { postRecurring } from "@/lib/adjust/recurring-post";
 import { approvalQueue } from "@/lib/approvals/queue";
+import { importStatement } from "@/lib/import/pipeline";
+import { reviewTransaction, setBankTagsTx, splitTransaction } from "@/lib/review";
 
 /** Departemen & Proyek (cycle 2026-10-21-departemen-proyek): a client's labels on a journal line; never a balance. */
 describe("departemen & proyek", () => {
@@ -148,6 +150,71 @@ describe("departemen & proyek", () => {
       await expect(removeDimension(db, { clientId: g.client.id, id: p.id })).rejects.toThrow("sudah dipakai");
       const o = await postRecurring(db, { clientId: g.client.id, recurringId: t.id, year: 2026, month: 8, maker: { id: me.id, role: "AKUNTAN" } });
       expect((await tagsOf(o.posted ? o.entryId : "")).find(([c]) => c === "6120")?.[1]).toEqual({ departmentId: a.id, projectId: p.id });
+    });
+  });
+
+  describe("on a bank line", () => {
+    const csv = ["Tanggal;Keterangan;Debet;Kredit;Saldo", "01/08/2026;SALDO AWAL;;;50.000.000,00", "03/08/2026;BAYAR SEWA OUTLET KEMANG;10.000.000,00;0,00;40.000.000,00", ""].join("\n");
+    const setup = async () => {
+      const g = await makeGroup();
+      const a = await createDimension(db, { clientId: g.client.id, kind: "DEPARTEMEN", code: "OUTLET-A", name: "Outlet A" });
+      const b = await createDimension(db, { clientId: g.client.id, kind: "DEPARTEMEN", code: "OUTLET-B", name: "Outlet B" });
+      const p = await createDimension(db, { clientId: g.client.id, kind: "PROYEK", code: "PRJ-01", name: "Proyek satu" });
+      await importStatement(db, { bankAccountId: g.pt.banks[0].id, fileName: "agustus.csv", data: Buffer.from(csv), provider: null });
+      const t = await db.bankTransaction.findFirstOrThrow({ where: { description: { contains: "SEWA OUTLET" } } });
+      return { g, a, b, p, t };
+    };
+    /** Net per (account code, department, project) of the line's entries: what the per-department Laba Rugi reads. */
+    const nets = async (bankTxId: string) => {
+      const ls = await db.journalLine.findMany({ where: { entry: { bankTransactionId: bankTxId } }, include: { account: true } });
+      const m = new Map<string, bigint>();
+      for (const l of ls) {
+        const k = `${l.account.code}|${l.departmentId ?? "-"}|${l.projectId ?? "-"}`;
+        m.set(k, (m.get(k) ?? 0n) + l.debit - l.credit);
+      }
+      return Object.fromEntries([...m].filter(([, v]) => v !== 0n).map(([k, v]) => [k, v.toString()]));
+    };
+
+    it("tags the classification side on review; changing only the tag moves it by a RECLASS; the account total stays", async () => {
+      const { g, a, b, p, t } = await setup();
+      // In Review the tag waits on the line: the suspense leg carries none.
+      await db.$transaction((tx) => setBankTagsTx(tx, { bankTxId: t.id, departmentId: a.id, projectId: null }));
+      expect(Object.keys(await nets(t.id)).every((k) => k.endsWith("|-|-"))).toBe(true);
+
+      await reviewTransaction(db, { bankTxId: t.id, accountCode: "6120", taxTag: null });
+      const bank = (await db.account.findUniqueOrThrow({ where: { id: g.pt.banks[0].accountId } })).code;
+      expect(await nets(t.id)).toEqual({ [`6120|${a.id}|-`]: "10000000", [`${bank}|-|-`]: "-10000000" });
+
+      const before = await db.journalEntry.count({ where: { bankTransactionId: t.id } });
+      await db.$transaction((tx) => setBankTagsTx(tx, { bankTxId: t.id, departmentId: b.id, projectId: p.id }));
+      expect(await db.journalEntry.count({ where: { bankTransactionId: t.id } })).toBe(before + 1);
+      const reclass = await db.journalEntry.findFirstOrThrow({ where: { bankTransactionId: t.id, kind: "RECLASS" }, include: { lines: true } });
+      expect(reclass.lines.length).toBe(2);
+      expect(await nets(t.id)).toEqual({ [`6120|${b.id}|${p.id}`]: "10000000", [`${bank}|-|-`]: "-10000000" });
+
+      // Same tags again: nothing posts. A change of account keeps the tags.
+      expect(await db.$transaction((tx) => setBankTagsTx(tx, { bankTxId: t.id, departmentId: b.id, projectId: p.id }))).toBeNull();
+      await reviewTransaction(db, { bankTxId: t.id, accountCode: "6190", taxTag: null });
+      expect(await nets(t.id)).toEqual({ [`6190|${b.id}|${p.id}`]: "10000000", [`${bank}|-|-`]: "-10000000" });
+
+      // Archived: the line keeps it through another change of account; choosing it on another line is refused.
+      await setDimensionArchived(db, { clientId: g.client.id, id: b.id, archived: true });
+      await reviewTransaction(db, { bankTxId: t.id, accountCode: "6120", taxTag: null });
+      expect(await nets(t.id)).toEqual({ [`6120|${b.id}|${p.id}`]: "10000000", [`${bank}|-|-`]: "-10000000" });
+      await db.$transaction((tx) => setBankTagsTx(tx, { bankTxId: t.id, departmentId: null, projectId: p.id }));
+      await expect(db.$transaction((tx) => setBankTagsTx(tx, { bankTxId: t.id, departmentId: b.id, projectId: p.id }))).rejects.toThrow("sudah diarsipkan");
+      await expect(db.$transaction((tx) => setBankTagsTx(tx, { bankTxId: t.id, departmentId: p.id, projectId: null }))).rejects.toThrow("Departemen tidak termasuk klien ini.");
+      expect((await listEvents(db, g.client.id, { kind: "DIMENSION" })).some((e) => e.summary.includes("OUTLET-A → OUTLET-B · PRJ-01"))).toBe(true);
+    });
+
+    it("a decision in Review sets the tags with the account; a split carries them on every part", async () => {
+      const { a, t } = await setup();
+      await reviewTransaction(db, { bankTxId: t.id, accountCode: "6120", taxTag: null, tags: { departmentId: a.id, projectId: null } });
+      expect((await db.bankTransaction.findUniqueOrThrow({ where: { id: t.id } })).departmentId).toBe(a.id);
+      await splitTransaction(db, { bankTxId: t.id, parts: [{ accountCode: "6120", amount: "6.000.000" }, { accountCode: "6190", amount: "4.000.000" }] });
+      const n = await nets(t.id);
+      expect(n[`6120|${a.id}|-`]).toBe("6000000");
+      expect(n[`6190|${a.id}|-`]).toBe("4000000");
     });
   });
 });
