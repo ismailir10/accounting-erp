@@ -415,6 +415,11 @@ export async function acceptMappings(
 
       const toCreate: { code: string; name: string; fsLine: FsLine }[] = [];
       const plan: { sourceAccountId: string; code: string; mappedBy: MapMethod }[] = [];
+      // Antar entitas per pihak: a company's own intercompany account (1190NN) is never its own source account's target; postJournal()
+      // would refuse every line of it at posting, so the mapping is refused now.
+      const ownIc = new Map(
+        (await tx.account.findMany({ where: { clientId, counterpartyEntityId: { not: null } }, select: { code: true, name: true, counterpartyEntityId: true, counterpartyEntity: { select: { shortName: true } } } })).map((a) => [a.code, a]),
+      );
       for (const it of items) {
         let code = it.accountCode;
         // A `new:<FS_LINE>` suggestion accepted as-is creates the account under that line, named after the client's account.
@@ -435,6 +440,11 @@ export async function acceptMappings(
           const source = sources.find((x) => x.id === it.sourceAccountId)!;
           const refusal = acc.isBank ? await bankMappingRefusal(tx, clientId, source, acc) : null;
           if (refusal) throw new MappingError(refusal);
+        }
+        const ic = ownIc.get(code!);
+        const source = sources.find((x) => x.id === it.sourceAccountId)!;
+        if (ic && ic.counterpartyEntityId === source.entityId) {
+          throw new MappingError(`Akun ${ic.code} ${ic.name} adalah akun antar entitas untuk ${ic.counterpartyEntity?.shortName ?? "perusahaan ini"} sendiri, jadi tidak bisa menjadi tujuan akun sumber ${source.code} ${source.name} perusahaan itu. Petakan ke akun antar entitas pihak lawannya.`);
         }
         plan.push({ sourceAccountId: it.sourceAccountId, code: code!, mappedBy: newAccount ? "NEW" : it.method });
       }

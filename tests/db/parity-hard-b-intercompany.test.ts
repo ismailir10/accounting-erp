@@ -198,6 +198,17 @@ describe("Antar entitas per pihak, tested hard — writers refuse a company's ow
     expect(ok.posted).toBe(true);
     await expect(createAccount(db, { clientId: g.client.id, fsLine: "PIUTANG_LAIN", name: "Piutang afiliasi lain", code: "119050" })).rejects.toThrow(/dicadangkan/);
   });
+
+  it("a ledger import's source account can't be mapped to its own company's intercompany account; the other party's is fine", async () => {
+    const g = await makeGroup3();
+    const { acceptMappings } = await import("@/lib/ledger-import/mapping");
+    const source = await db.sourceAccount.create({ data: { firmId: g.firm.id, clientId: g.client.id, entityId: g.pt.entity.id, code: "1-1900", name: "Piutang Afiliasi" } });
+    // PT's own account would be refused at every posting line (postJournal): refused at the mapping, nothing stored.
+    await expect(acceptMappings(db, g.client.id, [{ sourceAccountId: source.id, accountCode: (await account(g, "@pt")).code, method: "MANUAL" }])).rejects.toThrow(/akun antar entitas untuk PT Uji sendiri/);
+    expect((await db.sourceAccount.findUniqueOrThrow({ where: { id: source.id } })).accountId).toBeNull();
+    await acceptMappings(db, g.client.id, [{ sourceAccountId: source.id, accountCode: (await account(g, "@cv")).code, method: "MANUAL" }]);
+    expect((await db.sourceAccount.findUniqueOrThrow({ where: { id: source.id } })).accountId).toBe((await account(g, "@cv")).id);
+  });
 });
 
 describe("Antar entitas per pihak, tested hard — statements and controls", () => {
