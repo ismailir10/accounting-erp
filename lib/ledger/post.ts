@@ -78,6 +78,22 @@ function normalizeLines(lines: PostLine[]) {
   return out;
 }
 
+const archivedError = (a: { code: string; name: string }) => new LedgerError(`Akun ${a.code} ${a.name} sudah diarsipkan. Aktifkan lagi di Bagan akun untuk memakainya.`);
+
+/**
+ * Arsip akun under a lock: key-share the entry's accounts and read `archivedAt` again. An archive or removal (which takes the row FOR
+ * UPDATE) that committed since `validate` read the chart is seen here; one that starts now waits for this posting, then sees its lines
+ * and refuses. Taken after the posting's last wait (its number), so an archive never queues behind another journal's series; a rename or
+ * move does not wait on it. Sorted ids: one lock order for every posting.
+ */
+async function lockAccounts(tx: Tx, accounts: { id: string; code: string; name: string }[]) {
+  const ids = accounts.map((a) => a.id).sort();
+  const held = await tx.$queryRaw<{ id: string; archivedAt: Date | null }[]>`SELECT id, "archivedAt" FROM "Account" WHERE id = ANY(${ids}) ORDER BY id FOR KEY SHARE`;
+  if (held.length !== ids.length) throw new LedgerError("Akun tidak termasuk bagan akun klien ini");
+  const archived = held.find((h) => h.archivedAt);
+  if (archived) throw archivedError(accounts.find((a) => a.id === archived.id)!);
+}
+
 /** Every rule of postJournal() except the period (rules 1, 3, 4 above): the normalised lines and the entity, or a LedgerError. */
 async function validate(tx: Tx, input: Pick<PostInput, "entityId" | "lines" | "reversesId" | "bankTransactionId" | "scheduleId" | "recurringId" | "keepTags">) {
   const lines = normalizeLines(input.lines);
@@ -98,7 +114,7 @@ async function validate(tx: Tx, input: Pick<PostInput, "entityId" | "lines" | "r
   const own = accounts.find((a) => a.counterpartyEntityId === entity.id);
   if (own) throw new LedgerError(`Akun ${own.code} ${own.name} adalah akun antar entitas untuk ${entity.shortName} sendiri. Catat di akun pihak lawannya.`);
   const archived = accounts.find((a) => a.archivedAt);
-  if (archived) throw new LedgerError(`Akun ${archived.code} ${archived.name} sudah diarsipkan. Aktifkan lagi di Bagan akun untuk memakainya.`);
+  if (archived) throw archivedError(archived);
   // A bank GL account belongs to one entity (BankAccount.entityId): another entity's books never touch it — money between
   // entities goes through 1190 in each entity's own books (rule 10), else its reconciliation breaks with no pointer to why.
   // The one exception clears what older books left there: a move toward zero of this entity's balance on that account.
@@ -207,6 +223,7 @@ export async function postJournal(tx: Tx, input: PostInput) {
   if (later) throw closedAfter(later);
   const byId = new Map(accounts.map((a) => [a.id, a]));
   const number = await nextNumber(tx, entity.id, numberPrefix(input.kind, lines.map((l) => ({ ...l, account: byId.get(l.accountId)! }))), input.date);
+  await lockAccounts(tx, accounts);
 
   return tx.journalEntry.create({
     data: {

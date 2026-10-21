@@ -148,7 +148,7 @@ describe("hapus akun: refused while a stored journal names its code", () => {
 describe("arsip akun: nothing reaches an archived account", () => {
   beforeEach(resetDb);
 
-  it("DEFECT: a posting already past its checks when the account is archived still lands on it, in an open month", async () => {
+  it("a posting already past its checks when the account is archived is refused under the account lock: never an archived account with a line in an open month", async () => {
     // postJournal() reads the accounts (archivedAt null) without a lock; archiveAccount() then takes the account row FOR UPDATE, finds no
     // line, archives and commits; the posting's insert then goes through. A busy series (another journal holding the August JP counter)
     // keeps the posting between its check and its insert. Afterwards an archived account carries a line in an open month — the state the
