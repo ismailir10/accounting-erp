@@ -127,6 +127,21 @@ describe("Jurnal berulang, tested hard — what a template may be made from", ()
     expect({ made, posted }).toEqual({ made: expect.stringMatching(/diarsipkan/), posted: null });
   });
 
+  it("a template is refused when made from a journal whose Departemen was archived since; active again, it is made", async () => {
+    const g = await makeGroup();
+    const { createDimension, setDimensionArchived } = await import("@/lib/dimensions");
+    const dept = await createDimension(db, { clientId: g.client.id, kind: "DEPARTEMEN", code: "OPS", name: "Operasional" });
+    const july = await postAdjustment(db, {
+      clientId: g.client.id, entityId: g.pt.entity.id, date: dateOnly(2026, 7, 31), memo: "Sewa gudang",
+      lines: [{ accountCode: "6120", debit: "1.000.000", credit: "", departmentId: dept.id }, { accountCode: "2150", debit: "", credit: "1.000.000" }],
+    });
+    await setDimensionArchived(db, { clientId: g.client.id, id: dept.id, archived: true });
+    // A new template is a new choice: the stored-tag exception of an instalment doesn't apply to making it.
+    await expect(createRecurring(db, { clientId: g.client.id, entryId: july.id })).rejects.toThrow(/Departemen OPS Operasional sudah diarsipkan/);
+    await setDimensionArchived(db, { clientId: g.client.id, id: dept.id, archived: false });
+    expect((await createRecurring(db, { clientId: g.client.id, entryId: july.id })).startMonth).toBe(8);
+  });
+
   it("the template's company can't be removed (its source journal is in the books), and the instalment keeps the template's memo verbatim", async () => {
     const g = await makeGroup();
     const me = await addMember(g.firm.id, "AKUNTAN", { clients: [g.client.id] });
