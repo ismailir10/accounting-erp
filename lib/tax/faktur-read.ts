@@ -65,7 +65,8 @@ function yearOf(c: RawCell | undefined): number | null {
   return m ? Number(m[1]) : null;
 }
 
-const NOT_COUNTED = /batal|cancel|diganti|replac|reject|ditolak|draft|konsep|tidak valid/i;
+// A faktur replaced by a faktur pengganti is shown by Coretax as AMENDED; only the pengganti counts (PER-03/PJ/2022).
+const NOT_COUNTED = /batal|cancel|diganti|replac|amend|reject|ditolak|draft|konsep|tidak valid/i;
 const CREDITED = /dikreditkan|credited/i;
 const UNCREDITED = /tidak dikreditkan|belum dikreditkan|uncredited|not credited/i;
 

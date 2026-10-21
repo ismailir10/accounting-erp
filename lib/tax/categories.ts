@@ -4,6 +4,7 @@ import type { CorrectionDirection, CorrectionKind } from "@/lib/generated/prisma
  * Koreksi fiskal categories suggested from expense-account names (accounting-rules 5d): UU PPh Pasal 9 non-deductibles and the usual
  * timing differences. A match is only a suggestion; the accountant accepts it (with the default % or another) or dismisses it. First match
  * wins, so the more specific words come first. Tax expense accounts (BEBAN_PAJAK) never reach this list: they are below profit before tax.
+ * Natura / kenikmatan is not one: from tax year 2022 it is deductible for the employer (UU HPP Pasal 6 ayat (1) huruf a, PMK 66/2023).
  */
 export type CorrectionCategory = { key: string; label: string; pattern: RegExp; direction: CorrectionDirection; kind: CorrectionKind; percent: number };
 
@@ -12,7 +13,6 @@ export const CATEGORIES: CorrectionCategory[] = [
   { key: "ENTERTAINMENT", label: "Entertainment / jamuan tanpa daftar nominatif", pattern: /entertain|jamuan|representasi/i, direction: "POSITIVE", kind: "PERMANENT", percent: 100 },
   { key: "DONATION", label: "Sumbangan / donasi", pattern: /sumbangan|donasi/i, direction: "POSITIVE", kind: "PERMANENT", percent: 100 },
   { key: "PENALTY", label: "Sanksi / denda / bunga penagihan pajak", pattern: /sanksi|denda|bunga penagihan/i, direction: "POSITIVE", kind: "PERMANENT", percent: 100 },
-  { key: "BENEFIT_IN_KIND", label: "Natura / kenikmatan", pattern: /natura|kenikmatan/i, direction: "POSITIVE", kind: "PERMANENT", percent: 100 },
   { key: "INCOME_TAX_EXPENSED", label: "PPh yang dibebankan", pattern: /\bpph\b|pajak penghasilan/i, direction: "POSITIVE", kind: "PERMANENT", percent: 100 },
   { key: "PROVISION", label: "Cadangan / penyisihan / CKPN", pattern: /cadangan|penyisihan|ckpn|kerugian penurunan nilai/i, direction: "POSITIVE", kind: "TEMPORARY", percent: 100 },
   { key: "EMPLOYEE_BENEFITS", label: "Imbalan kerja / pesangon (akrual)", pattern: /imbalan kerja|imbalan pasca|pesangon/i, direction: "POSITIVE", kind: "TEMPORARY", percent: 100 },

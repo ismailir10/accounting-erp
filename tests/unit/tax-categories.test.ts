@@ -13,7 +13,7 @@ describe("koreksi fiskal categories", () => {
   ])("%s → %s at %i %%", (name, key, percent) => expect(categoryOf(name)).toMatchObject({ key, percent }));
 
   it("leaves ordinary expenses alone", () => {
-    for (const n of ["Beban Gaji & Tunjangan", "Beban Jasa Konsultan Pajak", "Beban Transportasi & Logistik", "Beban Kendaraan Operasional"]) expect(categoryOf(n)).toBeNull();
+    for (const n of ["Beban Gaji & Tunjangan", "Beban Jasa Konsultan Pajak", "Beban Transportasi & Logistik", "Beban Kendaraan Operasional", "Beban Natura Karyawan"]) expect(categoryOf(n)).toBeNull();
   });
 
   it("takes a share half up", () => {
