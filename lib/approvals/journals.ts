@@ -5,7 +5,7 @@ import { recordEvent } from "@/lib/audit";
 import { formatDate, periodBounds } from "@/lib/format";
 import { formatMoney } from "@/lib/money";
 import { checkJournal, LedgerError } from "@/lib/ledger/post";
-import { adjustmentPosting, firstOfNextMonth, postPreparedAdjustment, prepareAdjustment, type AdjustmentLineInput, type PreparedAdjustment } from "@/lib/ledger/adjustment";
+import { adjustmentPosting, firstOfNextMonth, postPreparedAdjustment, prepareAdjustment, storedTags, type AdjustmentLineInput, type PreparedAdjustment } from "@/lib/ledger/adjustment";
 import { checkReversal, mirrorLines, reverseEntry, reverseEntryTx } from "@/lib/ledger/reverse";
 import { chosenAccounts, postProposal, readLines } from "@/lib/adjust/proposals";
 import { closeLock } from "@/lib/adjust/schedules";
@@ -25,24 +25,25 @@ export type Maker = { id: string; role: MemberRole };
 /** `posted`: the entry is in the books (`fallback` when no one else could approve it); otherwise it waits as `approvalId`. */
 export type Outcome = { posted: true; entryId: string; fallback: boolean } | { posted: false; approvalId: string };
 
-/** A stored request line: the account by code, minor units as strings (as a draft's), an optional note. */
-export type StoredLine = { accountCode: string; debit: string; credit: string; memo?: string };
+/** A stored request line: the account by code, minor units as strings (as a draft's), an optional note and Departemen & Proyek tags. */
+export type StoredLine = { accountCode: string; debit: string; credit: string; memo?: string; departmentId?: string; projectId?: string };
 
 const DIGITS = /^\d{1,18}$/;
 export function readStoredLines(value: unknown): StoredLine[] {
   if (!Array.isArray(value)) throw new LedgerError("Permintaan persetujuan rusak.");
   return value.map((l) => {
     const x = l as Record<string, unknown>;
-    if (typeof x.accountCode !== "string" || typeof x.debit !== "string" || typeof x.credit !== "string" || !DIGITS.test(x.debit) || !DIGITS.test(x.credit) || (x.memo !== undefined && typeof x.memo !== "string")) {
+    if (typeof x.accountCode !== "string" || typeof x.debit !== "string" || typeof x.credit !== "string" || !DIGITS.test(x.debit) || !DIGITS.test(x.credit) || (x.memo !== undefined && typeof x.memo !== "string") || [x.departmentId, x.projectId].some((t) => t !== undefined && typeof t !== "string")) {
       throw new LedgerError("Permintaan persetujuan rusak.");
     }
-    return { accountCode: x.accountCode, debit: x.debit, credit: x.credit, ...(x.memo ? { memo: x.memo } : {}) };
+    return { accountCode: x.accountCode, debit: x.debit, credit: x.credit, ...(x.memo ? { memo: x.memo } : {}), ...storedTags(x as Tags) };
   });
 }
 
+type Tags = { departmentId?: string | null; projectId?: string | null };
 const sumDebit = (lines: { debit: bigint }[]) => lines.reduce((s, l) => s + l.debit, 0n);
-const stored = (lines: { accountCode: string; debit: bigint; credit: bigint; memo?: string | null }[]): StoredLine[] =>
-  lines.filter((l) => l.debit > 0n || l.credit > 0n).map((l) => ({ accountCode: l.accountCode, debit: l.debit.toString(), credit: l.credit.toString(), ...(l.memo ? { memo: l.memo } : {}) }));
+const stored = (lines: ({ accountCode: string; debit: bigint; credit: bigint; memo?: string | null } & Tags)[]): StoredLine[] =>
+  lines.filter((l) => l.debit > 0n || l.credit > 0n).map((l) => ({ accountCode: l.accountCode, debit: l.debit.toString(), credit: l.credit.toString(), ...(l.memo ? { memo: l.memo } : {}), ...storedTags(l) }));
 
 const isUnique = (e: unknown) => (e as { code?: string }).code === "P2002";
 
@@ -246,11 +247,11 @@ export async function submitReversal(db: Db, input: { clientId: string; entryId:
     });
     return { posted: true, entryId: posted.id, fallback: true };
   }
-  const mirrored = entry.lines.map((l) => ({ accountCode: l.account.code, debit: l.credit, credit: l.debit, memo: l.memo }));
+  const mirrored = entry.lines.map((l) => ({ accountCode: l.account.code, debit: l.credit, credit: l.debit, memo: l.memo, departmentId: l.departmentId, projectId: l.projectId }));
   try {
     const a = await db.$transaction(async (tx) => {
       await closeLock(tx, input.clientId);
-      await checkJournal(tx, { entityId: entry.entityId, date: input.date, lines: mirrorLines(entry.lines) });
+      await checkJournal(tx, { entityId: entry.entityId, date: input.date, lines: mirrorLines(entry.lines), reversesId: entry.id });
       return createRequest(tx, { ...h, clientId: input.clientId, entityId: entry.entityId, lines: stored(mirrored), threshold: route.threshold, maker: input.maker, reversesId: entry.id });
     });
     return { posted: false, approvalId: a.id };
@@ -339,7 +340,7 @@ export async function storedPosting(db: Db | Tx, clientId: string, value: unknow
   return lines.map((l) => {
     const acc = accounts.get(l.accountCode);
     if (!acc) throw new LedgerError(`Akun ${l.accountCode} tidak ada lagi di bagan akun klien.`);
-    return { accountId: acc.id, accountCode: acc.code, debit: BigInt(l.debit), credit: BigInt(l.credit), memo: l.memo };
+    return { accountId: acc.id, accountCode: acc.code, debit: BigInt(l.debit), credit: BigInt(l.credit), memo: l.memo, departmentId: l.departmentId ?? null, projectId: l.projectId ?? null };
   });
 }
 

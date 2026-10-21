@@ -77,7 +77,7 @@ function normalizeLines(lines: PostLine[]) {
 }
 
 /** Every rule of postJournal() except the period (rules 1, 3, 4 above): the normalised lines and the entity, or a LedgerError. */
-async function validate(tx: Tx, input: Pick<PostInput, "entityId" | "lines">) {
+async function validate(tx: Tx, input: Pick<PostInput, "entityId" | "lines" | "reversesId">) {
   const lines = normalizeLines(input.lines);
   if (lines.length < 2) throw new LedgerError("Jurnal minimal dua baris");
   const totalDebit = lines.reduce((s, l) => s + l.debit, 0n);
@@ -128,7 +128,8 @@ async function validate(tx: Tx, input: Pick<PostInput, "entityId" | "lines">) {
         if (!id) continue;
         const d = dims.get(id);
         if (!d || d.clientId !== entity.clientId || d.kind !== kind) throw new LedgerError(kind === "DEPARTEMEN" ? "Departemen tidak termasuk klien ini." : "Proyek tidak termasuk klien ini.");
-        if (d.archivedAt) throw new LedgerError(`${kind === "DEPARTEMEN" ? "Departemen" : "Proyek"} ${d.code} ${d.name} sudah diarsipkan. Aktifkan lagi di Pengaturan klien untuk memakainya.`);
+        // A reversal mirrors its original's tags (so the per-department Laba Rugi nets out) even after the tag was archived.
+        if (d.archivedAt && !input.reversesId) throw new LedgerError(`${kind === "DEPARTEMEN" ? "Departemen" : "Proyek"} ${d.code} ${d.name} sudah diarsipkan. Aktifkan lagi di Pengaturan klien untuk memakainya.`);
       }
     }
   }
@@ -175,7 +176,7 @@ const closedAfter = (p: { year: number; month: number }) =>
  * The same checks postJournal() makes, writing nothing: used where a journal is held back as a request (Persetujuan kedua) so the request
  * is refused now, not at approval, when it could never post. A month without a Period row yet is open.
  */
-export async function checkJournal(tx: Tx, input: Pick<PostInput, "entityId" | "date" | "lines">) {
+export async function checkJournal(tx: Tx, input: Pick<PostInput, "entityId" | "date" | "lines" | "reversesId">) {
   const { entity } = await validate(tx, input);
   const year = input.date.getUTCFullYear();
   const month = input.date.getUTCMonth() + 1;

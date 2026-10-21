@@ -95,6 +95,8 @@ export async function reverseEntry(db: Db, input: ReverseInput) {
 /** A reversal's memo: the original's, with its date. */
 export const reversalMemo = (e: { memo: string; date: Date }) => `Pembalik: ${e.memo} (${formatDate(e.date)})`;
 
-/** An entry's lines mirrored (debit ↔ credit), same accounts, memos and sources: the lines of its reversal. */
-export const mirrorLines = (lines: { accountId: string; debit: bigint; credit: bigint; memo?: string | null; sourceAccountId?: string | null; sourceRef?: string | null }[]) =>
-  lines.map((l) => ({ accountId: l.accountId, debit: l.credit, credit: l.debit, memo: l.memo ?? undefined, sourceAccountId: l.sourceAccountId ?? null, sourceRef: l.sourceRef ?? null }));
+/** An entry's lines mirrored (debit ↔ credit), same accounts, memos, sources and Departemen & Proyek tags: the lines of its reversal. */
+export const mirrorLines = (
+  lines: { accountId: string; debit: bigint; credit: bigint; memo?: string | null; sourceAccountId?: string | null; sourceRef?: string | null; departmentId?: string | null; projectId?: string | null }[],
+) =>
+  lines.map((l) => ({ accountId: l.accountId, debit: l.credit, credit: l.debit, memo: l.memo ?? undefined, sourceAccountId: l.sourceAccountId ?? null, sourceRef: l.sourceRef ?? null, departmentId: l.departmentId ?? null, projectId: l.projectId ?? null }));

@@ -10,6 +10,7 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AccountPicker } from "@/components/app/account-picker";
+import { SimpleSelect } from "@/components/app/simple-select";
 import { StatusPill } from "@/components/app/status";
 import { addAttachmentsAction, adjustmentAction } from "@/app/actions";
 import { formatMoney, parseMoney } from "@/lib/money";
@@ -17,7 +18,10 @@ import { formatPeriod } from "@/lib/format";
 import { formNotice, type SourceRoute } from "@/lib/approvals/second";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-type Line = { accountCode: string; debit: string; credit: string; memo?: string };
+type Line = { accountCode: string; debit: string; credit: string; memo?: string; departmentId?: string; projectId?: string };
+type Tag = { id: string; code: string; name: string };
+/** The client's active Departemen & Proyek (lib/dimensions); a line's pickers show only when the client has any. */
+export type JournalDimensions = { departments: Tag[]; projects: Tag[] };
 /** A journal to start from (*Salin*): its company, memo and lines, amounts as typed text. */
 export type JournalCopy = { entityId: string; memo: string; lines: Line[]; /** The source was an accrual reversed on the 1st of its next month. */ reverse: boolean };
 /** Typed amount → minor units, or the Bahasa reason it can't be read. */
@@ -39,11 +43,15 @@ const TEMPLATES: { label: string; memo: string; lines: Line[] }[] = [
 ];
 
 /** `lockedMonths` ("YYYY-MM"): closed months; a date in one is refused by the server, so the form says so before anything is typed. */
-export function JournalForm({ clientId, entities, accounts, defaultDate, lockedMonths = [], closeHref, copy, route }: { clientId: string; entities: { id: string; name: string; currency: string }[]; accounts: { code: string; name: string; group: string; entityId: string | null }[]; defaultDate: string; lockedMonths?: string[]; closeHref?: string; copy?: JournalCopy; /** Persetujuan kedua's *Jurnal manual* for this member. */ route?: SourceRoute }) {
+const tagOptions = (tags: Tag[], none: string) => [{ value: "", label: none }, ...tags.map((t) => ({ value: t.id, label: `${t.code} · ${t.name}` }))];
+
+export function JournalForm({ clientId, entities, accounts, defaultDate, lockedMonths = [], closeHref, copy, route, dimensions }: { clientId: string; entities: { id: string; name: string; currency: string }[]; accounts: { code: string; name: string; group: string; entityId: string | null }[]; defaultDate: string; lockedMonths?: string[]; closeHref?: string; copy?: JournalCopy; /** Persetujuan kedua's *Jurnal manual* for this member. */ route?: SourceRoute; dimensions?: JournalDimensions }) {
   const router = useRouter();
   const [entityId, setEntityId] = useState(copy && entities.some((e) => e.id === copy.entityId) ? copy.entityId : (entities[0]?.id ?? ""));
   const [date, setDate] = useState(defaultDate);
   const [memo, setMemo] = useState(copy?.memo ?? "");
+  const departments = dimensions?.departments ?? [];
+  const projects = dimensions?.projects ?? [];
   const [lines, setLines] = useState<Line[]>(copy?.lines.length ? copy.lines.map((l) => ({ ...l })) : [{ accountCode: "", debit: "", credit: "" }, { accountCode: "", debit: "", credit: "" }]);
   const [reverse, setReverse] = useState(copy?.reverse ?? false);
   // Lampiran (lib/ledger/attachments.ts): uploaded to the journal once it is posted.
@@ -117,6 +125,12 @@ export function JournalForm({ clientId, entities, accounts, defaultDate, lockedM
                 <TableCell className="p-2 pl-3 align-top">
                   <AccountPicker value={l.accountCode} onChange={(v) => setLine(i, { accountCode: v })} options={usable} ariaLabel={`Akun baris ${i + 1}`} className="min-w-64" />
                   <Input aria-label={`Catatan baris ${i + 1}`} value={l.memo ?? ""} onChange={(e) => setLine(i, { memo: e.target.value })} placeholder="Catatan baris (opsional)" maxLength={200} className="mt-1.5 h-8 min-w-64 text-xs" />
+                  {(departments.length > 0 || projects.length > 0) && (
+                    <div className="mt-1.5 flex min-w-64 gap-1.5">
+                      {departments.length > 0 && <SimpleSelect label={`Departemen baris ${i + 1}`} value={l.departmentId ?? ""} onChange={(v) => setLine(i, { departmentId: v })} options={tagOptions(departments, "Tanpa departemen")} className="h-8 text-xs" />}
+                      {projects.length > 0 && <SimpleSelect label={`Proyek baris ${i + 1}`} value={l.projectId ?? ""} onChange={(v) => setLine(i, { projectId: v })} options={tagOptions(projects, "Tanpa proyek")} className="h-8 text-xs" />}
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell className="p-2 align-top"><Input aria-label={`Debit baris ${i + 1}`} aria-invalid={!!parsed[i].debit.error || undefined} inputMode="decimal" className="num text-right" value={l.debit} onBlur={() => tidy(i, "debit")} onChange={(e) => setLine(i, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} placeholder={formatMoney(0n, currency, { bare: true })} /></TableCell>
                 <TableCell className="p-2 align-top"><Input aria-label={`Kredit baris ${i + 1}`} aria-invalid={!!parsed[i].credit.error || undefined} inputMode="decimal" className="num text-right" value={l.credit} onBlur={() => tidy(i, "credit")} onChange={(e) => setLine(i, { credit: e.target.value, debit: e.target.value ? "" : l.debit })} placeholder={formatMoney(0n, currency, { bare: true })} /></TableCell>

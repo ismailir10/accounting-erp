@@ -20,6 +20,7 @@ import { accessView, requireWorkspaceSession } from "@/lib/auth/session";
 import { routeFor } from "@/lib/approvals/journals";
 import { dayLabel, recurringViews } from "@/lib/adjust/recurring";
 import { RecurringList, RepeatJournal } from "@/components/app/recurring-journals";
+import { dimensionOptions } from "@/lib/dimensions";
 
 export const metadata = { title: "Jurnal Penyesuaian" };
 
@@ -64,6 +65,9 @@ export default async function NewJournalPage({ params, searchParams }: { params:
     prisma.recurringJournal.findMany({ where: { clientId: client.id, stoppedAt: null, sourceEntryId: { not: null } }, select: { sourceEntryId: true } }),
   ]);
   const repeatedIds = new Set(repeated.map((r) => r.sourceEntryId));
+  const dimensions = await dimensionOptions(prisma, client.id);
+  const activeTags = new Set([...dimensions.departments, ...dimensions.projects].map((d) => d.id));
+  const tag = (id: string | null) => (id && activeTags.has(id) ? id : undefined); // an archived one is not copied: postJournal() refuses it
   const kotakHref = (d: Date) => withParams(`/clients/${client.id}/approvals`, { period: `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`, jenis: "kedua" });
   const recent = await prisma.journalEntry.findMany({
     where: { entity: { clientId: client.id }, kind: "ADJUSTMENT" },
@@ -81,7 +85,7 @@ export default async function NewJournalPage({ params, searchParams }: { params:
           reverse: !!source.reversedBy && +source.reversedBy.date === +firstOfNextMonth(source.date),
           lines: [...source.lines]
             .sort((a, b) => Number(b.debit > 0n) - Number(a.debit > 0n))
-            .map((l) => ({ accountCode: l.account.code, debit: l.debit > 0n ? formatMoney(l.debit, source.entity.functionalCurrency, { bare: true }) : "", credit: l.credit > 0n ? formatMoney(l.credit, source.entity.functionalCurrency, { bare: true }) : "", memo: l.memo ?? "" })),
+            .map((l) => ({ accountCode: l.account.code, debit: l.debit > 0n ? formatMoney(l.debit, source.entity.functionalCurrency, { bare: true }) : "", credit: l.credit > 0n ? formatMoney(l.credit, source.entity.functionalCurrency, { bare: true }) : "", memo: l.memo ?? "", departmentId: tag(l.departmentId), projectId: tag(l.projectId) })),
         }
       : undefined;
   return (
@@ -115,6 +119,7 @@ export default async function NewJournalPage({ params, searchParams }: { params:
               lockedMonths={lockedMonths}
               closeHref={closeHref}
               route={route}
+              dimensions={dimensions}
             />
           </CardContent>
         </Card>

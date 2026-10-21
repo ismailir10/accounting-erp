@@ -3,7 +3,7 @@ import type { Prisma, RecurringJournal } from "@/lib/generated/prisma/client";
 import { recordEvent } from "@/lib/audit";
 import { dateOnly, formatMonthShort, formatPeriod, periodBounds } from "@/lib/format";
 import { LedgerError } from "@/lib/ledger/post";
-import { firstOfNextMonth } from "@/lib/ledger/adjustment";
+import { firstOfNextMonth, storedTags } from "@/lib/ledger/adjustment";
 import { closeLock } from "@/lib/adjust/schedules";
 import type { StoredLine } from "@/lib/approvals/journals";
 
@@ -58,7 +58,7 @@ export async function createRecurring(db: Db, input: { clientId: string; entryId
   // Debits first, as the form shows them; amounts in minor units as a stored request's.
   const lines: StoredLine[] = [...entry.lines]
     .sort((a, b) => Number(b.debit > 0n) - Number(a.debit > 0n))
-    .map((l) => ({ accountCode: l.account.code, debit: l.debit.toString(), credit: l.credit.toString(), ...(l.memo ? { memo: l.memo } : {}) }));
+    .map((l) => ({ accountCode: l.account.code, debit: l.debit.toString(), credit: l.credit.toString(), ...(l.memo ? { memo: l.memo } : {}), ...storedTags(l) }));
   return db.$transaction(async (tx) => {
     await closeLock(tx, input.clientId); // a close running now either sees the template or refuses (`recurringDueBy`)
     const running = await tx.recurringJournal.findFirst({ where: { sourceEntryId: entry.id, stoppedAt: null }, select: { id: true } });

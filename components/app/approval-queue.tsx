@@ -358,6 +358,7 @@ export function ApprovalQueue({
                         <td className="py-1 pr-3">
                           <span className="font-mono text-xs">{l.accountCode}</span> {l.accountName}
                           {l.memo && <span className="block text-xs text-muted-foreground">{l.memo}</span>}
+                          {l.tags && <span className="block text-xs text-muted-foreground">{l.tags}</span>}
                         </td>
                         <td className="w-28 py-1 text-right">{BigInt(l.debit) > 0n && <Money value={BigInt(l.debit)} currency={s.currency} />}</td>
                         <td className="w-28 py-1 text-right">{BigInt(l.credit) > 0n && <Money value={BigInt(l.credit)} currency={s.currency} />}</td>

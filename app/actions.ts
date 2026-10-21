@@ -663,7 +663,7 @@ export async function adjustmentAction(input: {
   entityId: string;
   date: string;
   memo: string;
-  lines: { accountCode: string; debit: string; credit: string; memo?: string }[];
+  lines: { accountCode: string; debit: string; credit: string; memo?: string; departmentId?: string; projectId?: string }[];
   /** An accrual: also post its reversal on the first of the next month (same transaction). */
   reverseNextMonth?: boolean;
 }): Promise<Result<Saved>> {
