@@ -154,3 +154,35 @@ describe("transfers to the group's owner as banks print them", () => {
     expect(r.has("x")).toBe(false);
   });
 });
+
+describe("transfer matcher, a group of three companies (an account per party)", () => {
+  const group = [
+    { entityId: "pt", names: ["PT UJI SEJAHTERA"] },
+    { entityId: "cv", names: ["CV MAJU BERSAMA"] },
+    { entityId: "owner", names: ["ANDI WIJAYA"] },
+  ];
+  const ic = (id: string) => `ic-${id}`;
+  const toCv = line("p1", "pt-bca", "2026-01-05", "TRSF E-BANKING DB 0501/FTSCY/WS1 CV MAJU BERSAMA", -25_000_000n);
+  const fromPt = (id: string, entityId: string) => ({ ...line(id, `${entityId}-bca`, "2026-01-05", "TRSF E-BANKING CR 0501/FTSCY/WS1 PT UJI SEJAHTERA", 25_000_000n), entityId });
+
+  it("a line naming one group company pairs only with that company's line; unpaired, each waits on the named party's account", () => {
+    const r = matchTransfers([toCv, fromPt("o1", "owner")], group, ic);
+    expect([r.get("p1")?.accountCode, r.get("p1")?.matchedTxId, r.get("o1")?.accountCode, r.get("o1")?.matchedTxId]).toEqual(["ic-cv", undefined, "ic-pt", undefined]);
+    // The CV's own receipt from PT pairs: each half on the other's account.
+    const paired = matchTransfers([toCv, fromPt("c1", "cv")], group, ic);
+    expect([paired.get("p1")?.accountCode, paired.get("p1")?.matchedTxId, paired.get("c1")?.accountCode]).toEqual(["ic-cv", "c1", "ic-pt"]);
+  });
+
+  it("a line naming no group company pairs by amount and date as before; with two companies a named line pairs as before", () => {
+    const plain = line("p2", "pt-bca", "2026-01-05", "TRSF E-BANKING DB 0501/FTSCY/WS1", -25_000_000n);
+    expect(matchTransfers([plain, fromPt("o1", "owner")], group, ic).get("p2")).toMatchObject({ accountCode: "ic-owner", matchedTxId: "o1" });
+    // PT's BCA line naming the owner and PT's own Mandiri receipt of the same amount: two companies pair them (1199) as before;
+    // three don't (the line names Andi, the receipt is PT's).
+    const toAndi = line("p3", "pt-bca", "2026-01-05", "TRSF E-BANKING DB 0501/FTSCY/WS1 ANDI WIJAYA", -25_000_000n);
+    const ownIn = line("p4", "pt-mdr", "2026-01-05", "TRSF E-BANKING CR 0501/FTSCY/WS1", 25_000_000n);
+    const two = group.filter((e) => e.entityId !== "cv");
+    expect(matchTransfers([toAndi, ownIn], two, ic).get("p3")).toMatchObject({ accountCode: "1199", matchedTxId: "p4" });
+    const three = matchTransfers([toAndi, ownIn], group, ic).get("p3");
+    expect([three?.accountCode, three?.matchedTxId]).toEqual(["ic-owner", undefined]);
+  });
+});

@@ -298,7 +298,7 @@ ${lines.join("\n")}
 describe("Antar entitas per pihak, tested hard — the transfer matcher", () => {
   beforeEach(resetDb);
 
-  it("DEFECT: PT's line paying the CV pairs with the owner's line from PT of the same amount, and is re-posted onto the owner's account", async () => {
+  it("in a group of three, PT's line paying the CV never pairs with the owner's line from PT of the same amount: it stays on the CV's account", async () => {
     const g = await makeGroup3();
     const bankCode = async (bankAccountId: string) => (await db.bankAccount.findUniqueOrThrow({ where: { id: bankAccountId }, include: { account: true } })).account.code;
     const openBank = async (who: Who, bankAccountId: string, amount: bigint) =>

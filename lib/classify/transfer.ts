@@ -1,5 +1,6 @@
 import type { Classification, ClassifyInput } from "@/lib/classify/types";
 import { ACCOUNT_CODES } from "@/lib/coa/template";
+import { MIN_COMPANIES } from "@/lib/coa/intercompany";
 import { CHANNEL_WORDS, isGenericKey, merchantKey } from "@/lib/import/normalize";
 import { formatDate } from "@/lib/format";
 import { formatRupiah } from "@/lib/money";
@@ -101,7 +102,21 @@ export function matchTransfers(
   const naming = items.filter((i) => looksLikeTransfer(i) && !clean(i));
   const outs = hinted.filter((i) => i.amount < 0n);
   const ins = hinted.filter((i) => i.amount > 0n);
-  const fits = (o: TransferCandidate, i: TransferCandidate) => i.bankAccountId !== o.bankAccountId && i.amount === -o.amount && businessDaysApart(i.date, o.date) <= MATCH_BUSINESS_DAYS;
+  const sameMoney = (o: TransferCandidate, i: TransferCandidate) => i.bankAccountId !== o.bankAccountId && i.amount === -o.amount && businessDaysApart(i.date, o.date) <= MATCH_BUSINESS_DAYS;
+  // A group of three or more keeps an account per company, so a line naming another group company is a transfer with that company:
+  // it pairs only with a line of it (PT paying the CV is never the other half of the owner's receipt from PT). A line naming none pairs
+  // as before; with two companies the other side is implied, as before.
+  const parties = (x: TransferCandidate) => {
+    const d = x.description.toUpperCase();
+    return ownNames.filter((e) => e.entityId !== x.entityId && e.names.some((n) => says(d, n))).map((e) => e.entityId);
+  };
+  const perParty = ownNames.length >= MIN_COMPANIES;
+  const agrees = (a: TransferCandidate, b: TransferCandidate) => {
+    if (!perParty) return true;
+    const named = parties(a);
+    return !named.length || named.includes(b.entityId);
+  };
+  const fits = (o: TransferCandidate, i: TransferCandidate) => sameMoney(o, i) && agrees(o, i) && agrees(i, o);
   const candidatesOf = new Map(outs.map((o) => [o.id, ins.filter((i) => fits(o, i))]));
   const outsFor = (i: TransferCandidate) => outs.filter((o) => candidatesOf.get(o.id)!.includes(i));
   // `a`'s side of a transfer with `b`: its own money moving (1199), or a balance with b's company, on that company's account.
@@ -142,7 +157,7 @@ export function matchTransfers(
   // that names someone else sits on the other side: then it may be that line's money, and the reviewer decides.
   for (const i of hinted) {
     if (result.has(i.id) || !TRANSFER_HINT.test(i.description)) continue;
-    const lookalike = naming.filter((n) => (i.amount < 0n ? fits(i, n) : fits(n, i)));
+    const lookalike = naming.filter((n) => (i.amount < 0n ? sameMoney(i, n) : sameMoney(n, i)));
     const d = i.description.toUpperCase();
     const other = ownNames.find((e) => e.entityId !== i.entityId && e.names.some((n) => says(d, n)));
     const self = ownNames.find((e) => e.entityId === i.entityId && e.names.some((n) => says(d, n)));
