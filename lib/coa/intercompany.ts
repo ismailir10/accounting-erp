@@ -11,20 +11,31 @@ import { ACCOUNT_CODES } from "@/lib/coa/template";
 export const MIN_COMPANIES = 3;
 export const intercompanyName = (shortName: string) => `Piutang/Utang Antar Entitas — ${shortName}`;
 
-/** Creates the missing per-company accounts of a client of three or more companies (codes 119001–119098, the lowest free). */
+/** Where a company's removal (lib/clients/entities.ts) records its intercompany code in the Riwayat event's `before`. */
+export const INTERCOMPANY_CODE_KEY = "intercompanyAccount";
+
+/**
+ * Creates the missing per-company accounts of a client of three or more companies (codes 119001–119098). A code is never issued twice:
+ * each new one is above the highest the client ever had — its accounts now, and the codes of removed companies kept in their removal's
+ * Riwayat event — so something still naming a removed company's code (a printed journal, an export, a stale request) can never come to
+ * mean another company.
+ */
 export async function ensureIntercompanyAccounts(tx: Tx, clientId: string) {
   const entities = await tx.entity.findMany({ where: { clientId }, select: { id: true, firmId: true, shortName: true }, orderBy: { id: "asc" } });
   if (entities.length < MIN_COMPANIES) return;
   const accounts = await tx.account.findMany({ where: { clientId }, select: { code: true, counterpartyEntityId: true } });
   const have = new Set(accounts.map((a) => a.counterpartyEntityId).filter(Boolean));
-  const used = new Set(accounts.map((a) => a.code));
-  let n = 1;
+  const removed = await tx.$queryRaw<{ code: string }[]>`
+    SELECT DISTINCT before->>${INTERCOMPANY_CODE_KEY} AS code FROM "AuditEvent"
+    WHERE "clientId" = ${clientId} AND kind = 'COMPANY_BANK' AND before->>${INTERCOMPANY_CODE_KEY} IS NOT NULL`;
+  const perCompany = /^1190(\d{2})$/;
+  const ever = [...accounts.map((a) => a.code), ...removed.map((r) => r.code)].map((c) => perCompany.exec(c)).filter((m) => m !== null).map((m) => Number(m[1]));
+  let n = Math.max(0, ...ever);
   for (const e of entities) {
     if (have.has(e.id)) continue;
-    while (n < 99 && used.has(`${ACCOUNT_CODES.INTERCOMPANY}${String(n).padStart(2, "0")}`)) n++;
-    if (n >= 99) return; // 98 companies: past any group Buku serves; transfers then stay on 1190
+    n++;
+    if (n >= 99) return; // 98 codes: past any group Buku serves; transfers then stay on 1190
     const code = `${ACCOUNT_CODES.INTERCOMPANY}${String(n).padStart(2, "0")}`;
-    used.add(code);
     await tx.account.create({
       data: { firmId: e.firmId, clientId, code, name: intercompanyName(e.shortName), type: "ASET", normalBalance: "DEBIT", fsLine: "PIUTANG_LAIN", isIntercompany: true, counterpartyEntityId: e.id },
     });

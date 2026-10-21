@@ -112,7 +112,7 @@ describe("Antar entitas per pihak, tested hard — companies added and removed",
     expect([fsLine(ptOwn, "PIUTANG_LAIN"), ptOwn.totals.assets, (await balanceSheet(db, all, asOf)).totals.assets]).toEqual([100n * J, 500n * J, 700n * J]);
   });
 
-  it("DEFECT: a company is removed while a waiting journal names its intercompany account; its code goes to the next company and the approval posts there", async () => {
+  it("a company is not removed while a waiting journal names its intercompany account, so the approval can never post to the next company", async () => {
     const g = await makeGroup3();
     const maker = await addMember(g.firm.id, "AKUNTAN", { clients: [g.client.id] });
     const boss = await addMember(g.firm.id, "ADMIN", { name: "boss" });
@@ -138,6 +138,26 @@ describe("Antar entitas per pihak, tested hard — companies added and removed",
     // Right behaviour: the removal is refused while a waiting journal (or a Jurnal berulang template) names the company's account, as an
     // account archive is refused for the same reason (rule 23); a loan to the CV must never become a loan to PT Baru.
     expect({ removal, landedOn }).toEqual({ removal: "refused", landedOn: null });
+  });
+
+  it("a rule naming a company's intercompany account holds its removal; a removed company's code is never issued again", async () => {
+    const g = await makeGroup3();
+    const codes = async () => (await db.account.findMany({ where: { clientId: g.client.id, counterpartyEntityId: { not: null } }, select: { code: true } })).map((a) => a.code).sort();
+    // Three companies: 119001–119003, one each.
+    expect(await codes()).toEqual(["119001", "119002", "119003"]);
+    const cvCode = (await account(g, "@cv")).code;
+    // A client rule files "CV MAJU" to the CV's account: no journal line on it, but the rule would file to whatever takes the code next.
+    const rule = await db.rule.create({ data: { firmId: g.firm.id, clientId: g.client.id, pattern: "CV MAJU", accountCode: cvCode, source: "USER" } });
+    await expect(removeEntity(db, { firmId: g.firm.id, clientId: g.client.id, entityId: g.cv.entity.id })).rejects.toThrow(/masih dipakai: 1 aturan klasifikasi ke akun ini/);
+    await db.rule.delete({ where: { id: rule.id } });
+    await removeEntity(db, { firmId: g.firm.id, clientId: g.client.id, entityId: g.cv.entity.id });
+    expect((await codes()).includes(cvCode)).toBe(false);
+    // The next company gets the code above the highest ever issued (119004), never the CV's freed one; removed again, the next gets 119005.
+    const baru = await addEntity(db, g.firm.id, g.client.id, { name: "PT Baru Jaya", shortName: "PT Baru", kind: "PT", npwp: "", banks: [] });
+    expect((await db.account.findFirstOrThrow({ where: { clientId: g.client.id, counterpartyEntityId: baru.id } })).code).toBe("119004");
+    await removeEntity(db, { firmId: g.firm.id, clientId: g.client.id, entityId: baru.id });
+    const lagi = await addEntity(db, g.firm.id, g.client.id, { name: "PT Lagi Jaya", shortName: "PT Lagi", kind: "PT", npwp: "", banks: [] });
+    expect((await db.account.findFirstOrThrow({ where: { clientId: g.client.id, counterpartyEntityId: lagi.id } })).code).toBe("119005");
   });
 
   it("a removed company's account goes with it, a rename follows, and a client of three companies with intercompany lines can be deleted", async () => {
