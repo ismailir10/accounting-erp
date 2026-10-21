@@ -3,7 +3,7 @@ import ExcelJS from "exceljs";
 import { db, makeGroup, resetDb } from "../helpers";
 import { addMember } from "../members";
 import { postAdjustment } from "@/lib/ledger/adjustment";
-import { addAttachments, attachmentsOf, MAX_ATTACHMENTS, removeAttachment } from "@/lib/ledger/attachments";
+import { addAttachments, attachmentsOf, cleanName, MAX_ATTACHMENTS, removeAttachment } from "@/lib/ledger/attachments";
 import { importStatement } from "@/lib/import/pipeline";
 import { reviewTransaction } from "@/lib/review";
 import { removeLedgerImport, removeStatementImport } from "@/lib/imports/remove";
@@ -11,6 +11,7 @@ import { importSourceAccounts, postImport, stageImport } from "@/lib/ledger-impo
 import { acceptMappings, suggestMappings } from "@/lib/ledger-import/mapping";
 import { deleteClient } from "@/lib/clients/delete";
 import { MAX_UPLOAD_BYTES } from "@/lib/upload";
+import { closeLock } from "@/lib/adjust/schedules";
 import { journalRegister } from "@/lib/reports/journal-register";
 import { journalWorkbook } from "@/lib/reports/ledger-workbook";
 import { dateOnly } from "@/lib/format";
@@ -63,7 +64,7 @@ describe("lampiran jurnal: limits", () => {
     expect(await db.journalAttachment.count({ where: { entryId: e.id } })).toBe(10);
   });
 
-  it("DEFECT: two uploads at once each pass the ten-file check and the journal ends with twelve lampiran", async () => {
+  it("two uploads at once are counted under the journal's row lock: one is refused and the journal keeps at most ten lampiran", async () => {
     // 0 on the journal; two tabs each add 6 files. addAttachments reads the count (0) outside its transaction and nothing serialises the
     // two, so 0 + 6 ≤ 10 passes twice and the journal holds 12. The rule is "10 per journal": one of the two must be refused, ≤ 10 stay.
     // To make the interleaving certain (it happens on its own only sometimes), a third session holds the journal row while both uploads
@@ -92,7 +93,7 @@ describe("lampiran jurnal: limits", () => {
     expect(results.filter((r) => r.status === "rejected").length).toBe(1);
   });
 
-  it("DEFECT: a PDF uploaded as 'bukti.html' is served for download as 'bukti.html', not with the extension its bytes say", async () => {
+  it("a PDF uploaded as 'bukti.html' is stored and served with the extension its bytes say; a name already saying its type keeps it", async () => {
     // cleanName's contract: "the uploaded name without a path or control characters, with the extension its bytes say". The bytes are a
     // PDF (application/pdf), so the stored and downloaded name must end in .pdf — a file that saves to disk as .html (or .exe, .svg) opens
     // in another program than the type Buku checked. Expected e.g. "bukti.html.pdf" or "bukti.pdf"; it keeps "bukti.html".
@@ -100,6 +101,13 @@ describe("lampiran jurnal: limits", () => {
     const e = await journal(g);
     const [a] = await addAttachments(db, { clientId: g.client.id, entryId: e.id, files: [{ name: "bukti.html", data: PDF }] });
     expect(a.fileName).toMatch(/\.pdf$/);
+    expect([cleanName("bukti.html", "pdf"), cleanName("nota 12.08.2026", "pdf"), cleanName("Scan.PDF", "pdf"), cleanName("foto.JPEG", "jpg"), cleanName("foto.png", "jpg")]).toEqual([
+      "bukti.html.pdf",
+      "nota 12.08.2026.pdf",
+      "Scan.PDF",
+      "foto.JPEG",
+      "foto.png.jpg",
+    ]);
   });
 });
 
@@ -119,6 +127,38 @@ describe("lampiran jurnal: removal follows the month", () => {
     expect((await attachmentsOf(db, [e.id])).get(e.id)!.map((x) => x.fileName)).toEqual(["n1.pdf", "susulan0.pdf"]);
     // The ledger never moved.
     expect(await db.journalLine.count()).toBe(2);
+  });
+});
+
+describe("lampiran jurnal: removal and a close at once", () => {
+  beforeEach(resetDb);
+
+  it("a removal that read the month open while a close was locking it is checked again under the close lock and refused", async () => {
+    // A close holds the client's close lock and is about to lock August; the removal's first read still says open. It must wait for the
+    // close and then see August closed, not delete evidence of a journal in a closed month.
+    const g = await makeGroup();
+    const e = await journal(g, 8);
+    const [a] = await addAttachments(db, { clientId: g.client.id, entryId: e.id, files: files(1) });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let held!: () => void;
+    const holding = new Promise<void>((r) => (held = r));
+    const close = db.$transaction(async (tx) => {
+      await closeLock(tx, g.client.id);
+      held();
+      await gate;
+      await tx.period.update({ where: { clientId_year_month: { clientId: g.client.id, year: 2026, month: 8 } }, data: { status: "LOCKED" } });
+    }, { timeout: 30_000 });
+    await holding;
+    const removal = removeAttachment(db, { clientId: g.client.id, attachmentId: a.id }).then(
+      () => "removed",
+      (err: Error) => err.message,
+    );
+    await waitForLockWaiters(1);
+    release();
+    await close;
+    expect(await removal).toBe("Agustus 2026 sudah ditutup: lampiran tetap bersama jurnalnya. Buka kembali bulan itu dulu untuk menghapusnya.");
+    expect(await db.journalAttachment.count({ where: { entryId: e.id } })).toBe(1);
   });
 });
 

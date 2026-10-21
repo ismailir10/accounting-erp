@@ -2,6 +2,7 @@ import type { Db } from "@/lib/db";
 import { recordEvent } from "@/lib/audit";
 import { formatDate, formatPeriod } from "@/lib/format";
 import { lockedAfter } from "@/lib/ledger/post";
+import { closeLock } from "@/lib/adjust/schedules";
 import { MAX_UPLOAD_BYTES } from "@/lib/upload";
 
 /**
@@ -23,10 +24,18 @@ const KINDS: { type: string; ext: string; magic: number[] }[] = [
 /** The file's type from its first bytes, or null when it is not a PDF, JPG or PNG. */
 export const sniff = (data: Buffer) => KINDS.find((k) => k.magic.every((b, i) => data[i] === b)) ?? null;
 
-/** A safe download name: the uploaded name without a path or control characters, with the extension its bytes say. */
+/** Name extensions that say each sniffed type (`KINDS[].ext`). */
+const SAME_TYPE: Record<string, string[]> = { pdf: ["pdf"], jpg: ["jpg", "jpeg"], png: ["png"] };
+
+/**
+ * A safe download name: the uploaded name without a path or control characters, with the extension its bytes say. The name's own
+ * extension stays only when it says the same type ("nota.JPEG" for a JPG); any other ("bukti.html" holding a PDF) gets the right one
+ * appended ("bukti.html.pdf"), so the saved file opens as the type Buku checked.
+ */
 export function cleanName(name: string, ext: string) {
   const base = (name.split(/[\\/]/).pop() ?? "").replace(/[\u0000-\u001f"]/g, "").trim().slice(0, 120) || "lampiran";
-  return /\.[a-z0-9]{2,4}$/i.test(base) ? base : `${base}.${ext}`;
+  const own = base.match(/\.([a-z0-9]+)$/i)?.[1].toLowerCase();
+  return own && (SAME_TYPE[ext] ?? [ext]).includes(own) ? base : `${base}.${ext}`;
 }
 
 /** The client's journal, or a refusal: an attachment never crosses clients. */
@@ -53,6 +62,10 @@ export async function addAttachments(db: Db, input: { clientId: string; entryId:
     return { firmId: entry.firmId, entryId: entry.id, fileName: cleanName(f.name, kind.ext), contentType: kind.type, size: f.data.length, data: new Uint8Array(f.data), uploadedById: input.actorId ?? null };
   });
   return db.$transaction(async (tx) => {
+    // Counted again under the journal's row lock: two uploads at once each read the count above before either wrote, so the second
+    // waits here for the first and then sees its files. (No-key lock: the attachment rows' own foreign-key share lock doesn't wait on it.)
+    await tx.$queryRaw`SELECT id FROM "JournalEntry" WHERE id = ${entry.id} FOR NO KEY UPDATE`;
+    if ((await tx.journalAttachment.count({ where: { entryId: entry.id } })) + rows.length > MAX_ATTACHMENTS) throw new AttachmentError(`Satu jurnal paling banyak ${MAX_ATTACHMENTS} lampiran.`);
     const created = [];
     for (const r of rows) created.push(await tx.journalAttachment.create({ data: r, select: { id: true, fileName: true } }));
     await recordEvent(tx, { clientId: input.clientId, entityId: entry.entityId, kind: "ATTACHMENT", subject: `entry:${entry.id}`, summary: `Lampiran ditambahkan ke ${label(entry)}: ${created.map((c) => c.fileName).join(", ")}`, actorId: input.actorId });
@@ -66,10 +79,17 @@ export async function removeAttachment(db: Db, input: { clientId: string; attach
     select: { id: true, fileName: true, entry: { select: { id: true, number: true, memo: true, date: true, entityId: true, period: { select: { year: true, month: true, status: true } } } } },
   });
   if (!a) throw new AttachmentError("Lampiran tidak ditemukan.");
+  const refuse = (closed: { year: number; month: number }) => new AttachmentError(`${formatPeriod(closed.year, closed.month)} sudah ditutup: lampiran tetap bersama jurnalnya. Buka kembali bulan itu dulu untuk menghapusnya.`);
   const p = a.entry.period;
   const closed = p.status === "LOCKED" ? p : await lockedAfter(db, input.clientId, p.year, p.month);
-  if (closed) throw new AttachmentError(`${formatPeriod(closed.year, closed.month)} sudah ditutup: lampiran tetap bersama jurnalnya. Buka kembali bulan itu dulu untuk menghapusnya.`);
+  if (closed) throw refuse(closed);
   await db.$transaction(async (tx) => {
+    // Checked again under the client's close lock, which closing a month takes before it locks: a close running now either committed
+    // (and is seen here) or waits for this removal.
+    await closeLock(tx, input.clientId);
+    const now = await tx.period.findFirstOrThrow({ where: { clientId: input.clientId, year: p.year, month: p.month }, select: { year: true, month: true, status: true } });
+    const raced = now.status === "LOCKED" ? now : await lockedAfter(tx, input.clientId, p.year, p.month);
+    if (raced) throw refuse(raced);
     await tx.journalAttachment.delete({ where: { id: a.id } });
     await recordEvent(tx, { clientId: input.clientId, entityId: a.entry.entityId, kind: "ATTACHMENT", subject: `entry:${a.entry.id}`, summary: `Lampiran dihapus dari ${label(a.entry)}: ${a.fileName}`, actorId: input.actorId });
   });
