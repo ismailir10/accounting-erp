@@ -64,13 +64,13 @@ export function DimensionsCard({ clientId, rows, canEdit }: { clientId: string; 
               {list.length === 0 ? (
                 <p className="px-6 text-sm text-muted-foreground">Belum ada {LABEL[kind].toLowerCase()}.</p>
               ) : (
-                <Table>
+                <Table className="table-fixed">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-32 pl-6">Kode</TableHead>
+                      <TableHead className="w-28 pl-6 sm:w-36">Kode</TableHead>
                       <TableHead>Nama</TableHead>
-                      <TableHead className="hidden text-right md:table-cell">Baris jurnal</TableHead>
-                      {canEdit && <TableHead className="pr-6"><span className="sr-only">Tindakan</span></TableHead>}
+                      <TableHead className="hidden w-28 text-right md:table-cell">Baris jurnal</TableHead>
+                      {canEdit && <TableHead className="w-32 pr-6 sm:w-64"><span className="sr-only">Tindakan</span></TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -84,7 +84,7 @@ export function DimensionsCard({ clientId, rows, canEdit }: { clientId: string; 
                         <TableCell className="num hidden text-right text-muted-foreground md:table-cell">{d.lines ? d.lines.toLocaleString("id-ID") : "–"}</TableCell>
                         {canEdit && (
                           <TableCell className="pr-6 text-right">
-                            <div className="flex justify-end gap-1">
+                            <div className="flex flex-wrap justify-end gap-1">
                               {!d.archived && (
                                 <Button variant="ghost" size="sm" disabled={busy === d.id} onClick={() => setRenaming(d)} aria-label={`Ubah nama ${d.code}`}>
                                   Ubah nama

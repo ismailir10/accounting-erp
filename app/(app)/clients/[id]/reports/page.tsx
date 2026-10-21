@@ -341,8 +341,8 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
           <TabsContent key={d.kind} value={dimTab(d.kind)}>
             <DimensionPlCard
               pl={d}
-              title={`${names.income} per ${DIMENSION_LABEL[d.kind].toLowerCase()}`}
-              description={`${ytdRange ? ytdLabel : `${monthName(period.month)} ${period.year}`} · kolom Total sama dengan ${names.income} · Dinyatakan dalam ${currencyName(currency)}`}
+              title={`Laba Rugi per ${DIMENSION_LABEL[d.kind].toLowerCase()}`}
+              description={`${ytdRange ? ytdLabel : `${monthName(period.month)} ${period.year}`} · kolom Total sama dengan Laba Rugi · Dinyatakan dalam ${currencyName(currency)}`}
               currency={currency}
               ranges={[
                 { href: withParams(`${base}/reports`, { period: period.key, entity: scope.value, tab: dimTab(d.kind) }), label: "Bulan ini", active: !ytdRange },
