@@ -141,6 +141,12 @@ enum ClassifyMethod {
   MANUAL
 }
 
+/// Departemen & Proyek (cycle 2026-10-21-departemen-proyek): the two analysis dimensions a journal line may carry.
+enum DimensionKind {
+  DEPARTEMEN
+  PROYEK
+}
+
 enum EntryKind {
   OPENING
   BANK
@@ -424,6 +430,7 @@ model Client {
   /// Modules turned on in the client menu (lib/clients/modules.ts): receivables · inventory · assets · leases · benefits. Presentation only.
   modules            String[]             @default([])
   recurringJournals  RecurringJournal[]
+  dimensions         Dimension[]
 
   @@index([firmId])
 }
@@ -716,6 +723,11 @@ model BankTxSplit {
 model BankTransaction {
   id            String              @id @default(cuid())
   firmId        String
+  /// Departemen & Proyek of the classification side, set in Review (posted on the line's non-bank, non-tax leg).
+  departmentId  String?
+  department    Dimension?          @relation("BankTxDepartment", fields: [departmentId], references: [id], onDelete: Restrict)
+  projectId     String?
+  project       Dimension?          @relation("BankTxProject", fields: [projectId], references: [id], onDelete: Restrict)
   importId      String
   import        StatementImport     @relation(fields: [importId], references: [id])
   bankAccountId String
@@ -871,6 +883,27 @@ model RecurringJournal {
   @@index([clientId])
 }
 
+/// Departemen & Proyek (cycle 2026-10-21-departemen-proyek): a client's departments and projects, set up on Pengaturan klien. An archived
+/// one leaves the pickers and stays in reports; one in use is never deleted.
+model Dimension {
+  id              String            @id @default(cuid())
+  firmId          String
+  clientId        String
+  client          Client            @relation(fields: [clientId], references: [id])
+  kind            DimensionKind
+  code            String
+  name            String
+  archivedAt      DateTime?
+  createdAt       DateTime          @default(now())
+  departmentLines JournalLine[]     @relation("LineDepartment")
+  projectLines    JournalLine[]     @relation("LineProject")
+  departmentTxs   BankTransaction[] @relation("BankTxDepartment")
+  projectTxs      BankTransaction[] @relation("BankTxProject")
+
+  @@unique([clientId, kind, code])
+  @@index([clientId])
+}
+
 /// Lampiran jurnal (cycle 2026-10-20-lampiran-arsip): a receipt, invoice or approval kept with a journal. Evidence only: it never
 /// changes a number and is never sent to a model. PDF, JPG or PNG up to 5 MB, at most 10 per journal (lib/ledger/attachments.ts).
 model JournalAttachment {
@@ -921,6 +954,11 @@ model JournalLine {
   currency        String?
   fxAmount        BigInt?
   fxRate          String?
+  /// Departemen & Proyek: labels for analysis (Laba Rugi per departemen / proyek); they never change a balance.
+  departmentId    String?
+  department      Dimension?     @relation("LineDepartment", fields: [departmentId], references: [id], onDelete: Restrict)
+  projectId       String?
+  project         Dimension?     @relation("LineProject", fields: [projectId], references: [id], onDelete: Restrict)
 
   @@index([entityId, accountId, date])
   @@index([accountId])

@@ -10,7 +10,7 @@ import { nextNumber, numberPrefix } from "@/lib/ledger/number";
  *  2. period open (locked periods reject every write), and no later month of the client locked: a journal dated before a closed month
  *     changes that month's Neraca (an earlier month may stay open only while it is empty, `lockPeriod`)
  *  3. every account belongs to the entity's client COA, is not archived (Arsip akun) and is not the entity's own intercompany account;
- *     every source account belongs to the entity
+ *     every source account belongs to the entity; a line's department and project are the client's, of their kind, not archived
  *  4. foreign-currency lines: currency ≠ functional, round(fxAmount × fxRate) = amount ± 1 minor unit (rule 6b)
  * and gives the entry its nomor bukti (lib/ledger/number.ts) in the same transaction.
  * Amounts are minor units of the entity's functional currency (IDR = whole Rupiah).
@@ -27,6 +27,9 @@ export type PostLine = {
   sourceRef?: string | null;
   /** Foreign-currency line: original currency, its (unsigned) amount in minor units and the rate (functional per 1 unit). */
   fx?: { currency: string; amount: bigint; rate: string; revaluation?: boolean } | null;
+  /** Departemen & Proyek (lib/dimensions): labels for analysis, never a balance; one of each kind at most. */
+  departmentId?: string | null;
+  projectId?: string | null;
 };
 
 export type PostInput = {
@@ -61,14 +64,14 @@ export async function getOrCreatePeriod(tx: Tx, firmId: string, clientId: string
 
 /** Merge lines on the same account+side and drop zero lines. Keeps entries compact. */
 function normalizeLines(lines: PostLine[]) {
-  const out: (Required<Pick<PostLine, "accountId">> & { debit: bigint; credit: bigint; memo?: string; sourceAccountId: string | null; sourceRef: string | null; fx: PostLine["fx"] })[] = [];
+  const out: (Required<Pick<PostLine, "accountId">> & { debit: bigint; credit: bigint; memo?: string; sourceAccountId: string | null; sourceRef: string | null; fx: PostLine["fx"]; departmentId: string | null; projectId: string | null })[] = [];
   for (const l of lines) {
     const debit = l.debit ?? 0n;
     const credit = l.credit ?? 0n;
     if (debit < 0n || credit < 0n) throw new LedgerError("Nominal debit/kredit tidak boleh negatif");
     if (debit > 0n && credit > 0n) throw new LedgerError("Satu baris jurnal hanya boleh debit ATAU kredit");
     if (debit === 0n && credit === 0n) continue;
-    out.push({ accountId: l.accountId, debit, credit, memo: l.memo, sourceAccountId: l.sourceAccountId ?? null, sourceRef: l.sourceRef ?? null, fx: l.fx ?? null });
+    out.push({ accountId: l.accountId, debit, credit, memo: l.memo, sourceAccountId: l.sourceAccountId ?? null, sourceRef: l.sourceRef ?? null, fx: l.fx ?? null, departmentId: l.departmentId ?? null, projectId: l.projectId ?? null });
   }
   return out;
 }
@@ -116,6 +119,19 @@ async function validate(tx: Tx, input: Pick<PostInput, "entityId" | "lines">) {
     }
   }
 
+  // Departemen & Proyek: the client's own, of the right kind, not archived.
+  const dimIds = [...new Set(lines.flatMap((l) => [l.departmentId, l.projectId]).filter((x): x is string => !!x))];
+  if (dimIds.length) {
+    const dims = new Map((await tx.dimension.findMany({ where: { id: { in: dimIds } } })).map((d) => [d.id, d]));
+    for (const l of lines) {
+      for (const [id, kind] of [[l.departmentId, "DEPARTEMEN"], [l.projectId, "PROYEK"]] as const) {
+        if (!id) continue;
+        const d = dims.get(id);
+        if (!d || d.clientId !== entity.clientId || d.kind !== kind) throw new LedgerError(kind === "DEPARTEMEN" ? "Departemen tidak termasuk klien ini." : "Proyek tidak termasuk klien ini.");
+        if (d.archivedAt) throw new LedgerError(`${kind === "DEPARTEMEN" ? "Departemen" : "Proyek"} ${d.code} ${d.name} sudah diarsipkan. Aktifkan lagi di Pengaturan klien untuk memakainya.`);
+      }
+    }
+  }
   const sourceIds = [...new Set(lines.map((l) => l.sourceAccountId).filter((x): x is string => !!x))];
   if (sourceIds.length) {
     const sources = await tx.sourceAccount.findMany({ where: { id: { in: sourceIds } }, select: { entityId: true } });
@@ -210,6 +226,8 @@ export async function postJournal(tx: Tx, input: PostInput) {
           currency: l.fx?.currency ?? null,
           fxAmount: l.fx?.amount ?? null,
           fxRate: l.fx?.rate ?? null,
+          departmentId: l.departmentId,
+          projectId: l.projectId,
         })),
       },
     },

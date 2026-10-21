@@ -64,6 +64,7 @@ export async function deleteClient(db: Db, input: { firmId: string; clientId: st
       await tx.ckpnSetting.deleteMany({ where: byEntity });
       await tx.bankTransaction.deleteMany({ where: { bankAccountId: { in: bankIds } } });
       await tx.statementImport.deleteMany({ where: { bankAccountId: { in: bankIds } } });
+      await tx.dimension.deleteMany({ where: { clientId } }); // Departemen & Proyek: after the lines and bank lines that carry them
       await tx.bankAccount.deleteMany({ where: { id: { in: bankIds } } });
       await tx.sourceAccount.deleteMany({ where: { clientId } });
       await tx.ledgerImport.deleteMany({ where: { clientId } }); // checks cascade

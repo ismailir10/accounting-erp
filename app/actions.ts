@@ -81,6 +81,7 @@ import { acceptCheck, LedgerImportError, postImport, stageImport } from "@/lib/l
 import { acceptMappings, MappingError, suggestMappings } from "@/lib/ledger-import/mapping";
 import { infraErrorMessage } from "@/lib/db-errors";
 import { deleteClient, DeleteClientError } from "@/lib/clients/delete";
+import { createDimension, DimensionError, removeDimension, renameDimension, setDimensionArchived } from "@/lib/dimensions";
 import { EntityEditError, removeBankAccount, removeEntity, renameEntity, updateBankAccount } from "@/lib/clients/entities";
 import { AccessError, requireCapability } from "@/lib/auth/session";
 import { AccountEditError, archiveAccount, createAccount, removeAccount, unarchiveAccount, updateAccount } from "@/lib/coa/manage";
@@ -102,7 +103,7 @@ type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; needs
 function fail(e: unknown): { ok: false; error: string; needsPassword?: boolean; needsYear?: boolean; yearGuess?: number | null } {
   if (e instanceof PdfPasswordError) return { ok: false, error: e.message, needsPassword: true };
   if (e instanceof YearNeededError) return { ok: false, error: e.message, needsYear: true, yearGuess: e.guess };
-  if (e instanceof DeleteClientError || e instanceof EntityEditError || e instanceof AccountEditError || e instanceof BudgetError || e instanceof AccessError || e instanceof OrgError || e instanceof ReasoningError || e instanceof ApprovalError || e instanceof AttachmentError) return { ok: false, error: e.message };
+  if (e instanceof DeleteClientError || e instanceof DimensionError || e instanceof EntityEditError || e instanceof AccountEditError || e instanceof BudgetError || e instanceof AccessError || e instanceof OrgError || e instanceof ReasoningError || e instanceof ApprovalError || e instanceof AttachmentError) return { ok: false, error: e.message };
   if (e instanceof ParseError || e instanceof LedgerError || e instanceof CloseError || e instanceof OpeningError || e instanceof FindingError || e instanceof RemoveImportError || e instanceof MoneyError || e instanceof RateError || e instanceof RevaluationError || e instanceof LedgerImportError || e instanceof MappingError || e instanceof EntitySettingsError || e instanceof FormatError || e instanceof SubledgerError || e instanceof FakturError || e instanceof BupotError || e instanceof ChecklistError) return { ok: false, error: e.message };
   const infra = infraErrorMessage(e);
   console.error(e);
@@ -1993,6 +1994,28 @@ export async function archiveAccountAction(clientId: string, accountId: string, 
     const client = await writeClient(clientId);
     const member = await getCurrentMember();
     await (archived ? archiveAccount : unarchiveAccount)(prisma, { clientId: client.id, accountId, actorId: member.id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Departemen & Proyek (lib/dimensions): *Tambah*, *Ubah nama*, *Arsipkan* / *Aktifkan lagi*, *Hapus* (only one nothing carries). Everyday
+ * books work, like the Bagan akun.
+ */
+export async function dimensionAction(
+  clientId: string,
+  input: { op: "create"; kind: string; code: string; name: string } | { op: "rename"; id: string; name: string } | { op: "archive"; id: string; archived: boolean } | { op: "remove"; id: string },
+): Promise<Result> {
+  try {
+    const client = await writeClient(clientId);
+    const actorId = (await getCurrentMember()).id;
+    if (input.op === "create") await createDimension(prisma, { clientId: client.id, kind: input.kind, code: input.code, name: input.name, actorId });
+    else if (input.op === "rename") await renameDimension(prisma, { clientId: client.id, id: input.id, name: input.name, actorId });
+    else if (input.op === "archive") await setDimensionArchived(prisma, { clientId: client.id, id: input.id, archived: input.archived, actorId });
+    else await removeDimension(prisma, { clientId: client.id, id: input.id, actorId });
     revalidatePath(`/clients/${client.id}`, "layout");
     return { ok: true };
   } catch (e) {
