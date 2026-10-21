@@ -1,4 +1,5 @@
 import type { Db, Tx } from "@/lib/db";
+import { lockTags } from "@/lib/dimensions";
 import type { JournalApprovalSource, MemberRole } from "@/lib/generated/prisma/enums";
 import type { Prisma } from "@/lib/generated/prisma/client";
 import { recordEvent } from "@/lib/audit";
@@ -92,6 +93,7 @@ type NewRequest = {
 
 /** Stores the request and its "diajukan" event in `tx` (the caller has checked it could post). */
 async function createRequest(tx: Tx, r: NewRequest) {
+  await lockTags(tx, r.lines); // a removal of a tag it names waits, then sees it (lib/dimensions)
   const a = await tx.journalApproval.create({
     data: {
       firmId: await firmOf(tx, r.clientId),
@@ -175,7 +177,7 @@ export async function submitPrepared(
 /** postPreparedAdjustment's checks without the write: the journal, and with *Balik otomatis* its reversal on the 1st of the next month. */
 async function checkPrepared(tx: Tx, a: PreparedAdjustment) {
   const lines = adjustmentPosting(a.lines);
-  await checkJournal(tx, { entityId: a.entity.id, date: a.date, lines });
+  await checkJournal(tx, { entityId: a.entity.id, date: a.date, lines, recurringId: a.recurring?.id, keepTags: a.keepTags });
   if (!a.reverseNextMonth) return;
   const on = firstOfNextMonth(a.date);
   try {
@@ -352,6 +354,7 @@ async function preparedOf(tx: Db | Tx, a: Request): Promise<PreparedAdjustment> 
     memo: a.memo,
     reverseNextMonth: a.reverseNextMonth,
     lines: await storedPosting(tx, a.clientId, a.lines),
+    keepTags: true,
     ...(a.recurringId && a.recurringMonth ? { recurring: { id: a.recurringId, month: a.recurringMonth } } : {}),
   };
 }

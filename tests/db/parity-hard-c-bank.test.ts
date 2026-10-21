@@ -81,18 +81,18 @@ describe("probe C: tags on bank lines", () => {
     expect(await nets(t.id)).toEqual({ [`6190|${B.id}|-`]: 10_000_000n, "2141|-|-": -200_000n, [`${bankCode}|-|-`]: -9_800_000n });
   });
 
-  it("PPh 4(2) on a receipt (rule 3b, as chosen): the 8200 final-tax expense stays untagged, so it lands in Tanpa departemen", async () => {
+  it("PPh 4(2) on a receipt: the 8200 final-tax expense is the income's, so it carries Outlet A (decided in round nine)", async () => {
     const { g, A } = await setup();
     await load(g, ["03/08/2026;TERIMA SEWA RUKO OUTLET A;0,00;9.000.000,00;109.000.000,00"]);
     const t = await line("SEWA RUKO");
-    // Received net 9.000.000 with PPh 4(2) 1.000.000 withheld: 4100 Cr 10.000.000 (A) / 8200 Dr 1.000.000 (untagged) / bank Dr 9.000.000.
+    // Received net 9.000.000 with PPh 4(2) 1.000.000 withheld: 4100 Cr 10.000.000 (A) / 8200 Dr 1.000.000 (A) / bank Dr 9.000.000.
     await reviewTransaction(db, { bankTxId: t.id, accountCode: "4100", taxTag: null, withholding: { kind: "PPH_4_2", amount: 1_000_000n }, tags: { departmentId: A.id, projectId: null } });
     const scope = { clientId: g.client.id, entityIds: [g.pt.entity.id] };
     const pl = await incomeByDimension(db, scope, dateOnly(2026, 8, 1), dateOnly(2026, 8, 31), "DEPARTEMEN");
     const net = pl.rows.find((r) => r.type === "subtotal" && r.label === "Laba bersih") as { amounts: bigint[]; total: bigint };
-    // Columns [Outlet A, Tanpa departemen]: A = 10.000.000; Tanpa = −1.000.000 (the final tax on A's income); Total 9.000.000.
+    // Columns [Outlet A, Tanpa departemen]: A = 10.000.000 − 1.000.000 final tax = 9.000.000; Tanpa 0; Total 9.000.000.
     expect(pl.columns.map((c) => c.code)).toEqual(["OUTLET-A", ""]);
-    expect(net.amounts).toEqual([10_000_000n, -1_000_000n]);
+    expect(net.amounts).toEqual([9_000_000n, 0n]);
     expect(net.total).toBe((await incomeStatement(db, scope, dateOnly(2026, 8, 1), dateOnly(2026, 8, 31))).totals.netProfit);
   });
 

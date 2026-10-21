@@ -1,4 +1,5 @@
 import type { Db, Tx } from "@/lib/db";
+import { lockTags } from "@/lib/dimensions";
 import type { Prisma, RecurringJournal } from "@/lib/generated/prisma/client";
 import { recordEvent } from "@/lib/audit";
 import { dateOnly, formatMonthShort, formatPeriod, periodBounds } from "@/lib/format";
@@ -63,6 +64,7 @@ export async function createRecurring(db: Db, input: { clientId: string; entryId
     await closeLock(tx, input.clientId); // a close running now either sees the template or refuses (`recurringDueBy`)
     const running = await tx.recurringJournal.findFirst({ where: { sourceEntryId: entry.id, stoppedAt: null }, select: { id: true } });
     if (running) throw new LedgerError("Jurnal ini sudah diulang tiap bulan. Lihat Jurnal berulang di bawah.");
+    await lockTags(tx, lines); // a removal of a tag it names waits, then sees it (lib/dimensions)
     const t = await tx.recurringJournal.create({
       data: {
         firmId: entry.firmId,

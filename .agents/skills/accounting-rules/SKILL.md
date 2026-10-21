@@ -93,11 +93,15 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     reversal request of an entry waits, no other reversal of it is taken (a partial unique index keeps one PENDING per entry).
 3b. **Departemen & Proyek are labels, never balances** (`lib/dimensions`, cycle 2026-10-21-departemen-proyek). A client's `Dimension` rows
     (kind DEPARTEMEN | PROYEK, code, name, archived); a `JournalLine` carries at most one of each (`departmentId`, `projectId`). `postJournal()`
-    refuses another client's, the wrong kind, or an archived one — except on a reversal (it mirrors the original's tags, so a per-department
-    column nets out) and on a bank line's re-posting (the line already carries it). A bank line keeps its tags on `BankTransaction` and they go
-    on its classification account only (each split part; never the bank, PPN, withholding or suspense legs); `postBankTransaction` nets by
-    account **and** tags, so changing only a tag posts a RECLASS of the difference as a change of account does (rule 3). Reports filter by tag:
-    the Laba Rugi per departemen / proyek is `incomeStatement` per tag plus *Tanpa …*, so its columns add up to the Laba Rugi on every row.
+    refuses another client's, the wrong kind, or an archived one — except where a tag was stored while active: a reversal (it mirrors the
+    original's tags, so a per-department column nets out), a bank line's re-posting, a schedule's instalment, a Jurnal berulang instalment
+    and an approved request (`keepTags`). Archiving only stops new choices. A bank line keeps its tags on `BankTransaction` and they go on its
+    classification account only (each split part, and a withheld tax that is an expense — final PPh 4(2), 8200; never the bank, PPN,
+    suspense or a tax receivable / payable leg); `postBankTransaction` nets by account **and** tags, so changing only a tag posts a RECLASS of
+    the difference as a change of account does (rule 3). A line still in Review moves nothing (its suggestion is nobody's decision), and a
+    closed month refuses a tag change before anything is written. Reports filter by tag: the Laba Rugi per departemen / proyek is
+    `incomeStatement` per tag plus *Tanpa …*; a mixed-currency group's per-column rounding goes to *Tanpa …*, so the columns add up to the
+    Laba Rugi on every row. Removing a tag locks its row and re-checks; storing a request or template share-locks the tags it names.
     Documents carry them too (round ten): an `Invoice` tags its revenue / expense (or asset) line — never the receivable, payable or PPN
     line — and voiding mirrors it; an `AdjustmentSchedule` tags each instalment's income or expense side (a change applies to later
     instalments only; a running schedule keeps posting an archived tag it carries); a fixed asset's tags are its depreciation

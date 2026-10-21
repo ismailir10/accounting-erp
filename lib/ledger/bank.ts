@@ -97,6 +97,13 @@ export async function postBankTransaction(
   // Nets keyed by account and tags: "accountId|departmentId|projectId".
   const tagged = new Set(target.parts ? target.parts.map((p) => p.accountCode) : [target.accountCode]);
   tagged.delete(ACCOUNT_CODES.SUSPENSE);
+  // A withheld tax that is an expense (final PPh 4(2) on a receipt, 8200) belongs to the income it was withheld from: it carries the tags.
+  // A tax that is a receivable or payable (PPh 23 prepaid, PPh 21 owed) is the company's and doesn't.
+  if (target.withholding && target.withholding.amount > 0n) {
+    const code = withholdingAccountCode(target.withholding.kind, bankTx.amount > 0n ? "IN" : "OUT");
+    const acc = await tx.account.findFirst({ where: { clientId, code }, select: { type: true } });
+    if (acc && (acc.type === "BEBAN" || acc.type === "PENDAPATAN")) tagged.add(code);
+  }
   const keyOf = (code: string) => (tagged.has(code) ? `${idOf(code)}|${bankTx.departmentId ?? ""}|${bankTx.projectId ?? ""}` : `${idOf(code)}||`);
   const toLines = (nets: Map<string, bigint>): PostLine[] =>
     [...nets.entries()].map(([key, v]) => {

@@ -47,6 +47,17 @@ export async function incomeByDimension(db: Db, scope: Scope, from: Date, to: Da
   const [total, ...parts] = await Promise.all([incomeStatement(db, scope, from, to), ...columns.map((c) => incomeStatement(db, scope, from, to, { kind, id: c.id }))]);
   const byCode = (items: FsItem[]) => new Map(items.flatMap((i) => i.accounts).map((a) => [a.code, a]));
   const rows: DimensionPlRow[] = [];
+  // Per column, the sum of each section's account rows: the subtotals are built from them, so they add up across as the rows do.
+  const sums = Object.fromEntries(SECTIONS.map((s) => [s.key, columns.map(() => 0n)])) as Record<(typeof SECTIONS)[number]["key"], bigint[]>;
+  const sub = (k: keyof IncomeStatement["totals"]) => {
+    const at = (j: number) => {
+      const gross = sums.revenue[j] - sums.cogs[j];
+      const operating = gross - sums.opex[j];
+      const pbt = operating + sums.other[j];
+      return { revenue: sums.revenue[j], grossProfit: gross, operatingProfit: operating, profitBeforeTax: pbt, netProfit: pbt - sums.tax[j] }[k];
+    };
+    return columns.map((_, j) => at(j));
+  };
   for (const s of SECTIONS) {
     const maps = parts.map((p) => byCode(p[s.key]));
     const totals = byCode(total[s.key]);
@@ -56,10 +67,16 @@ export async function incomeByDimension(db: Db, scope: Scope, from: Date, to: Da
       rows.push({ type: "heading", label: s.label });
       for (const code of codes) {
         const a = totals.get(code) ?? maps.find((m) => m.has(code))!.get(code)!;
-        rows.push({ type: "account", code, name: a.name, amounts: maps.map((m) => m.get(code)?.amount ?? 0n), total: totals.get(code)?.amount ?? 0n });
+        const amounts = maps.map((m) => m.get(code)?.amount ?? 0n);
+        const rowTotal = totals.get(code)?.amount ?? 0n;
+        // A mixed-currency group translates each column on its own and rounds per column; the Rupiah left over goes to *Tanpa …*, so the
+        // columns always add up to the Laba Rugi.
+        amounts[amounts.length - 1] += rowTotal - amounts.reduce((t, v) => t + v, 0n);
+        amounts.forEach((v, j) => (sums[s.key][j] += v));
+        rows.push({ type: "account", code, name: a.name, amounts, total: rowTotal });
       }
     }
-    if (s.after) rows.push({ type: "subtotal", label: s.after.label, amounts: parts.map((p) => p.totals[s.after!.total]), total: total.totals[s.after.total], strong: s.after.strong });
+    if (s.after) rows.push({ type: "subtotal", label: s.after.label, amounts: sub(s.after.total), total: total.totals[s.after.total], strong: s.after.strong });
   }
   return { kind, columns, rows, total };
 }
@@ -69,7 +86,7 @@ export async function dimensionWorkbook(pl: DimensionPl, meta: WorkbookMeta, fro
   const { wb, sheet, head } = newWorkbook(meta);
   const name = `Laba Rugi per ${DIMENSION_LABEL[pl.kind]}`;
   const ws = sheet(name.slice(0, 31), name, `Untuk periode ${formatDateLong(from)} – ${formatDateLong(to)}`, [44, ...pl.columns.map(() => 18), 18], "RUPIAH", meta.currency);
-  head(ws, ["Akun", ...pl.columns.map((c) => (c.code ? `${c.code} ${c.label}` : c.label)), "Total"]);
+  head(ws, ["Akun", ...pl.columns.map((c) => `${c.code ? `${c.code} ` : ""}${c.label}${c.archived ? " (diarsipkan)" : ""}`), "Total"]);
   const cur = meta.currency ?? "IDR";
   for (const r of pl.rows) {
     if (r.type === "heading") {

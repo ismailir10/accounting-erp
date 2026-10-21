@@ -5,7 +5,7 @@ import { isSimpleGuess, simpleGuess } from "@/lib/classify/fallback";
 import type { Db, Tx } from "@/lib/db";
 import type { TaxTag } from "@/lib/generated/prisma/enums";
 import { postBankTransaction } from "@/lib/ledger/bank";
-import { LedgerError } from "@/lib/ledger/post";
+import { LedgerError, lockedAfter } from "@/lib/ledger/post";
 import { isGenericKey } from "@/lib/import/normalize";
 import { ACCOUNT_CODES, isClassifiable, isIntercompanyCode } from "@/lib/coa/template";
 import { defaultTaxMonth } from "@/lib/tax/masa";
@@ -169,10 +169,16 @@ export async function setBankTagsTx(tx: Tx, args: BankTags & { bankTxId: string;
   const next = { departmentId: args.departmentId || null, projectId: args.projectId || null };
   if (next.departmentId === t.departmentId && next.projectId === t.projectId) return null;
   const dims = await checkBankTags(tx, clientId, t, next);
+  // A closed month (or one before a closed month) keeps its lines as they are, the tags on the row included: a line still in Review posts
+  // nothing here, so postJournal's lock check would never run for it.
+  const month = { year: t.date.getUTCFullYear(), month: t.date.getUTCMonth() + 1 };
+  const closed = (await tx.period.findFirst({ where: { clientId, ...month, status: "LOCKED" }, select: { year: true, month: true } })) ?? (await lockedAfter(tx, clientId, month.year, month.month));
+  if (closed) throw new LedgerError(`${formatPeriod(closed.year, closed.month)} sudah ditutup. Buka kembali bulan itu dulu di Tutup Buku untuk mengubah departemen atau proyek mutasi ini.`);
   await tx.bankTransaction.update({ where: { id: t.id }, data: next });
-  // Re-posted with the line's classification as it stands; postBankTransaction reads the new tags from the line.
+  // Re-posted with the line's classification as it stands; postBankTransaction reads the new tags from the line. A line still in Review
+  // sits on 1999, whose leg carries no tag: nothing to move, and its suggestion (PPN, withholding) is nobody's decision yet.
   let entry = null;
-  if (t.accountCode) {
+  if (t.accountCode && t.status !== "NEEDS_REVIEW") {
     const held = t.whtKind && t.whtAmount > 0n ? { kind: t.whtKind, amount: t.whtAmount } : null;
     const target = t.splits.length ? { accountCode: t.accountCode, parts: t.splits.map((p) => ({ accountCode: p.accountCode, amount: p.amount })) } : { accountCode: t.accountCode, taxTag: t.taxTag, withholding: held };
     entry = await postBankTransaction(tx, t.id, target, { actorId: args.actorId });

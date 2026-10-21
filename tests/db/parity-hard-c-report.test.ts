@@ -143,7 +143,7 @@ describe("probe C: Laba Rugi per departemen", () => {
 
     // The Excel: header = Akun, one column per department ("A Outlet A" …), Tanpa, Total; every page row with the same numbers.
     const x = await excelRows(group, from, to);
-    expect(x.head).toEqual(["Akun", "A Outlet A", "B Outlet B", "C Toko pemilik", "Z Salah pilih", "Tanpa departemen", "Total"]);
+    expect(x.head).toEqual(["Akun", "A Outlet A", "B Outlet B (diarsipkan)", "C Toko pemilik", "Z Salah pilih", "Tanpa departemen", "Total"]);
     expect(x.rows.length).toBe(group.rows.length);
     group.rows.forEach((r, i) => {
       if (r.type === "heading") expect(x.rows[i]).toEqual([r.label]);

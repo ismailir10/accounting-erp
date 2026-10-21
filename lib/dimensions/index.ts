@@ -48,11 +48,18 @@ export async function createDimension(db: Db, input: { clientId: string; kind: s
   const { code, name } = clean(input);
   const client = await db.client.findUniqueOrThrow({ where: { id: input.clientId }, select: { firmId: true } });
   if (await db.dimension.findFirst({ where: { clientId: input.clientId, kind: input.kind, code }, select: { id: true } })) throw new DimensionError(`Kode ${code} sudah dipakai ${DIMENSION_LABEL[input.kind].toLowerCase()} lain.`);
-  return db.$transaction(async (tx) => {
-    const d = await tx.dimension.create({ data: { firmId: client.firmId, clientId: input.clientId, kind: input.kind as DimensionKind, code, name } });
-    await recordEvent(tx, { clientId: input.clientId, kind: "DIMENSION", subject: subject(d.id), summary: `${label(d)} ditambahkan`, after: { code, name }, actorId: input.actorId });
-    return d;
-  });
+  const taken = () => new DimensionError(`Kode ${code} sudah dipakai ${DIMENSION_LABEL[input.kind as DimensionKind].toLowerCase()} lain.`);
+  try {
+    return await db.$transaction(async (tx) => {
+      const d = await tx.dimension.create({ data: { firmId: client.firmId, clientId: input.clientId, kind: input.kind as DimensionKind, code, name } });
+      await recordEvent(tx, { clientId: input.clientId, kind: "DIMENSION", subject: subject(d.id), summary: `${label(d)} ditambahkan`, after: { code, name }, actorId: input.actorId });
+      return d;
+    });
+  } catch (e) {
+    // Two members adding the same code at once: the second meets the unique index.
+    if ((e as { code?: string }).code === "P2002") throw taken();
+    throw e;
+  }
 }
 
 /** A new name (the code stays: it is how the lines and reports name it). */
@@ -80,21 +87,42 @@ export async function setDimensionArchived(db: Db, input: { clientId: string; id
   });
 }
 
-/** *Hapus*: only one no line, bank line, invoice, schedule or stored journal carries (archive it otherwise). */
+/**
+ * *Hapus*: only one no line, bank line, invoice, schedule or stored journal carries (archive it otherwise). Checked again under a lock on
+ * the row, inside the delete: a request or template storing it takes the same row `FOR SHARE` (`lockTags`), and a journal line's foreign
+ * key waits on it, so a removal never leaves a stored line naming nothing.
+ */
 export async function removeDimension(db: Db, input: { clientId: string; id: string; actorId?: string | null }) {
-  const d = await db.dimension.findFirst({ where: { id: input.id, clientId: input.clientId }, include: { _count: { select: { departmentLines: true, projectLines: true, departmentTxs: true, projectTxs: true, departmentInvoices: true, projectInvoices: true, departmentSchedules: true, projectSchedules: true } } } });
-  if (!d) throw new DimensionError("Departemen atau proyek tidak ditemukan.");
-  const used = Object.values(d._count).reduce((t, n) => t + n, 0);
-  const stored = await storedUses(db, input.clientId, d.id);
-  if (used || stored) throw new DimensionError(`${label(d)} sudah dipakai, jadi tidak bisa dihapus. Arsipkan saja agar tidak muncul di pilihan.`);
-  await db.$transaction(async (tx) => {
-    await tx.dimension.delete({ where: { id: d.id } });
-    await recordEvent(tx, { clientId: input.clientId, kind: "DIMENSION", subject: subject(d.id), summary: `${label(d)} dihapus`, before: { code: d.code, name: d.name }, actorId: input.actorId });
-  });
+  const used = (d: { code: string; kind: DimensionKind; name: string }) => new DimensionError(`${label(d)} sudah dipakai, jadi tidak bisa dihapus. Arsipkan saja agar tidak muncul di pilihan.`);
+  try {
+    await db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Dimension" WHERE id = ${input.id} AND "clientId" = ${input.clientId} FOR UPDATE`;
+      const d = await tx.dimension.findFirst({ where: { id: input.id, clientId: input.clientId }, include: { _count: { select: { departmentLines: true, projectLines: true, departmentTxs: true, projectTxs: true, departmentInvoices: true, projectInvoices: true, departmentSchedules: true, projectSchedules: true } } } });
+      if (!d) throw new DimensionError("Departemen atau proyek tidak ditemukan.");
+      if (Object.values(d._count).reduce((t, n) => t + n, 0) || (await storedUses(tx, input.clientId, d.id))) throw used(d);
+      await tx.dimension.delete({ where: { id: d.id } });
+      await recordEvent(tx, { clientId: input.clientId, kind: "DIMENSION", subject: subject(d.id), summary: `${label(d)} dihapus`, before: { code: d.code, name: d.name }, actorId: input.actorId });
+    });
+  } catch (e) {
+    // A journal line naming it committed first: its foreign key keeps the row.
+    if ((e as { code?: string }).code === "P2003") {
+      const d = await db.dimension.findFirst({ where: { id: input.id }, select: { code: true, kind: true, name: true } });
+      if (d) throw used(d);
+    }
+    throw e;
+  }
+}
+
+/** The tags a stored line names (a waiting request, a Jurnal berulang template), share-locked so a removal waits for the store. */
+export async function lockTags(tx: Tx, lines: { departmentId?: string | null; projectId?: string | null }[]) {
+  const ids = [...new Set(lines.flatMap((l) => [l.departmentId, l.projectId]).filter((x): x is string => !!x))];
+  if (!ids.length) return;
+  const held = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "Dimension" WHERE id = ANY(${ids}) FOR SHARE`;
+  if (held.length !== ids.length) throw new DimensionError("Departemen atau proyek di jurnal ini baru saja dihapus. Muat ulang halaman lalu pilih lagi.");
 }
 
 /** Lines stored outside the ledger that name it: a Jurnal berulang template or a journal waiting for approval. */
-async function storedUses(db: Db, clientId: string, id: string) {
+async function storedUses(db: Db | Tx, clientId: string, id: string) {
   const names = (lines: unknown) => Array.isArray(lines) && lines.some((l) => (l as { departmentId?: string; projectId?: string }).departmentId === id || (l as { projectId?: string }).projectId === id);
   const [templates, waiting] = await Promise.all([
     db.recurringJournal.findMany({ where: { clientId }, select: { lines: true } }),

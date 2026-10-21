@@ -27,6 +27,8 @@ export type PreparedAdjustment = {
   reverseNextMonth: boolean;
   /** A Jurnal berulang instalment (lib/adjust/recurring.ts): set on the entry, never on its reversal; once per template and month. */
   recurring?: { id: string; month: number };
+  /** Lines stored before (a request waiting for a second approver): an archived Departemen & Proyek on them still posts. */
+  keepTags?: boolean;
 };
 
 /**
@@ -67,7 +69,7 @@ export const adjustmentPosting = (lines: PreparedAdjustment["lines"]) =>
  */
 export async function postPreparedAdjustment(tx: Tx, a: PreparedAdjustment, actorId?: string | null) {
   const lines = adjustmentPosting(a.lines);
-  const entry = await postJournal(tx, { entityId: a.entity.id, date: a.date, kind: "ADJUSTMENT", memo: a.memo, lines, actorId, recurringId: a.recurring?.id, recurringMonth: a.recurring?.month });
+  const entry = await postJournal(tx, { entityId: a.entity.id, date: a.date, kind: "ADJUSTMENT", memo: a.memo, lines, actorId, recurringId: a.recurring?.id, recurringMonth: a.recurring?.month, keepTags: a.keepTags });
   if (a.reverseNextMonth) {
     const on = firstOfNextMonth(a.date);
     try {

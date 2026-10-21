@@ -66,7 +66,7 @@ describe("probe C: tags on journals and their lifecycle", () => {
     expect([await db.journalEntry.count(), await db.journalApproval.count()]).toEqual([0, 0]);
   });
 
-  it("a request whose tag is archived before approval: approval refused with the reason, the request still waits; reactivated, it posts with the tag", async () => {
+  it("a request whose tag is archived before approval still posts with it (stored while active; archiving only stops new choices)", async () => {
     const { g, A } = await setup();
     const maker = await addMember(g.firm.id, "AKUNTAN", { name: "Andi", clients: [g.client.id] });
     const checker = await addMember(g.firm.id, "AKUNTAN", { name: "Budi", clients: [g.client.id] });
@@ -74,23 +74,22 @@ describe("probe C: tags on journals and their lifecycle", () => {
     const o = await submitAdjustment(db, { ...input(g, { departmentId: A.id }), maker: { id: maker.id, role: "AKUNTAN" } });
     if (o.posted) throw new Error("expected a request");
     await setDimensionArchived(db, { clientId: g.client.id, id: A.id, archived: true });
-    await expect(approveJournal(db, { clientId: g.client.id, approvalId: o.approvalId, approver: { id: checker.id, role: "AKUNTAN" } })).rejects.toThrow("Departemen OUTLET-A Outlet A sudah diarsipkan.");
-    expect((await db.journalApproval.findUniqueOrThrow({ where: { id: o.approvalId } })).status).toBe("PENDING");
-    expect(await db.journalEntry.count()).toBe(0);
-    await setDimensionArchived(db, { clientId: g.client.id, id: A.id, archived: false });
+    // A new journal can't take it; the waiting request, stored while it was active, posts with it (a month can't close while it waits).
+    await expect(postAdjustment(db, input(g, { departmentId: A.id }))).rejects.toThrow("Departemen OUTLET-A Outlet A sudah diarsipkan.");
     const e = await approveJournal(db, { clientId: g.client.id, approvalId: o.approvalId, approver: { id: checker.id, role: "AKUNTAN" } });
     expect((await db.journalLine.findFirstOrThrow({ where: { entryId: e.id, debit: { gt: 0n } } })).departmentId).toBe(A.id);
   });
 
-  it("Jurnal berulang whose tag was archived: the instalment is refused (nothing posted) and stays due", async () => {
+  it("Jurnal berulang whose tag was archived keeps posting it, as a schedule does", async () => {
     const { g, P } = await setup();
     const me = await addMember(g.firm.id, "AKUNTAN", { clients: [g.client.id] });
     const july = await postAdjustment(db, { ...input(g, { projectId: P.id }, dateOnly(2026, 7, 31)), actorId: me.id });
     const t = await createRecurring(db, { clientId: g.client.id, entryId: july.id, actorId: me.id });
     await setDimensionArchived(db, { clientId: g.client.id, id: P.id, archived: true });
-    await expect(postRecurring(db, { clientId: g.client.id, recurringId: t.id, year: 2026, month: 8, maker: { id: me.id, role: "AKUNTAN" } })).rejects.toThrow("Proyek PRJ-01 Proyek satu sudah diarsipkan.");
-    expect(await db.journalEntry.count({ where: { recurringId: t.id } })).toBe(0);
-    expect((await recurringDue(db, g.client.id, 2026, 8)).map((d) => [d.template.id, d.month])).toEqual([[t.id, 8]]);
+    const o = await postRecurring(db, { clientId: g.client.id, recurringId: t.id, year: 2026, month: 8, maker: { id: me.id, role: "AKUNTAN" } });
+    expect(o.posted).toBe(true);
+    expect((await db.journalLine.findFirstOrThrow({ where: { entry: { recurringId: t.id }, debit: { gt: 0n } } })).projectId).toBe(P.id);
+    expect(await recurringDue(db, g.client.id, 2026, 8)).toEqual([]);
   });
 
   it("a tagged reversal is never reversed again; the original's reversal mirrors its tags so the column nets to zero", async () => {
@@ -142,12 +141,13 @@ describe("probe C: tags on journals and their lifecycle", () => {
     expect(led.rows.map((r) => [r.tags, r.balance])).toEqual([["OUTLET-A", "15000000"]]);
   });
 
-  it("removing a department while a request naming it is being stored: the removal must be refused (else the request names a tag that no longer exists)", async () => {
+  it("removing a department while a request naming it is being stored: never a stored request naming a department that no longer exists", async () => {
     const { g, A } = await setup();
     const maker = await addMember(g.firm.id, "AKUNTAN", { name: "Andi", clients: [g.client.id] });
     const checker = await addMember(g.firm.id, "AKUNTAN", { name: "Budi", clients: [g.client.id] });
     await approvalsOn(g);
-    // Interleaving (forced with a row lock held elsewhere): *Hapus* checks "in use" (nothing yet) → the request is stored → the delete runs.
+    // Both race for the department's row (held elsewhere first): the removal locks it FOR UPDATE and re-checks; storing the request
+    // share-locks it (lockTags). Whichever goes first, the other sees it.
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
     let held!: () => void;
@@ -159,17 +159,25 @@ describe("probe C: tags on journals and their lifecycle", () => {
     }, { timeout: 30_000 });
     await holding;
     const removing = settled(removeDimension(db, { clientId: g.client.id, id: A.id }));
-    await blockedOn(`DELETE FROM "public"."Dimension"`);
-    const o = await submitAdjustment(db, { ...input(g, { departmentId: A.id }), maker: { id: maker.id, role: "AKUNTAN" } });
+    await blockedOn(`"Dimension" WHERE id = $1 AND "clientId"`);
+    const storing = settled(submitAdjustment(db, { ...input(g, { departmentId: A.id }), maker: { id: maker.id, role: "AKUNTAN" } }));
+    await blockedOn(`"Dimension" WHERE id = ANY`);
     release();
     await holder;
-    const r = await removing;
-    // Right: the department is still there (removal refused as "sudah dipakai"), and the request approves with its tag.
-    expect(await db.dimension.count({ where: { id: A.id } })).toBe(1);
-    expect(r.ok).toBe(false);
-    if (o.posted) throw new Error("expected a request");
-    const e = await approveJournal(db, { clientId: g.client.id, approvalId: o.approvalId, approver: { id: checker.id, role: "AKUNTAN" } });
-    expect((await db.journalLine.findFirstOrThrow({ where: { entryId: e.id, debit: { gt: 0n } } })).departmentId).toBe(A.id);
+    const [r, o] = await Promise.all([removing, storing]);
+    const exists = (await db.dimension.count({ where: { id: A.id } })) === 1;
+    // Exactly one wins; the loser says why.
+    expect([r.ok, o.ok].filter(Boolean).length).toBe(1);
+    if (exists) {
+      expect(r.ok ? "" : (r.e as Error).message).toMatch("sudah dipakai");
+      const req = o.ok ? o.v : null;
+      if (!req || req.posted) throw new Error("expected a request");
+      const e = await approveJournal(db, { clientId: g.client.id, approvalId: req.approvalId, approver: { id: checker.id, role: "AKUNTAN" } });
+      expect((await db.journalLine.findFirstOrThrow({ where: { entryId: e.id, debit: { gt: 0n } } })).departmentId).toBe(A.id);
+    } else {
+      expect(o.ok ? null : o.e).toBeInstanceOf(DimensionError);
+      expect(await db.journalApproval.count({ where: { clientId: g.client.id } })).toBe(0);
+    }
   });
 
   it("removing a department while a journal carrying it commits: refused with 'sudah dipakai', not a raw foreign-key error", async () => {
@@ -186,7 +194,7 @@ describe("probe C: tags on journals and their lifecycle", () => {
     }, { timeout: 30_000 });
     await holding;
     const removing = settled(removeDimension(db, { clientId: g.client.id, id: A.id }));
-    await blockedOn(`DELETE FROM "public"."Dimension"`);
+    await blockedOn(`"Dimension" WHERE id = $1 AND "clientId"`);
     release();
     await poster;
     const r = await removing;
