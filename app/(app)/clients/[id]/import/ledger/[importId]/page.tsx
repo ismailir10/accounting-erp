@@ -202,7 +202,7 @@ function CheckRow({ c, clientId, posted }: { c: { id: string; severity: "BLOCK" 
         </div>
         {c.refs.length > 0 && <div className="font-mono text-xs break-all text-muted-foreground">{c.refs.slice(0, 8).join(", ")}{c.refs.length > 8 ? ` … (+${c.refs.length - 8})` : ""}</div>}
       </div>
-      {ACCEPTABLE_CHECKS.includes(c.code) && !c.accepted && !posted && <AcceptCheckButton clientId={clientId} checkId={c.id} kind={c.code === "DATE_TYPO" ? "date" : "difference"} />}
+      {ACCEPTABLE_CHECKS.includes(c.code) && !c.accepted && !posted && <AcceptCheckButton clientId={clientId} checkId={c.id} kind={c.code === "DATE_TYPO" ? "date" : c.code === "GL_OPENING_ROWS" ? "skip" : "difference"} />}
     </div>
   );
 }

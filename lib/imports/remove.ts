@@ -60,7 +60,7 @@ async function entriesOf(tx: Tx, where: { bankTransactionId?: { in: string[] }; 
   return {
     ids: entries.map((e) => e.id),
     openings: entries.filter((e) => e.kind === "OPENING").map((e) => ({ entityId: e.entityId, date: e.date })),
-    dated: entries.map((e) => ({ entityId: e.entityId, date: e.date })),
+    dated: entries.map((e) => ({ entityId: e.entityId, date: e.date, createdAt: e.createdAt })),
     lineIds: entries.flatMap((e) => e.lines.map((l) => l.id)),
     // What the import put on each account (debit +), so the log says what its removal took off.
     nets: Object.fromEntries([...nets].filter(([, v]) => v !== 0n).map(([k, v]) => [k, formatMoney(v, cur)])),
@@ -88,16 +88,17 @@ async function dropProposals(tx: Tx, ids: { entryIds: string[]; lineIds: string[
  */
 /**
  * An opening bridge (rule 15a) took the books' movement up to its anchor date into Saldo Awal: removing journals from that span would
- * leave the Neraca at the anchor date no longer equal to its file, silently. The bridge goes first.
+ * leave the Neraca at the anchor date no longer equal to its file, silently. The bridge goes first. Only journals the bridge took in count:
+ * one posted after it inside the span (it already broke the anchor) is not in the bridge, and removing it restores the anchor.
  */
-async function refuseBridgeDependents(tx: Tx, dated: { entityId: string; date: Date }[], ownImportId?: string) {
+async function refuseBridgeDependents(tx: Tx, dated: { entityId: string; date: Date; createdAt: Date }[], ownImportId?: string) {
   if (!dated.length) return;
   const bridges = await tx.journalEntry.findMany({
     where: { entityId: { in: [...new Set(dated.map((d) => d.entityId))] }, kind: "OPENING", ledgerImportId: { not: ownImportId ?? null }, lines: { some: { memo: { contains: "(opening bridge)" } } } },
-    select: { entityId: true, ledgerImport: { select: { fileName: true, periodEnd: true } } },
+    select: { entityId: true, createdAt: true, ledgerImport: { select: { fileName: true, periodEnd: true } } },
   });
   for (const b of bridges) {
-    if (!b.ledgerImport || !dated.some((d) => d.entityId === b.entityId && +d.date <= +b.ledgerImport!.periodEnd)) continue;
+    if (!b.ledgerImport || !dated.some((d) => d.entityId === b.entityId && +d.date <= +b.ledgerImport!.periodEnd && +d.createdAt < +b.createdAt)) continue;
     throw new RemoveImportError(`Saldo awal entitas ini dibangun dari Neraca ${b.ledgerImport.fileName} per ${formatDate(b.ledgerImport.periodEnd)} dengan mutasi buku sampai tanggal itu, termasuk jurnal dari impor ini. Hapus dulu impor Neraca itu, lalu impor ulang setelah buku diperbaiki.`);
   }
 }

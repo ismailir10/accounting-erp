@@ -54,9 +54,18 @@ export type PlanEntry = {
   rounding: bigint;
   /** The residue includes rounding from converting foreign lines (the group balances in every source currency). */
   fxRounding?: boolean;
+  /** A GL file's own opening rows ("Saldo Awal" on its first date, no voucher): staging decides whether they open the books or stay out. */
+  fileOpening?: boolean;
   /** A one-date worksheet's balances before adjustment: the period's own figures at its date, not a Saldo Awal before the books. */
   worksheet?: boolean;
 };
+
+/**
+ * A GL export's opening row (Accurate / Jurnal print each account's balance on the period's first day): no voucher, and the description is
+ * only the opening phrase. Matched whole, so a voucher memo that merely mentions "saldo awal" stays an ordinary journal.
+ */
+const OPENING_ROW = /^(saldo awal|saldo awal periode|saldo sebelumnya|opening balance|beginning balance|balance b\/?f|balance brought forward|brought forward)\.?$/i;
+export const isOpeningRow = (r: Pick<LedgerRow, "voucher" | "description">) => !r.voucher?.trim() && OPENING_ROW.test(r.description.trim());
 
 export type Plan = { entries: PlanEntry[]; checks: Check[]; accounts: Map<string, { entityKey: string; code: string; name: string; previousNames: string[]; balance: bigint; currency: string | null }> };
 
@@ -266,9 +275,14 @@ export function planLedger(
     }
   }
 
-  // Group into entries.
+  // Group into entries. A file's own opening rows (on each entity's first date) form their own group, never mixed with that day's journals.
   const hasVoucher = usable.some((r) => r.voucher);
-  const groups = groupBy(usable, (r) => `${entityKeyOf(r)}|${hasVoucher ? (r.voucher ?? "") : ""}|${r.date!.toISOString().slice(0, 10)}`);
+  const firstDate = new Map<string, number>();
+  for (const r of usable) firstDate.set(entityKeyOf(r), Math.min(firstDate.get(entityKeyOf(r)) ?? Infinity, +r.date!));
+  const opensFile = (r: LedgerRow) => +r.date! === firstDate.get(entityKeyOf(r)) && isOpeningRow(r);
+  // In the voucher slot of the key: Buku's own marker, not a voucher number any export writes.
+  const OPENING_KEY = "<saldo-awal>";
+  const groups = groupBy(usable, (r) => `${entityKeyOf(r)}|${opensFile(r) ? OPENING_KEY : hasVoucher ? (r.voucher ?? "") : ""}|${r.date!.toISOString().slice(0, 10)}`);
   const entries: PlanEntry[] = [];
   const noRate = new Map<string, LedgerRow[]>();
   const missingRate = new Map<string, LedgerRow[]>();
@@ -324,16 +338,18 @@ export function planLedger(
     const fxRounding = converted > 0 && total !== 0n && abs <= BigInt(converted) && [...bySourceCurrency.values()].every((v) => v === 0n);
     const rounding = fxRounding ? lineRounding - total : lineRounding;
     const refs = list.map((r) => r.ref);
+    const fileOpening = key.includes(OPENING_KEY);
     const entry: PlanEntry = {
       key,
       entityKey: ek,
       date,
       ref: rangeRef(refs),
-      memo: `Impor ${list[0].voucher ? `bukti ${list[0].voucher}` : `buku besar ${formatDate(date)}`}`,
+      memo: fileOpening ? `Saldo awal di buku besar ${formatDate(date)}` : `Impor ${list[0].voucher ? `bukti ${list[0].voucher}` : `buku besar ${formatDate(date)}`}`,
       lines,
       imbalance: fxRounding ? 0n : total,
       rounding,
       ...(fxRounding ? { fxRounding: true } : {}),
+      ...(fileOpening ? { fileOpening: true } : {}),
     };
     entries.push(entry);
 
