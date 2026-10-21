@@ -147,7 +147,7 @@ export function SchedulePanel(props: { clientId: string; entities: { id: string;
                       <TableCell className="hidden p-2 text-right sm:table-cell"><Money value={BigInt(s.remaining)} currency={s.currency} /></TableCell>
                       <TableCell className="p-2 pr-3 text-right">
                         {s.status === "BERJALAN" && (departments.length > 0 || projects.length > 0) && (
-                          <Button variant="ghost" size="sm" aria-label={`Departemen & proyek ${s.memo}`} onClick={() => setTagging({ s, departmentId: s.departmentId ?? "", projectId: s.projectId ?? "" })}>Departemen</Button>
+                          <Button variant="ghost" size="sm" aria-label={`Departemen & proyek ${s.memo}`} onClick={() => setTagging({ s, departmentId: s.departmentId ?? "", projectId: s.projectId ?? "" })}>{departments.length && projects.length ? "Departemen & proyek" : departments.length ? "Departemen" : "Proyek"}</Button>
                         )}
                         {s.status === "BERJALAN" && <Button variant="ghost" size="sm" onClick={() => setStopping(s)}>Hentikan</Button>}
                       </TableCell>
