@@ -9,6 +9,7 @@ import { formatMoney, parseMoney, PPN_EFFECTIVE_PERCENT } from "@/lib/money";
 import { recordEvent } from "@/lib/audit";
 import { checkWithholding, withholdingFor } from "@/lib/tax/withholding";
 import { assertAfterOpening } from "@/lib/ledger/opening-date";
+import { invoiceSeries } from "@/lib/ledger/number";
 
 /**
  * Receivable/payable subledger (accounting-rules 5c). An invoice is recorded by the accountant and posts its journal through
@@ -138,7 +139,8 @@ export async function createInvoice(db: Db, input: InvoiceInput) {
           ? [{ accountId: arAp.id, debit: total }, ...(dpp > 0n ? [{ accountId: counter!.id, credit: dpp, ...tags }] : []), ...(ppn > 0n ? [{ accountId: ppnAccount!.id, credit: ppn }] : [])]
           : [...(dpp > 0n ? [{ accountId: counter!.id, debit: dpp, ...tags }] : []), ...(ppn > 0n ? [{ accountId: ppnAccount!.id, debit: ppn }] : []), { accountId: arAp.id, credit: total }];
         const memo = `${sales ? "Faktur" : "Tagihan"} ${number} · ${contactName}`;
-        entryId = (await postJournal(tx, { entityId: entity.id, date: issueDate, kind: "INVOICE", memo, lines, actorId: input.actorId })).id;
+        // Numbered by the document's direction (FJ / FB), never by its lines: a bill may be recharged to a receivable account.
+        entryId = (await postJournal(tx, { entityId: entity.id, date: issueDate, kind: "INVOICE", memo, lines, invoiceSeries: invoiceSeries(input.direction), actorId: input.actorId })).id;
       }
       return tx.invoice.create({
         data: {
@@ -212,6 +214,8 @@ export async function voidInvoice(db: Db, input: { clientId: string; invoiceId: 
           kind: "INVOICE",
           memo: `Batal ${doc} · ${inv.contact.name}: ${reason}`,
           reversesId: inv.entry.id,
+          // In its original's series: FJ / FB as the original was numbered (journals numbered before the direction decided keep theirs).
+          invoiceSeries: inv.entry.number?.startsWith("FJ-") ? "FJ" : inv.entry.number?.startsWith("FB-") ? "FB" : invoiceSeries(inv.direction),
           actorId: input.actorId,
           lines: inv.entry.lines.map((l) => ({ accountId: l.accountId, debit: l.credit, credit: l.debit, memo: l.memo ?? undefined, sourceAccountId: l.sourceAccountId, sourceRef: l.sourceRef, departmentId: l.departmentId, projectId: l.projectId })),
         })

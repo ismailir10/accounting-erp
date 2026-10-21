@@ -5,7 +5,8 @@ import type { EntryKind } from "@/lib/generated/prisma/enums";
  * Nomor bukti (cycle 2026-10-20-paritas-inti): PREFIX-YYMM-NNNN, a series per company, prefix and month, as Indonesian vouchers restart
  * monthly. The prefix says what the journal is: SA Saldo Awal, BM / BK bank masuk / keluar (by the bank line's side), RK reklasifikasi,
  * JP penyesuaian (typed journals, reversals, schedule instalments, tax and lease postings), JI impor buku besar, FJ / FB faktur
- * penjualan / tagihan pembelian (by the receivable or payable line). The migration numbered older journals with the same rules.
+ * penjualan / tagihan pembelian (by the document's direction). The migration numbered older journals with the same rules, telling an
+ * invoice by its receivable line.
  */
 export const NUMBER_PREFIX_LABEL: Record<string, string> = {
   SA: "Saldo awal",
@@ -20,7 +21,17 @@ export const NUMBER_PREFIX_LABEL: Record<string, string> = {
 
 type PrefixLine = { debit: bigint; credit: bigint; account: { isBank: boolean; fsLine: string } };
 
-export function numberPrefix(kind: EntryKind, lines: PrefixLine[]): string {
+export type InvoiceSeries = "FJ" | "FB";
+
+/** An invoice document's series by its direction. */
+export const invoiceSeries = (direction: "SALES" | "PURCHASE"): InvoiceSeries => (direction === "SALES" ? "FJ" : "FB");
+
+/**
+ * The series of a journal. An invoice journal's comes from its document (`series`, given by lib/receivables/invoices.ts: the direction's
+ * for a new document, the original's for a void, so a void stays in its original's series): a purchase bill may be recharged to a
+ * receivable account, so the lines alone can't tell a sale from a bill. Without one, a receivable line means a sale.
+ */
+export function numberPrefix(kind: EntryKind, lines: PrefixLine[], series?: InvoiceSeries | null): string {
   switch (kind) {
     case "OPENING":
       return "SA";
@@ -33,6 +44,7 @@ export function numberPrefix(kind: EntryKind, lines: PrefixLine[]): string {
     case "IMPORTED":
       return "JI";
     case "INVOICE":
+      if (series) return series;
       return lines.some((l) => l.account.fsLine === "PIUTANG_USAHA") ? "FJ" : "FB";
   }
 }

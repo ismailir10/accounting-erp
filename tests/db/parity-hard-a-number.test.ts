@@ -80,7 +80,7 @@ describe("nomor bukti: which prefix each source gets", () => {
     expect(await numberOf(andi.id)).toBe("JP-2608-0001");
   });
 
-  it("DEFECT: a purchase bill whose cost is recharged to a receivable account is numbered FJ (faktur penjualan) instead of FB", async () => {
+  it("a purchase bill whose cost is recharged to a receivable account is numbered FB by its direction, and so is its void", async () => {
     // Tagihan pembelian B-7: Dr 113x Piutang Usaha - Biaya Ditagihkan Ulang 2.000.000 / Cr 2110 Utang Usaha 2.000.000. createInvoice accepts
     // any asset account as a purchase's counter account; numberPrefix() says FJ as soon as any line sits on a PIUTANG_USAHA account. The
     // document is a purchase (direction PURCHASE, payable line on 2110), so its voucher belongs to the FB series: FB-2608-0001. The FB
@@ -89,6 +89,8 @@ describe("nomor bukti: which prefix each source gets", () => {
     const recharge = await createAccount(db, { clientId: g.client.id, fsLine: "PIUTANG_USAHA", name: "Piutang Usaha - Biaya Ditagihkan Ulang" });
     const bill = await createInvoice(db, { clientId: g.client.id, entityId: g.pt.entity.id, direction: "PURCHASE", contactName: "PT Ekspedisi", number: "B-7", issueDate: "2026-08-12", dpp: "2.000.000", counterCode: recharge.code });
     expect(await numberOf(bill.entryId!)).toBe("FB-2608-0001");
+    const voided = await voidInvoice(db, { clientId: g.client.id, invoiceId: bill.id, reason: "dokumen ganda dari pemasok" });
+    expect(await numberOf(voided.voidEntryId!)).toBe("FB-2608-0002");
   });
 });
 

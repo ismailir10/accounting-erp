@@ -2,7 +2,7 @@ import type { Tx } from "@/lib/db";
 import type { EntryKind } from "@/lib/generated/prisma/enums";
 import { formatPeriod } from "@/lib/format";
 import { convertMinor, isCurrency } from "@/lib/fx/currency";
-import { nextNumber, numberPrefix } from "@/lib/ledger/number";
+import { type InvoiceSeries, nextNumber, numberPrefix } from "@/lib/ledger/number";
 
 /**
  * The ONLY writer of JournalEntry/JournalLine. Enforces (accounting-rules):
@@ -52,6 +52,8 @@ export type PostInput = {
   actorId?: string | null;
   /** The entry this one reverses (lib/ledger/reverse.ts); unique, so an entry is reversed once. */
   reversesId?: string;
+  /** An INVOICE entry's nomor bukti series from its document (lib/receivables/invoices.ts): FJ sales, FB purchase; a void its original's. */
+  invoiceSeries?: InvoiceSeries;
   lines: PostLine[];
 };
 
@@ -222,7 +224,7 @@ export async function postJournal(tx: Tx, input: PostInput) {
   const later = await lockedAfter(tx, entity.clientId, period.year, period.month);
   if (later) throw closedAfter(later);
   const byId = new Map(accounts.map((a) => [a.id, a]));
-  const number = await nextNumber(tx, entity.id, numberPrefix(input.kind, lines.map((l) => ({ ...l, account: byId.get(l.accountId)! }))), input.date);
+  const number = await nextNumber(tx, entity.id, numberPrefix(input.kind, lines.map((l) => ({ ...l, account: byId.get(l.accountId)! })), input.invoiceSeries), input.date);
   await lockAccounts(tx, accounts);
 
   return tx.journalEntry.create({
