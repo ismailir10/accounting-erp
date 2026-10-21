@@ -1,4 +1,4 @@
-import type { Db } from "@/lib/db";
+import type { Db, Tx } from "@/lib/db";
 import type { DimensionKind } from "@/lib/generated/prisma/enums";
 import { recordEvent } from "@/lib/audit";
 
@@ -80,11 +80,11 @@ export async function setDimensionArchived(db: Db, input: { clientId: string; id
   });
 }
 
-/** *Hapus*: only one no line, bank line or stored journal carries (archive it otherwise). */
+/** *Hapus*: only one no line, bank line, invoice, schedule or stored journal carries (archive it otherwise). */
 export async function removeDimension(db: Db, input: { clientId: string; id: string; actorId?: string | null }) {
-  const d = await db.dimension.findFirst({ where: { id: input.id, clientId: input.clientId }, include: { _count: { select: { departmentLines: true, projectLines: true, departmentTxs: true, projectTxs: true } } } });
+  const d = await db.dimension.findFirst({ where: { id: input.id, clientId: input.clientId }, include: { _count: { select: { departmentLines: true, projectLines: true, departmentTxs: true, projectTxs: true, departmentInvoices: true, projectInvoices: true, departmentSchedules: true, projectSchedules: true } } } });
   if (!d) throw new DimensionError("Departemen atau proyek tidak ditemukan.");
-  const used = d._count.departmentLines + d._count.projectLines + d._count.departmentTxs + d._count.projectTxs;
+  const used = Object.values(d._count).reduce((t, n) => t + n, 0);
   const stored = await storedUses(db, input.clientId, d.id);
   if (used || stored) throw new DimensionError(`${label(d)} sudah dipakai, jadi tidak bisa dihapus. Arsipkan saja agar tidak muncul di pilihan.`);
   await db.$transaction(async (tx) => {
@@ -101,4 +101,26 @@ async function storedUses(db: Db, clientId: string, id: string) {
     db.journalApproval.findMany({ where: { clientId, status: "PENDING" }, select: { lines: true } }),
   ]);
   return [...templates, ...waiting].filter((x) => names(x.lines)).length;
+}
+
+export type Tags = { departmentId: string | null; projectId: string | null };
+
+/**
+ * A document's Departemen & Proyek (an invoice, a schedule), checked as `postJournal()` checks a line: the client's own, the right kind,
+ * not archived — unless `keep` already carries it (a running schedule keeps the tag it was given). Empty is none.
+ */
+export async function checkTags(db: Db | Tx, clientId: string, input: { departmentId?: string | null; projectId?: string | null }, keep?: Tags): Promise<Tags> {
+  const tags = { departmentId: input.departmentId || null, projectId: input.projectId || null };
+  const ids = [tags.departmentId, tags.projectId].filter((x): x is string => !!x);
+  if (!ids.length) return tags;
+  const dims = new Map((await db.dimension.findMany({ where: { id: { in: ids }, clientId } })).map((d) => [d.id, d]));
+  for (const kind of DIMENSION_KINDS) {
+    const id = kind === "DEPARTEMEN" ? tags.departmentId : tags.projectId;
+    if (!id) continue;
+    const d = dims.get(id);
+    if (!d || d.kind !== kind) throw new DimensionError(`${DIMENSION_LABEL[kind]} tidak termasuk klien ini.`);
+    const kept = kind === "DEPARTEMEN" ? keep?.departmentId : keep?.projectId;
+    if (d.archivedAt && id !== kept) throw new DimensionError(`${label(d)} sudah diarsipkan. Aktifkan lagi di Pengaturan klien untuk memakainya.`);
+  }
+  return tags;
 }

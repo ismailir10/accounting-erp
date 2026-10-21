@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ReceivablesTabs } from "@/components/app/receivables-tabs";
 import { SimpleSelect } from "@/components/app/simple-select";
+import type { JournalDimensions } from "@/components/app/journal-form";
 import { Money } from "@/components/app/money";
 import { StatusPill } from "@/components/app/status";
 import { useAccess } from "@/components/app/access-context";
@@ -29,7 +30,7 @@ import type { AgingView, CandidateView, ComparisonView, InvoiceView, UnsettledLi
 
 type Account = { code: string; name: string };
 type Direction = "SALES" | "PURCHASE";
-type InvoiceForm = { entityId: string; contactName: string; number: string; issueDate: string; dueDate: string; description: string; dpp: string; ppn: string; counterCode: string; arApCode: string; opening: boolean; whtKind: string; whtRate: string; whtAmount: string };
+type InvoiceForm = { entityId: string; contactName: string; number: string; issueDate: string; dueDate: string; description: string; dpp: string; ppn: string; counterCode: string; arApCode: string; opening: boolean; whtKind: string; whtRate: string; whtAmount: string; departmentId: string; projectId: string };
 
 const WORDS = {
   SALES: { party: "Pelanggan", doc: "Faktur", docLower: "faktur", newDoc: "Faktur baru", counter: "Akun pendapatan", arAp: "Akun piutang", money: "penerimaan", lines: "Penerimaan di akun piutang belum dicocokkan" },
@@ -53,6 +54,8 @@ export function Receivables(props: {
   /** Piutang only (cycle 2026-10-17-pengingat-piutang): the reminder text per `entityId:contactId` with an overdue invoice on the date. */
   reminders?: Record<string, string>;
   reminder?: { date: string; monthOpen: boolean; periodKey: string };
+  /** The client's active Departemen & Proyek: the form's pickers show only when there are any. */
+  dimensions?: JournalDimensions;
 }) {
   const router = useRouter();
   const { canWrite } = useAccess();
@@ -88,6 +91,8 @@ export function Receivables(props: {
     whtKind: "",
     whtRate: "",
     whtAmount: "",
+    departmentId: "",
+    projectId: "",
   });
 
   let total = "";
@@ -120,8 +125,8 @@ export function Receivables(props: {
   const submit = async () => {
     if (!form) return;
     setBusy(true);
-    const { whtKind, whtRate, whtAmount, ...rest } = form;
-    const r = await createInvoiceAction({ clientId: props.clientId, direction: props.direction, ...rest, dueDate: form.dueDate || null, ppn: form.ppn || null, ...(whtKind ? { whtKind: whtKind as WithholdingKind, whtRate: whtRate || null, whtAmount: whtAmount || null } : {}) });
+    const { whtKind, whtRate, whtAmount, departmentId, projectId, ...rest } = form;
+    const r = await createInvoiceAction({ clientId: props.clientId, direction: props.direction, ...rest, departmentId: departmentId || null, projectId: projectId || null, dueDate: form.dueDate || null, ppn: form.ppn || null, ...(whtKind ? { whtKind: whtKind as WithholdingKind, whtRate: whtRate || null, whtAmount: whtAmount || null } : {}) });
     setBusy(false);
     if (!r.ok) return void toast.error(r.error);
     toast.success(`${w.doc} ${form.number} dicatat`);
@@ -446,6 +451,18 @@ export function Receivables(props: {
                   <SimpleSelect label={w.counter} value={form.counterCode} onChange={(v) => set({ counterCode: v })} options={props.accounts.counter.map((a) => ({ value: a.code, label: `${a.code} ${a.name}` }))} placeholder="Pilih akun" />
                 </Field>
               )}
+              {props.dimensions?.departments.length ? (
+                <Field>
+                  <FieldLabel>Departemen</FieldLabel>
+                  <SimpleSelect label="Departemen" value={form.departmentId} onChange={(v) => set({ departmentId: v })} options={[{ value: "", label: "Tanpa departemen" }, ...props.dimensions.departments.map((d) => ({ value: d.id, label: `${d.code} · ${d.name}` }))]} />
+                </Field>
+              ) : null}
+              {props.dimensions?.projects.length ? (
+                <Field>
+                  <FieldLabel>Proyek</FieldLabel>
+                  <SimpleSelect label="Proyek" value={form.projectId} onChange={(v) => set({ projectId: v })} options={[{ value: "", label: "Tanpa proyek" }, ...props.dimensions.projects.map((d) => ({ value: d.id, label: `${d.code} · ${d.name}` }))]} />
+                </Field>
+              ) : null}
               <Field>
                 <FieldLabel>{w.arAp}</FieldLabel>
                 <SimpleSelect label={w.arAp} value={form.arApCode} onChange={(v) => set({ arApCode: v })} options={props.accounts.arAp.map((a) => ({ value: a.code, label: `${a.code} ${a.name}` }))} />

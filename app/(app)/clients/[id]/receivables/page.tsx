@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { dimensionOptions } from "@/lib/dimensions";
 import { loadClientPage } from "@/lib/client-page";
 import type { SearchParams } from "@/lib/scope";
 import { formatPeriod, toIsoDate } from "@/lib/format";
@@ -84,6 +85,7 @@ export default async function ReceivablesPage({ params, searchParams }: { params
         <NextStep>Catat {sales ? "faktur penjualan" : "tagihan pembelian"} klien, atau rincian {word} yang sudah ada di Saldo Awal.</NextStep>
       )}
       <Receivables
+        dimensions={await dimensionOptions(prisma, client.id)}
         clientId={client.id}
         direction={direction}
         entities={[...entities].sort((a, b) => Number(a.kind === "PERORANGAN") - Number(b.kind === "PERORANGAN")).map((e) => ({ id: e.id, name: e.name, currency: e.functionalCurrency }))}

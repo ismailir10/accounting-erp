@@ -899,6 +899,10 @@ model Dimension {
   projectLines    JournalLine[]     @relation("LineProject")
   departmentTxs   BankTransaction[] @relation("BankTxDepartment")
   projectTxs      BankTransaction[] @relation("BankTxProject")
+  departmentInvoices  Invoice[]            @relation("InvoiceDepartment")
+  projectInvoices     Invoice[]            @relation("InvoiceProject")
+  departmentSchedules AdjustmentSchedule[] @relation("ScheduleDepartment")
+  projectSchedules    AdjustmentSchedule[] @relation("ScheduleProject")
 
   @@unique([clientId, kind, code])
   @@index([clientId])
@@ -1719,6 +1723,11 @@ model AdjustmentSchedule {
   entries         JournalEntry[] @relation("ScheduleEntries")
   /// The fixed asset this schedule depreciates (accounting-rules 5b).
   asset           FixedAsset?    @relation("AssetSchedule")
+  /// Departemen & Proyek (lib/dimensions): on each instalment's income / expense side only; a change applies to later instalments.
+  departmentId    String?
+  department      Dimension?     @relation("ScheduleDepartment", fields: [departmentId], references: [id], onDelete: Restrict)
+  projectId       String?
+  project         Dimension?     @relation("ScheduleProject", fields: [projectId], references: [id], onDelete: Restrict)
 
   @@index([clientId])
   @@index([entityId])
@@ -1916,6 +1925,11 @@ model Invoice {
   fakturItemCode   String?
   fakturUnit       String?
   fakturItemName   String?
+  /// Departemen & Proyek (lib/dimensions): on the revenue / expense (or asset) line of its journal only.
+  departmentId     String?
+  department       Dimension?          @relation("InvoiceDepartment", fields: [departmentId], references: [id], onDelete: Restrict)
+  projectId        String?
+  project          Dimension?          @relation("InvoiceProject", fields: [projectId], references: [id], onDelete: Restrict)
 
   @@unique([entityId, direction, number])
   @@index([clientId])
