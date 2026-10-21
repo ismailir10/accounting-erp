@@ -44,13 +44,19 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
    Σdebit ≠ Σcredit; an entry must sit in its client's period of its own date, and a line carries its entry's entity and date. A refusal
    there means code went around `postJournal` — fix the caller, never the trigger.
    **Nomor bukti:** every entry gets `number` = `PREFIX-YYMM-NNNN` from its company's series per prefix and month (`lib/ledger/number.ts`:
-   SA, BM/BK by the bank line's side, RK, JP, JI, FJ/FB by the receivable/payable line), taken by `postJournal` in the posting
+   SA, BM/BK by the bank line's side, RK, JP, JI, FJ/FB by the invoice's direction — `invoiceSeries`, a void keeping its original's —
+   else by the receivable/payable line), taken by `postJournal` in the posting
    transaction (`JournalSequence`, row-locked, so a rollback returns the number); the database refuses changing or clearing it.
    **Arsip akun:** `postJournal` refuses an account with `archivedAt` set; pickers, the AI scope (`isClassifiable`) and the import
-   classifier skip it (a rule or memory for it falls through to Review). Archiving (`lib/coa/manage.ts`) needs an editable account with a
-   zero balance-sheet balance, no line in an open month and no running schedule or registered asset.
+   classifier skip it (a rule or memory for it falls through to Review), as do the ledger-import mapping (never suggested, refused when
+   accepted) and accrual proposals. Archiving (`lib/coa/manage.ts`) needs an editable account with a zero balance-sheet balance **in each
+   company's own currency**, no line in an open month, no running schedule or registered asset, and no stored journal naming it (a
+   waiting request, a Jurnal berulang template that still owes a month, a draft proposal); removal counts the same stored journals.
+   `postJournal` re-reads its accounts `FOR KEY SHARE` after taking its number, so an archive racing a post serialises with it.
    **Lampiran jurnal** (`lib/ledger/attachments.ts`) are evidence beside an entry, never ledger data: never read for amounts or sent to a
-   model, removable only while the entry's month and every later month are open; an import whose entries carry one is not removed.
+   model, removable only while the entry's month and every later month are open (re-checked under the close lock); an import whose
+   entries carry one is not removed. The ten-file limit is counted under the journal's row lock; a file keeps its name's extension only
+   when it matches its bytes.
    A bank GL account belongs to one entity (`BankAccount.entityId`): another entity's entry may not use it — money between
    entities goes through 1190 in each entity's own books (rule 10). The only exception clears what older books left there (a
    line moving that entity's balance on the account toward zero); close control `bank-entity:` (REVIEW) shows such leftovers.
@@ -140,9 +146,11 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     stop and create a new one (a stop is checked under a row lock when posting; installments due through the month of the stop stay owed and proposed until posted, later ones are dropped; a stopped accrual still reverses what it posted). An installment stays proposed from its month until posted, in every later month too, unless its month is locked; a schedule with any installment (or reversal) in an already locked month is refused at creation (under a per-client close lock that closing a month also takes; a close refuses if a schedule due by that month, overdue ones included, appeared while its controls ran). Candidates (fixed-asset purchase, prepayment, deferred revenue; never an accrual — see *Usulan akrual* below) are
     deterministic suggestions only; a schedule made from an entry stores that line (`sourceEntryId` + `sourceAccountId`, which it must release: an asset by depreciation — an expense debited, accumulated depreciation or that asset credited — a prepayment or deferred revenue by amortisation, the prepayment on credit, the deferred revenue on debit) and covers only it; schedules made before the line was stored are matched one to one by memo, then amount. A due, unposted installment is a REVIEW control `sched:`.
     **Jurnal berulang** (`lib/adjust/recurring.ts` + `recurring-post.ts`, cycle 2026-10-21-jurnal-berulang): *Ulangi tiap bulan* on a
-    posted Jurnal Penyesuaian (not a reversal, a schedule's or a template's instalment, or a foreign-currency journal) stores a
+    posted Jurnal Penyesuaian (not a reversal, a schedule's or a template's instalment, a foreign-currency journal, or a journal a register
+    owns — `reversalBlocker`; nor one whose lines could never post: an archived account or tag, the company's own 1190NN) stores a
     `RecurringJournal` — company, memo, lines in minor units with their notes, the day (0 = the month's last; a shorter month takes its
-    last day), *Balik otomatis*, start (the next month) and an optional end. Lines never change: stop it and repeat a newer journal. Every
+    last day), *Balik otomatis*, start (the next month, or after the last month an earlier template of the same journal posted or has
+    waiting) and an optional end. Lines never change: stop it and repeat a newer journal. Every
     month from start to end not yet posted is **proposed at read time, posted only by a click** through `submitPrepared` — Jurnal
     Penyesuaian's own route (rule 2a: above the *Jurnal manual* threshold it is a request carrying `recurringId` + `recurringMonth`,
     and the month counts as waiting, not due; a rejection makes it due again) — with `recurringId` + `recurringMonth` on the entry
@@ -397,7 +405,11 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     counterparty apart (no set-off between parties); a scope of several companies reads the balances between them as one (they
     eliminate), a balance with a company outside the scope stays apart. The worksheet eliminates **per pair** (A on B's account against B
     on A's) and the control names every pair that does not mirror; a balance left on 1190 in such a client is REVIEW
-    `intercompany-party` (the way out: a Jurnal Penyesuaian to the party's account). Two companies keep the one 1190.
+    `intercompany-party` (the way out: a Jurnal Penyesuaian to the party's account). Two companies keep the one 1190. A company can't be
+    removed while anything names its 1190NN (a waiting request, a running template, a bank line or split, a rule, a memory), and a code is
+    never issued twice (always above the highest the client ever had). In a group of three or more, a bank line naming a group company
+    pairs only with that company's line. With a group's rates missing, the `intercompany` control is FAIL (it can't be checked), never
+    skipped. A source account never maps to its own company's 1190NN.
 11. PT + owner individual combined is a **management "Gabungan"**, not SAK consolidation. Keep the label + tooltip.
     Gabungan / Beranda are in IDR: non-IDR entities are translated — assets & liabilities at the closing rate, income & expense at
     the period's average rate (the first AVERAGE on or after the period end within the same **financial** year; demanded when the
