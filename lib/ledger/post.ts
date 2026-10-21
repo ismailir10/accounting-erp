@@ -191,6 +191,14 @@ export async function checkJournal(tx: Tx, input: Pick<PostInput, "entityId" | "
   if (later) throw closedAfter(later);
 }
 
+/**
+ * postJournal()'s checks of the lines alone (rules 1, 3, 4 above; no period, no tag exception unless the input names one): a stored
+ * template (Jurnal berulang) is refused when made if its lines could never post. The month is checked when each instalment posts.
+ */
+export async function checkLines(tx: Tx, input: Pick<PostInput, "entityId" | "lines">) {
+  await validate(tx, input);
+}
+
 export async function postJournal(tx: Tx, input: PostInput) {
   const { lines, entity, accounts } = await validate(tx, input);
   const period = await getOrCreatePeriod(tx, entity.firmId, entity.clientId, input.date);

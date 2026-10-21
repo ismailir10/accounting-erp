@@ -3,7 +3,8 @@ import { lockTags } from "@/lib/dimensions";
 import type { Prisma, RecurringJournal } from "@/lib/generated/prisma/client";
 import { recordEvent } from "@/lib/audit";
 import { dateOnly, formatMonthShort, formatPeriod, periodBounds } from "@/lib/format";
-import { LedgerError } from "@/lib/ledger/post";
+import { checkLines, LedgerError } from "@/lib/ledger/post";
+import { REVERSAL_OWNERS, reversalBlocker } from "@/lib/ledger/reverse";
 import { firstOfNextMonth, storedTags } from "@/lib/ledger/adjustment";
 import { closeLock } from "@/lib/adjust/schedules";
 import type { StoredLine } from "@/lib/approvals/journals";
@@ -42,7 +43,7 @@ export const recurringSubject = (id: string) => `recurring:${id}`;
 export async function createRecurring(db: Db, input: { clientId: string; entryId: string; end?: { year: number; month: number } | null; actorId?: string | null }) {
   const entry = await db.journalEntry.findFirst({
     where: { id: input.entryId, entity: { clientId: input.clientId } },
-    include: { entity: true, reversedBy: { select: { date: true } }, lines: { include: { account: true }, orderBy: { id: "asc" } } },
+    include: { ...REVERSAL_OWNERS, entity: true, lines: { include: { account: true }, orderBy: { id: "asc" } } },
   });
   if (!entry) throw new LedgerError("Jurnal tidak ditemukan.");
   if (entry.kind !== "ADJUSTMENT") throw new LedgerError("Hanya jurnal penyesuaian yang bisa diulang tiap bulan.");
@@ -50,11 +51,14 @@ export async function createRecurring(db: Db, input: { clientId: string; entryId
   if (entry.scheduleId) throw new LedgerError("Jurnal ini angsuran jadwal penyesuaian, yang sudah berulang sendiri.");
   if (entry.recurringId) throw new LedgerError("Jurnal ini sudah angsuran jurnal berulang.");
   if (entry.lines.some((l) => l.currency)) throw new LedgerError("Jurnal valas tidak bisa diulang: kursnya diisi lagi setiap bulan.");
+  // A journal a register, pack, stock count, lease, benefit valuation, close proposal, asset or imported file owns is changed there, never
+  // repeated by hand (the same owners Balik jurnal refuses, accounting-rules 3a). Its own Balik otomatis reversal is what *Balik otomatis*
+  // repeats, so being reversed is no blocker here.
+  const blocker = reversalBlocker({ ...entry, reversedBy: null });
+  if (blocker) throw new LedgerError(`Jurnal ini tidak bisa diulang tiap bulan. ${blocker}`);
   const day = entry.date.getUTCDate() === periodBounds(entry.date.getUTCFullYear(), entry.date.getUTCMonth() + 1).end.getUTCDate() ? 0 : entry.date.getUTCDate();
-  const start = fromIndex(index(entry.date.getUTCFullYear(), entry.date.getUTCMonth() + 1) + 1);
   const end = input.end ?? null;
   if (end && (!(end.month >= 1 && end.month <= 12) || !Number.isInteger(end.year))) throw new LedgerError("Bulan terakhir tidak valid.");
-  if (end && index(end.year, end.month) < index(start.year, start.month)) throw new LedgerError(`Bulan terakhir paling awal ${formatPeriod(start.year, start.month)}.`);
   const reverse = !!entry.reversedBy && +entry.reversedBy.date === +firstOfNextMonth(entry.date);
   // Debits first, as the form shows them; amounts in minor units as a stored request's.
   const lines: StoredLine[] = [...entry.lines]
@@ -64,6 +68,21 @@ export async function createRecurring(db: Db, input: { clientId: string; entryId
     await closeLock(tx, input.clientId); // a close running now either sees the template or refuses (`recurringDueBy`)
     const running = await tx.recurringJournal.findFirst({ where: { sourceEntryId: entry.id, stoppedAt: null }, select: { id: true } });
     if (running) throw new LedgerError("Jurnal ini sudah diulang tiap bulan. Lihat Jurnal berulang di bawah.");
+    // Repeated again after Hentikan: start after the last month an earlier template of this journal posted or still asks for (a waiting
+    // request of a stopped template is still decided), so no month is booked twice from the same journal.
+    const after = await tx.recurringJournal.findMany({
+      where: { sourceEntryId: entry.id },
+      select: { entries: { select: { recurringMonth: true } }, approvals: { where: { status: "PENDING" }, select: { recurringMonth: true } } },
+    });
+    const taken = after.flatMap((t) => [...t.entries, ...t.approvals].map((x) => x.recurringMonth).filter((m): m is number => m != null));
+    const latest = taken.length ? fromKey(Math.max(...taken)) : null;
+    const start = fromIndex(Math.max(index(entry.date.getUTCFullYear(), entry.date.getUTCMonth() + 1), latest ? index(latest.year, latest.month) : -Infinity) + 1);
+    if (end && index(end.year, end.month) < index(start.year, start.month)) throw new LedgerError(`Bulan terakhir paling awal ${formatPeriod(start.year, start.month)}.`);
+    // Every check the post makes of the lines (accounts in the chart and not archived, not the company's own intercompany account, tags
+    // the client's and active — no stored-tag exception for a new template): a template that could never post is refused now.
+    await checkLines(tx, { entityId: entry.entityId, lines: entry.lines.map((l) => ({ accountId: l.accountId, debit: l.debit, credit: l.credit, departmentId: l.departmentId, projectId: l.projectId })) }).catch((e) => {
+      throw e instanceof LedgerError ? new LedgerError(`Jurnal ini tidak bisa diulang tiap bulan: ${e.message}`) : e;
+    });
     await lockTags(tx, lines); // a removal of a tag it names waits, then sees it (lib/dimensions)
     const t = await tx.recurringJournal.create({
       data: {

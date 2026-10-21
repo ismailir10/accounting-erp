@@ -56,7 +56,7 @@ const outcome = (p: Promise<unknown>) => p.then(() => "ok", (e: Error) => e.mess
 describe("Jurnal berulang, tested hard — what a template may be made from", () => {
   beforeEach(resetDb);
 
-  it("DEFECT: Ulangi tiap bulan accepts a stock-count (Persediaan) journal, which Balik jurnal refuses as owned by the count page", async () => {
+  it("Ulangi tiap bulan refuses a stock-count (Persediaan) journal, as Balik jurnal does: it is changed on the count page", async () => {
     const g = await makeGroup();
     // July count Rp 5 juta against a book of 0: recordInventoryCount posts Dr 1160 5 J / Cr 5190 5 J, owned by the InventoryCount row.
     const count = await recordInventoryCount(db, { clientId: g.client.id, entityId: g.pt.entity.id, year: 2026, month: 7, amount: 5n * J });
@@ -97,7 +97,7 @@ describe("Jurnal berulang, tested hard — what a template may be made from", ()
     await expect(createRecurring(db, { clientId: g.client.id, entryId: (await rent(g, dateOnly(2026, 7, 20), "1.000.000")).id, end: { year: 2026, month: 7 } })).rejects.toThrow("Bulan terakhir paling awal Agustus 2026.");
   });
 
-  it("DEFECT: Ulangi again on the same journal after Hentikan proposes the months the first template already posted", async () => {
+  it("Ulangi again on the same journal after Hentikan starts after the months the first template already posted", async () => {
     const g = await makeGroup();
     const me = await addMember(g.firm.id, "AKUNTAN", { clients: [g.client.id] });
     const july = await rent(g, dateOnly(2026, 7, 31), "15.000.000", { actorId: me.id });
@@ -112,7 +112,7 @@ describe("Jurnal berulang, tested hard — what a template may be made from", ()
     expect(owed).toEqual([202610]);
   });
 
-  it("DEFECT: a template is made from a journal whose account was archived since; every instalment is then refused", async () => {
+  it("a template is refused when made from a journal whose account was archived since (its instalments could never post)", async () => {
     const g = await makeGroup();
     const me = await addMember(g.firm.id, "AKUNTAN", { clients: [g.client.id] });
     // June rent (Dr 6120 / Cr 2150); June closed; 6120 archived (no open-month line, an expense, nothing running on it).
