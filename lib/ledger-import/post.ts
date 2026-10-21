@@ -450,6 +450,17 @@ export async function postImport(db: Db, clientId: string, importId: string, act
   const unmapped = sources.filter((s) => !s.accountId);
   if (unmapped.length) throw new LedgerImportError(`${unmapped.length} akun sumber belum dipetakan. Selesaikan Pemetaan akun dulu.`);
   const sourceOf = new Map(sources.map((s) => [`${s.entityId}|${s.code}`, s]));
+  const kindOf = (e: SavedPlan["entries"][number]) => e.kind ?? (imp.mode === "NERACA" ? "OPENING" : "IMPORTED");
+  // The mapping may change after staging, so what it posts to is checked here: a bank GL account is opened only by a Saldo Awal (its
+  // movement comes from statements, never from a file: counted twice otherwise).
+  for (const e of saved.entries) {
+    for (const l of e.lines) {
+      if (BigInt(l.amount) === 0n) continue;
+      const src = sourceOf.get(`${saved.entities[e.entityKey]}|${l.code}`)!;
+      const acc = src.account!;
+      if (acc.isBank && kindOf(e) !== "OPENING") throw new LedgerImportError(`Akun sumber ${src.code} ${src.name} dipetakan ke ${acc.code} ${acc.name}, akun rekening bank: mutasinya datang dari rekening koran, jadi baris ${l.ref} akan terhitung dua kali. Rekening bank hanya dibuka dari Saldo Awal; petakan akun ini ke akun non-bank (mis. 1120).`);
+    }
+  }
   const accounts = await db.account.findMany({ where: { clientId, code: { in: [ACCOUNT_CODES.ROUNDING, ACCOUNT_CODES.SUSPENSE] } } });
   const rounding = accounts.find((a) => a.code === ACCOUNT_CODES.ROUNDING)!;
   const suspense = accounts.find((a) => a.code === ACCOUNT_CODES.SUSPENSE)!;
@@ -514,7 +525,7 @@ export async function postImport(db: Db, clientId: string, importId: string, act
         await postJournal(tx, {
           entityId,
           date,
-          kind: e.kind ?? (imp.mode === "NERACA" ? "OPENING" : "IMPORTED"),
+          kind: kindOf(e),
           memo: `${e.memo} · ${imp.fileName}`.slice(0, 300),
           ledgerImportId: imp.id,
           sourceRef: e.ref,

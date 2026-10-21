@@ -8,7 +8,7 @@ import type { SearchParams } from "@/lib/scope";
 import { formatDate } from "@/lib/format";
 import { FS_LINES, type FsLine } from "@/lib/coa/template";
 import { ACCEPTABLE_CHECKS, importBalances, importSourceAccounts } from "@/lib/ledger-import/post";
-import { NEW_ACCOUNT_FS_LINES } from "@/lib/ledger-import/mapping";
+import { NEW_ACCOUNT_FS_LINES, SYSTEM_ONLY_CODES } from "@/lib/ledger-import/mapping";
 import { setupProgress } from "@/lib/setup-progress";
 import { resolveAiConfig } from "@/lib/settings/ai";
 import { NextStep, PageHeader, Stat } from "@/components/app/page-header";
@@ -34,7 +34,18 @@ export default async function LedgerImportPage({ params, searchParams }: { param
     importSourceAccounts(prisma, imp.id),
     // A Neraca's balances are balances; a ledger's net movement is not (cash paid out in a month is no "saldo kredit"), so only Neraca files get the hint.
     imp.mode === "NERACA" ? importBalances(prisma, imp.id) : Promise.resolve(new Map<string, bigint>()),
-    prisma.account.findMany({ where: { clientId: client.id, isBank: false, isSuspense: false, isClearing: false, archivedAt: null }, orderBy: { code: "asc" } }),
+    // A Saldo Awal file may also open the entity's own bank accounts (acceptMappings decides per source account); system-only codes never.
+    prisma.account.findMany({
+      where: {
+        clientId: client.id,
+        isSuspense: false,
+        isClearing: false,
+        archivedAt: null,
+        code: { notIn: [...SYSTEM_ONLY_CODES] },
+        OR: [{ isBank: false }, ...(imp.mode === "NERACA" ? [{ bankAccounts: { some: { entityId: { in: Object.values((imp.data as { entities?: Record<string, string> }).entities ?? {}) } } } }] : [])],
+      },
+      orderBy: { code: "asc" },
+    }),
     resolveAiConfig(prisma),
   ]);
   const posted = imp.status === "POSTED";
