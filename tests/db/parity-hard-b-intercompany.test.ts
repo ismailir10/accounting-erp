@@ -283,6 +283,31 @@ describe("Antar entitas per pihak, tested hard — a pair with a company kept in
     expect([ws.pairs, ws.matched]).toEqual([[], 15_500_000n]);
     expect((await icControls(g.client.id)).find((c) => c[0] === "intercompany")?.[1]).toBe("PASS");
   });
+
+  it("with the closing rate missing the intercompany controls still run: elimination FAILs (no note closes it) until the rate is in", async () => {
+    const g = await makeGroup3();
+    await db.entity.update({ where: { id: g.cv.entity.id }, data: { functionalCurrency: "USD" } });
+    // 10 Jan: PT lends the CV USD 1.000 at 15.000 on the CV's account; the CV books its USD 1.000 on the old 1190 out of habit.
+    const cvAcc = await account(g, "@cv");
+    await db.$transaction(async (tx) =>
+      postJournal(tx, {
+        entityId: g.pt.entity.id, date: dateOnly(2026, 1, 10), kind: "ADJUSTMENT", memo: "Pinjaman USD ke CV",
+        lines: [{ accountId: cvAcc.id, debit: 15_000_000n, fx: { currency: "USD", amount: 100_000n, rate: "15000" } }, { accountId: (await account(g, "1120")).id, credit: 15_000_000n }],
+      }),
+    );
+    await post(g, "cv", dateOnly(2026, 1, 10), "Pinjaman dari PT", [["1120", 100_000n], ["1190", -100_000n]]);
+    // No USD rate for 31 Jan: the worksheet can't translate the CV. The rates are a REVIEW as before; the pairs can't be compared, so
+    // the elimination is a FAIL (a note on the rates alone must not close January); the CV's USD 1.000 on 1190 is still shown.
+    const keys = ["fx-translation", "intercompany", "intercompany-party"];
+    const missing = (await runControls(db, g.client.id, 2026, 1)).filter((c) => keys.includes(c.key));
+    expect(missing.map((c) => [c.key, c.status])).toEqual([["fx-translation", "REVIEW"], ["intercompany", "FAIL"], ["intercompany-party", "REVIEW"]]);
+    expect(missing[1].detail).toMatch(/^Belum bisa diperiksa: kurs penjabaran ke Rupiah belum lengkap/);
+    expect(missing[2].detail).toMatch(/^CV Maju \S+.*1\.000.* di 1190\. /);
+    // The rate typed: the pair is compared, and a party account against 1190 is never a pass.
+    const { upsertRate } = await import("@/lib/fx/rates");
+    await upsertRate(db, g.firm.id, { currency: "USD", quote: "IDR", date: dateOnly(2026, 1, 31), kind: "SPOT", rate: "15000" });
+    expect((await icControls(g.client.id)).map((c) => [c[0], c[1]])).toEqual([["intercompany", "REVIEW"], ["intercompany-party", "REVIEW"]]);
+  });
 });
 
 const bcaFile = (number: string, lines: string[], opening: string, closing: string) => `Informasi Rekening - Mutasi Rekening

@@ -599,38 +599,62 @@ async function collectControls(db: Db, clientId: string, year: number, month: nu
       if (e instanceof FxMissingError) return e;
       throw e;
     });
+    const icTitle = "Antar entitas (1190) tereliminasi";
+    // A group of three or more records balances per counterparty: what still sits on 1190 can't tell which company it is with.
+    const perParty = await db.account.count({ where: { clientId, counterpartyEntityId: { not: null } } });
+    let left: string[];
     if (ws instanceof FxMissingError) {
+      const missing = ws.missing.map((m) => `${m.entity}: ${m.need}`).join("; ");
       controls.push({
         key: "fx-translation",
         title: "Kurs penjabaran ke Rupiah lengkap",
         scope: "Grup",
         status: "REVIEW",
-        detail: ws.missing.map((m) => `${m.entity}: ${m.need}`).join("; "),
+        detail: missing,
         href: `${base}/rates`,
         ack: acks.get("fx-translation"),
       });
-      return controls;
+      // Without the rates the pairs can't be compared. A note on the missing rates must never close a month whose intercompany balances
+      // were never checked, so while the group has any intercompany line by the month end this is a FAIL until the rates are in.
+      const icLines = await db.journalLine.count({ where: { date: { lte: end }, account: { clientId, isIntercompany: true } } });
+      controls.push({
+        key: "intercompany",
+        title: icTitle,
+        scope: "Grup",
+        status: icLines ? "FAIL" : "PASS",
+        detail: icLines ? `Belum bisa diperiksa: kurs penjabaran ke Rupiah belum lengkap (${missing}). Isi kursnya di halaman Kurs` : "Tidak ada saldo antar entitas",
+        href: `${base}/rates`,
+        ack: acks.get("intercompany"),
+      });
+      // What sits on 1190 needs no rate to be seen: each company's balance in its own currency.
+      const generic = perParty
+        ? await db.journalLine.groupBy({ by: ["entityId"], where: { date: { lte: end }, account: { clientId, code: ACCOUNT_CODES.INTERCOMPANY } }, _sum: { debit: true, credit: true } })
+        : [];
+      left = entities.flatMap((e) => {
+        const g = generic.find((x) => x.entityId === e.id);
+        const v = (g?._sum.debit ?? 0n) - (g?._sum.credit ?? 0n);
+        return v ? [`${e.shortName} ${formatMoney(v, e.functionalCurrency)}`] : [];
+      });
+    } else {
+      const idr = (v: bigint) => formatMoney(v, ws.translated ? "IDR" : (entities[0]?.functionalCurrency ?? "IDR"));
+      const abs = (v: bigint) => (v < 0n ? -v : v);
+      // Per pair (a group of three or more): every pair must mirror; one broken pair never hides behind another that offsets it.
+      const broken = [...(ws.residual !== 0n ? [`Selisih ${idr(ws.residual)} antar entitas belum cocok`] : []), ...ws.pairs.map((p) => `${p.a}–${p.b} selisih ${idr(abs(p.difference))}`)];
+      controls.push({
+        key: "intercompany",
+        title: icTitle,
+        scope: "Grup",
+        status: broken.length ? "REVIEW" : "PASS",
+        detail: broken.length ? broken.join("; ") : `Tereliminasi ${idr(ws.matched)}`,
+        href: `${base}/reports?entity=combined`,
+        ack: acks.get("intercompany"),
+      });
+      const generic = perParty ? ws.rows.filter((r) => r.code === ACCOUNT_CODES.INTERCOMPANY) : [];
+      left = ws.entities.flatMap((e, k) => {
+        const v = generic.reduce((t, r) => t + r.values[k], 0n);
+        return v ? [`${e.shortName} ${idr(v)}`] : [];
+      });
     }
-    const idr = (v: bigint) => formatMoney(v, ws.translated ? "IDR" : (entities[0]?.functionalCurrency ?? "IDR"));
-    const abs = (v: bigint) => (v < 0n ? -v : v);
-    // Per pair (a group of three or more): every pair must mirror; one broken pair never hides behind another that offsets it.
-    const broken = [...(ws.residual !== 0n ? [`Selisih ${idr(ws.residual)} antar entitas belum cocok`] : []), ...ws.pairs.map((p) => `${p.a}–${p.b} selisih ${idr(abs(p.difference))}`)];
-    controls.push({
-      key: "intercompany",
-      title: "Antar entitas (1190) tereliminasi",
-      scope: "Grup",
-      status: broken.length ? "REVIEW" : "PASS",
-      detail: broken.length ? broken.join("; ") : `Tereliminasi ${idr(ws.matched)}`,
-      href: `${base}/reports?entity=combined`,
-      ack: acks.get("intercompany"),
-    });
-    // A group of three or more records balances per counterparty: what still sits on 1190 can't tell which company it is with.
-    const perParty = await db.account.count({ where: { clientId, counterpartyEntityId: { not: null } } });
-    const generic = perParty ? ws.rows.filter((r) => r.code === ACCOUNT_CODES.INTERCOMPANY) : [];
-    const left = ws.entities.flatMap((e, k) => {
-      const v = generic.reduce((t, r) => t + r.values[k], 0n);
-      return v ? [`${e.shortName} ${idr(v)}`] : [];
-    });
     if (left.length) {
       controls.push({
         key: "intercompany-party",
