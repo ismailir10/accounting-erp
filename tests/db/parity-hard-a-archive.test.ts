@@ -258,18 +258,21 @@ describe("arsip akun: ledger-import mapping", () => {
     return { g, x, andiRent, importId: s2.importId };
   }
 
-  it("DEFECT: 'same name mapped before' suggests the archived account for another company's source account", async () => {
+  it("'same name mapped before' does not suggest an account archived since for another company's source account", async () => {
     // keywordSuggestion's PRIOR map is built from every accepted mapping, the archived target included, and is never checked against the
     // mappable (unarchived) chart. Andi's 61500 "Sewa Gudang Lama" is suggested as the archived account (PRIOR, 95%). Expected: not suggested.
     const { x, andiRent } = await books();
     expect(andiRent.suggestedCode).not.toBe(x.code);
   });
 
-  it("DEFECT: accepting a mapping to an archived account is not refused; the import only fails at Catat", async () => {
+  it("accepting a mapping to an archived account is refused when it is made, not only at Catat; so is a new account named as an archived one", async () => {
     // acceptMappings() reads the whole chart (archived included) and refuses only suspense, clearing, system-only and foreign bank targets.
     // A mapping to an archived account must be refused when it is made, as every picker hides it; today it is stored and postImport then
     // fails inside postJournal ("sudah diarsipkan").
     const { g, x, andiRent } = await books();
     await expect(acceptMappings(db, g.client.id, [{ sourceAccountId: andiRent.id, accountCode: x.code, method: "MANUAL" }])).rejects.toThrow(/diarsipkan/);
+    // "Buat akun baru" named as the archived account would quietly reuse it by name: refused too, naming it.
+    await expect(acceptMappings(db, g.client.id, [{ sourceAccountId: andiRent.id, newAccount: { fsLine: "BEBAN_UMUM_ADM", name: "Beban Sewa Gudang Lama" }, method: "MANUAL" }])).rejects.toThrow(`Akun ${x.code} Beban Sewa Gudang Lama sudah diarsipkan`);
+    expect(await db.sourceAccount.findUniqueOrThrow({ where: { id: andiRent.id }, select: { accountId: true } })).toEqual({ accountId: null });
   });
 });

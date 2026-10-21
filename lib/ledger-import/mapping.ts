@@ -296,9 +296,13 @@ export async function suggestMappings(db: Db, args: { firmId: string; clientId: 
   const accounts = await mappableAccounts(db, args.clientId);
   const sources = await db.sourceAccount.findMany({ where: { clientId: args.clientId }, orderBy: [{ entityId: "asc" }, { code: "asc" }] });
   const byCode = new Map(accounts.map((a) => [a.code, a]));
-  const codeOfId = new Map((await db.account.findMany({ where: { clientId: args.clientId }, select: { id: true, code: true } })).map((a) => [a.id, a.code]));
+  // "Same name mapped before" only to an account still in use: a prior target archived since (Arsip akun) is suggested no more.
+  const codeOfId = new Map((await db.account.findMany({ where: { clientId: args.clientId, archivedAt: null }, select: { id: true, code: true } })).map((a) => [a.id, a.code]));
   const priorByName = new Map<string, string>();
-  for (const s of sources) if (s.accountId) priorByName.set(normName(s.name), codeOfId.get(s.accountId)!);
+  for (const s of sources) {
+    const code = s.accountId ? codeOfId.get(s.accountId) : undefined;
+    if (code) priorByName.set(normName(s.name), code);
+  }
 
   const pending = sources.filter((s) => !s.accountId);
   let deterministic = 0;
@@ -395,18 +399,24 @@ export async function acceptMappings(
       if (sources.length !== new Set(items.map((i) => i.sourceAccountId)).size) throw new MappingError("Akun sumber tidak ditemukan untuk klien ini");
       const nameOf = new Map(sources.map((x) => [x.id, x.name]));
       const client = await tx.client.findUniqueOrThrow({ where: { id: clientId }, select: { firmId: true } });
-      const chart = await tx.account.findMany({ where: { clientId }, select: { id: true, code: true, name: true, isBank: true, isSuspense: true, isClearing: true } });
+      const chart = await tx.account.findMany({ where: { clientId }, select: { id: true, code: true, name: true, isBank: true, isSuspense: true, isClearing: true, archivedAt: true } });
       const byCode = new Map(chart.map((a) => [a.code, a]));
       const used = new Set(chart.map((a) => a.code));
-      // One shared client chart: the same name from several entities (or accepted twice) is one account, not one per row.
+      // One shared client chart: the same name from several entities (or accepted twice) is one account, not one per row. An archived
+      // account is never a target (every picker hides it and postJournal refuses it): refused by code below, and by name too.
       const byName = new Map<string, string>();
-      for (const a of chart) if (!a.isBank && !a.isSuspense && !a.isClearing && !SYSTEM_ONLY_CODES.has(a.code)) byName.set(normName(a.name), a.code);
+      const archivedByName = new Map<string, { code: string; name: string }>();
+      for (const a of chart) {
+        if (a.archivedAt) archivedByName.set(normName(a.name), a);
+        else if (!a.isBank && !a.isSuspense && !a.isClearing && !SYSTEM_ONLY_CODES.has(a.code)) byName.set(normName(a.name), a.code);
+      }
+      const archivedRefusal = (a: { code: string; name: string }) => new MappingError(`Akun ${a.code} ${a.name} sudah diarsipkan, jadi tidak bisa dipakai untuk pemetaan. Aktifkan lagi di Bagan akun, atau pilih akun lain.`);
 
       // A template account the client predates (e.g. 1135) is created on first use when its code is free.
       const templateCodes = [...new Set(items.flatMap((it) => (!it.newAccount && it.accountCode && !byCode.has(it.accountCode) && !SYSTEM_ONLY_CODES.has(it.accountCode) && COA_TEMPLATE.some((a) => a.code === it.accountCode) ? [it.accountCode] : [])))];
       if (templateCodes.length) {
         await templateAccounts(tx, clientId, templateCodes);
-        for (const a of await tx.account.findMany({ where: { clientId, code: { in: templateCodes } }, select: { id: true, code: true, name: true, isBank: true, isSuspense: true, isClearing: true } })) {
+        for (const a of await tx.account.findMany({ where: { clientId, code: { in: templateCodes } }, select: { id: true, code: true, name: true, isBank: true, isSuspense: true, isClearing: true, archivedAt: true } })) {
           byCode.set(a.code, a);
           used.add(a.code);
           if (!a.isBank && !a.isSuspense && !a.isClearing && !SYSTEM_ONLY_CODES.has(a.code)) byName.set(normName(a.name), a.code);
@@ -427,7 +437,9 @@ export async function acceptMappings(
         const newAccount = it.newAccount ?? (suggestedLine ? { fsLine: suggestedLine, name: nameOf.get(it.sourceAccountId)! } : null);
         if (newAccount) {
           const existing = byName.get(normName(newAccount.name));
+          const archived = archivedByName.get(normName(newAccount.name));
           if (existing) code = existing;
+          else if (archived) throw archivedRefusal(archived);
           else {
             code = allocateAccountCode(newAccount.fsLine, used);
             used.add(code);
@@ -437,6 +449,7 @@ export async function acceptMappings(
         } else {
           const acc = code ? byCode.get(code) : undefined;
           if (!acc || acc.isSuspense || acc.isClearing || SYSTEM_ONLY_CODES.has(acc.code)) throw new MappingError(`Akun ${code ?? "(kosong)"} tidak bisa dipakai untuk pemetaan`);
+          if (acc.archivedAt) throw archivedRefusal(acc);
           const source = sources.find((x) => x.id === it.sourceAccountId)!;
           const refusal = acc.isBank ? await bankMappingRefusal(tx, clientId, source, acc) : null;
           if (refusal) throw new MappingError(refusal);
@@ -451,7 +464,7 @@ export async function acceptMappings(
 
       if (toCreate.length) {
         await tx.account.createMany({ data: toCreate.map((a) => ({ firmId: client.firmId, clientId, ...newAccountData(a.fsLine, a.name), code: a.code })) });
-        for (const a of await tx.account.findMany({ where: { clientId, code: { in: toCreate.map((x) => x.code) } }, select: { id: true, code: true, name: true, isBank: true, isSuspense: true, isClearing: true } })) byCode.set(a.code, a);
+        for (const a of await tx.account.findMany({ where: { clientId, code: { in: toCreate.map((x) => x.code) } }, select: { id: true, code: true, name: true, isBank: true, isSuspense: true, isClearing: true, archivedAt: true } })) byCode.set(a.code, a);
         // The chart changed, so cached AI answers keyed on the old chart no longer apply.
         await tx.client.update({ where: { id: clientId }, data: { coaVersion: { increment: 1 } } });
       }
