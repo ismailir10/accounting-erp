@@ -123,11 +123,17 @@ export async function createSchedule(db: Db, input: ScheduleInput, inTx?: (tx: T
   const planned = installments({ amount, months, startYear: input.startYear, startMonth: input.startMonth, reverse: accrual, debitAccountId: debit.id, creditAccountId: credit.id });
   return db.$transaction(async (tx) => {
     await closeLock(tx, input.clientId);
-    const locked = await tx.period.findFirst({
-      where: { clientId: input.clientId, status: "LOCKED", OR: planned.map((i) => ({ year: i.year, month: i.month })) },
-      orderBy: [{ year: "asc" }, { month: "asc" }],
-    });
-    if (locked) throw new LedgerError(`${formatPeriod(locked.year, locked.month)} sudah dikunci, jadi cicilan di bulan itu tidak bisa dicatat. Buka kunci bulan itu atau mulai jadwal setelahnya.`);
+    // A month at or before the latest closed month is frozen (accounting-rules 2: a journal before a closed month changes its Neraca).
+    const latest = await tx.period.findFirst({ where: { clientId: input.clientId, status: "LOCKED" }, orderBy: [{ year: "desc" }, { month: "desc" }], select: { year: true, month: true } });
+    const frozen = latest && planned.find((i) => i.year * 12 + i.month <= latest.year * 12 + latest.month);
+    if (latest && frozen) {
+      const same = frozen.year === latest.year && frozen.month === latest.month;
+      throw new LedgerError(
+        same
+          ? `${formatPeriod(latest.year, latest.month)} sudah dikunci, jadi cicilan di bulan itu tidak bisa dicatat. Buka kunci bulan itu atau mulai jadwal setelahnya.`
+          : `${formatPeriod(latest.year, latest.month)} sudah dikunci, jadi cicilan ${formatPeriod(frozen.year, frozen.month)} tidak bisa dicatat lagi. Mulai jadwal setelah ${formatPeriod(latest.year, latest.month)}.`,
+      );
+    }
     const created = await tx.adjustmentSchedule.create({
       data: {
         firmId: entity.firmId,
@@ -156,10 +162,13 @@ export type Proposal = { schedule: AdjustmentSchedule & { entity: { id: string; 
 
 /**
  * Installments due in or before the period and not posted yet (an overdue one stays visible until posted, so a later month can't
- * close without it), for running schedules. One in a locked month can't post any more and is left out. Nothing is stored.
+ * close without it), for running schedules. One in a month a close froze (itself or an earlier month of a later closed one) can't post
+ * any more and is left out. Nothing is stored.
  */
 export async function dueProposals(db: Db, clientId: string, year: number, month: number, entityId?: string): Promise<Proposal[]> {
-  const locked = new Set((await db.period.findMany({ where: { clientId, status: "LOCKED" }, select: { year: true, month: true } })).map((p) => p.year * 12 + p.month));
+  // Every month at or before the latest closed one is frozen: its instalment can never post, so it is not proposed (as Jurnal berulang).
+  const latest = await db.period.findFirst({ where: { clientId, status: "LOCKED" }, orderBy: [{ year: "desc" }, { month: "desc" }], select: { year: true, month: true } });
+  const frozenUpTo = latest ? latest.year * 12 + latest.month : 0;
   const upTo = year * 12 + month;
   const schedules = await db.adjustmentSchedule.findMany({
     where: { clientId, ...(entityId ? { entityId } : {}) },
@@ -174,7 +183,7 @@ export async function dueProposals(db: Db, clientId: string, year: number, month
       if (i.reversal && !posted.has(s.months)) continue;
       if (!owed(s.stoppedAt, i)) continue;
       const at = i.year * 12 + i.month;
-      if (at <= upTo && !locked.has(at) && !posted.has(i.k)) out.push({ schedule: s, installment: i, memo: installmentMemo(s, i) });
+      if (at <= upTo && at > frozenUpTo && !posted.has(i.k)) out.push({ schedule: s, installment: i, memo: installmentMemo(s, i) });
     }
   }
   return out;

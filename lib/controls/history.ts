@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Db } from "@/lib/db";
 import { recordEvent } from "@/lib/audit";
+import { pendingJournalCount, pendingLockMessage } from "@/lib/approvals/pending";
 import { formatPeriod } from "@/lib/format";
 import { saveControlNote } from "@/lib/controls/ack";
 import { CLOSE_SIGNOFFS, CloseError, earlierOpenMonth, lockPeriod, runControls, type Control } from "@/lib/controls";
@@ -113,6 +114,9 @@ export async function closeHistoryMonth(
   // Order first (lockPeriod checks it again under the lock): nothing is written for a month that cannot close yet.
   const first = await earlierOpenMonth(db, clientId, year, month);
   if (first) throw new CloseError(`Tutup buku ${formatPeriod(first.year, first.month)} dulu: bulan sebelumnya yang berisi transaksi harus ditutup lebih dulu.`);
+  // A journal waiting for a second approver holds the lock (lockPeriod): refused before any note or sign-off is written.
+  const waiting = await pendingJournalCount(db, clientId, year, month);
+  if (waiting) throw new CloseError(`${label}: ${pendingLockMessage(waiting)}`);
   const controls = await runControls(db, clientId, year, month);
   const fails = controls.filter((c) => c.status === "FAIL");
   if (fails.length) throw new CloseError(`${label}: ${fails.length} kontrol gagal (${fails.map((c) => `${c.title} · ${c.scope}`).join("; ")}). Perbaiki dulu dari halaman Tutup Buku ${label}.`);
@@ -122,7 +126,8 @@ export async function closeHistoryMonth(
     await saveControlNote(db, { clientId, periodId: period.id, year, month, controlKey: c.key, title: `${c.title} · ${c.scope}`, note, detail: c.detail, actorId: actor.id });
   }
   for (const s of CLOSE_SIGNOFFS) {
-    await db.closeSignoff.upsert({ where: { periodId_key: { periodId: period.id, key: s.key } }, create: { periodId: period.id, key: s.key, doneById: actor.id }, update: { doneById: actor.id, doneAt: new Date() } });
+    // One already ticked keeps who ticked it and when.
+    await db.closeSignoff.upsert({ where: { periodId_key: { periodId: period.id, key: s.key } }, create: { periodId: period.id, key: s.key, doneById: actor.id }, update: {} });
   }
   const locked = await lockPeriod(db, clientId, year, month, `Ditutup bersama bulan-bulan sebelumnya: ${note}`, actor.id);
   await recordEvent(db, {

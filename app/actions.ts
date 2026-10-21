@@ -450,8 +450,10 @@ export async function ackControlAction(clientId: string, year: number, month: nu
     const period = await periodFor(clientId, year, month, { mustBeOpen: true });
     const ackedById = (await getCurrentMember()).id;
     // The note answers the control as it reads now; when its detail changes the note stops clearing it (lib/controls runControls).
+    // Only a control that asks for one takes a note: a note for a control not showing would clear it in advance, whatever it says later.
     const control = (await runControls(prisma, clientId, year, month)).find((c) => c.key === controlKey);
-    await saveControlNote(prisma, { clientId, periodId: period.id, year, month, controlKey, title: control ? `${control.title} · ${control.scope}` : undefined, note, detail: control?.detail ?? null, actorId: ackedById });
+    if (!control || control.status !== "REVIEW") return { ok: false, error: "Kontrol ini tidak sedang meminta catatan. Muat ulang halaman Tutup Buku." };
+    await saveControlNote(prisma, { clientId, periodId: period.id, year, month, controlKey, title: `${control.title} · ${control.scope}`, note, detail: control.detail, actorId: ackedById });
     revalidatePath(`/clients/${clientId}`, "layout");
     return { ok: true };
   } catch (e) {

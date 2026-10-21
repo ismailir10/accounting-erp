@@ -187,7 +187,17 @@ export async function archiveAccount(db: Db, input: { clientId: string; accountI
         .then((ss) => ss.filter((x) => x._count.entries < x.months * (x.reverse ? 2 : 1)).length), // a finished schedule doesn't hold the account
       tx.fixedAsset.count({ where: { disposedOn: null, OR: [{ assetAccountId: a.id }, { accumulatedAccountId: a.id }] } }),
     ]);
-    if (schedules || assets) throw new AccountEditError(`Akun ${a.code} ${a.name} masih dipakai ${[schedules ? `${schedules} jadwal penyesuaian berjalan` : "", assets ? `${assets} aset tetap` : ""].filter(Boolean).join(" dan ")}.`);
+    // A running Jurnal berulang and a journal waiting for a second approver would post to it later, and could not (postJournal refuses it).
+    const uses = (lines: unknown) => Array.isArray(lines) && lines.some((l) => (l as { accountCode?: string }).accountCode === a.code);
+    const now = new Date();
+    const [templates, waiting] = await Promise.all([
+      tx.recurringJournal
+        .findMany({ where: { clientId: input.clientId, stoppedAt: null }, select: { lines: true, endYear: true, endMonth: true } })
+        .then((ts) => ts.filter((t) => uses(t.lines) && (!t.endYear || !t.endMonth || t.endYear * 12 + t.endMonth >= now.getUTCFullYear() * 12 + now.getUTCMonth() + 1)).length),
+      tx.journalApproval.findMany({ where: { clientId: input.clientId, status: "PENDING" }, select: { lines: true } }).then((rs) => rs.filter((r) => uses(r.lines)).length),
+    ]);
+    const held = [schedules ? `${schedules} jadwal penyesuaian berjalan` : "", assets ? `${assets} aset tetap` : "", templates ? `${templates} jurnal berulang` : "", waiting ? `${waiting} jurnal menunggu persetujuan` : ""].filter(Boolean);
+    if (held.length) throw new AccountEditError(`Akun ${a.code} ${a.name} masih dipakai ${held.join(" dan ")}.`);
     await tx.account.update({ where: { id: a.id }, data: { archivedAt: new Date() } });
     await bump(tx, input.clientId);
     await recordEvent(tx, { clientId: input.clientId, kind: "ACCOUNT", subject: `account:${a.code}`, summary: `Akun ${a.code} ${a.name} diarsipkan`, actorId: input.actorId });

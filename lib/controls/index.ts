@@ -691,7 +691,18 @@ const mustCloseFirst = (p: { year: number; month: number }) => new CloseError(`T
 /** Schedules and Jurnal berulang templates with an instalment due by the month (rule 5a). */
 const dueBy = async (db: Db | Tx, clientId: string, year: number, month: number) => [...(await schedulesDueBy(db, clientId, year, month)), ...(await recurringDueBy(db, clientId, year, month))];
 
+const alreadyLocked = (year: number, month: number) => new CloseError(`${formatPeriod(year, month)} sudah ditutup.`);
+
+/** The journals of the client dated in the month or before: their count and the latest written. Changes when one is posted or removed. */
+async function ledgerFingerprint(db: Db | Tx, clientId: string, year: number, month: number) {
+  const { end } = periodBounds(year, month);
+  const r = await db.journalEntry.aggregate({ where: { entity: { clientId }, date: { lte: end } }, _count: { _all: true }, _max: { createdAt: true } });
+  return `${r._count._all}|${r._max.createdAt?.toISOString() ?? ""}`;
+}
+
 export async function lockPeriod(db: Db, clientId: string, year: number, month: number, note: string, actorId?: string | null) {
+  // A closed month keeps who closed it, when and why (the board's *Terkirim* reads its lock time): a second close is refused.
+  if ((await db.period.findUnique({ where: { clientId_year_month: { clientId, year, month } }, select: { status: true } }))?.status === "LOCKED") throw alreadyLocked(year, month);
   const before = await earlierOpenMonth(db, clientId, year, month);
   if (before) throw mustCloseFirst(before);
   // A journal waiting for a second approver that would post into this month (Persetujuan kedua): the lock waits for its decision.
@@ -699,6 +710,8 @@ export async function lockPeriod(db: Db, clientId: string, year: number, month: 
   if (waiting) throw new CloseError(pendingLockMessage(waiting));
   // Schedules due by this month known before the controls run: one created meanwhile was never checked, so the lock refuses (rule 5a).
   const known = new Set(await dueBy(db, clientId, year, month));
+  // The ledger the controls read: a journal posted (or removed) in this month or before while they ran was never checked.
+  const seen = await ledgerFingerprint(db, clientId, year, month);
   const controls = await runControls(db, clientId, year, month);
   const period = await db.period.upsert({
     where: { clientId_year_month: { clientId, year, month } },
@@ -717,6 +730,11 @@ export async function lockPeriod(db: Db, clientId: string, year: number, month: 
   }
   return db.$transaction(async (tx) => {
     await closeLock(tx, clientId);
+    // The period row first: a posting into this month or before holds a share lock on it (the entry guard), so this waits for any in
+    // flight, and one after it sees the month closed.
+    await tx.$queryRaw`SELECT id FROM "Period" WHERE id = ${period.id} FOR UPDATE`;
+    if ((await tx.period.findUniqueOrThrow({ where: { id: period.id }, select: { status: true } })).status === "LOCKED") throw alreadyLocked(year, month);
+    if ((await ledgerFingerprint(tx, clientId, year, month)) !== seen) throw new CloseError("Buku berubah saat tutup buku berjalan (ada jurnal baru atau yang dihapus). Muat ulang halaman, periksa kontrolnya, lalu tutup lagi.");
     const raced = await earlierOpenMonth(tx, clientId, year, month);
     if (raced) throw mustCloseFirst(raced);
     const asked = await pendingJournalCount(tx, clientId, year, month); // a request stored meanwhile (submits take the same lock)

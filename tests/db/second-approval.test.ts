@@ -414,13 +414,13 @@ describe("Persetujuan kedua — Draf AI above Rp 50.000.000 (MockProvider only)"
 describe("Persetujuan kedua — what a waiting journal counts in", () => {
   beforeEach(resetDb);
 
-  it("a pending request is in no report; it counts against its own month, and a Balik otomatis one against the next month too", async () => {
+  it("a pending request is in no report; it counts against its own month and every later one (a lock freezes the months before it)", async () => {
     const { g, m } = await team();
     await setCard(g, MANUAL_100M);
     await submitAdjustment(db, { ...accrual(g, "150.000.000"), maker: maker(m.akuntan) });
     expect((await tb(g)).every((r) => r.net === 0n)).toBe(true);
-    expect([await pendingJournalCount(db, g.client.id, 2026, 7), await pendingJournalCount(db, g.client.id, 2026, 8)]).toEqual([1, 0]);
+    expect([await pendingJournalCount(db, g.client.id, 2026, 7), await pendingJournalCount(db, g.client.id, 2026, 8)]).toEqual([1, 1]);
     await submitAdjustment(db, { ...accrual(g, "150.000.000", { reverseNextMonth: true, memo: "Dibalik" }), maker: maker(m.akuntan) });
-    expect([await pendingJournalCount(db, g.client.id, 2026, 7), await pendingJournalCount(db, g.client.id, 2026, 8), await pendingJournalCount(db, g.client.id, 2026, 9)]).toEqual([2, 1, 0]);
+    expect([await pendingJournalCount(db, g.client.id, 2026, 7), await pendingJournalCount(db, g.client.id, 2026, 8), await pendingJournalCount(db, g.client.id, 2026, 9)]).toEqual([2, 2, 2]);
   });
 });

@@ -105,8 +105,10 @@ describe("adjustment schedules", () => {
     await lock(11);
     await expect(createSchedule(db, { ...base, kind: "ACCRUAL", months: 1, startMonth: 10 })).rejects.toThrow("November 2026 sudah dikunci");
     expect(await db.adjustmentSchedule.count()).toBe(0);
-    // Between the locked months is fine.
-    await createSchedule(db, { ...base, startMonth: 9 });
+    // Between the locked months is frozen too: November's lock froze September (a journal before a closed month changes its Neraca).
+    await expect(createSchedule(db, { ...base, startMonth: 9 })).rejects.toThrow("November 2026 sudah dikunci, jadi cicilan September 2026 tidak bisa dicatat lagi");
+    // After the latest closed month is fine.
+    await createSchedule(db, { ...base, startMonth: 12 });
     expect(await db.adjustmentSchedule.count()).toBe(1);
   });
 
