@@ -176,6 +176,7 @@ export function TaxPackPanel(props: { clientId: string; periodKey: string; perio
             <>
               {row(<Link href={`${base}/reports?period=${props.periodKey}&entity=${v.entity.id}`} className="hover:text-primary">Peredaran bruto (pendapatan usaha)</Link>, v.turnover)}
               {row("PPh final 0,5% (PP 55/2022)", v.tax.due, { strong: true, testid: "tax-due" })}
+              {BigInt(v.finalWithheld) > 0n && row("Dipotong pelanggan (PPh 4(2), sudah di 8200): tidak disetor lagi", v.finalWithheld, { muted: true, sign: -1 })}
               <p className="pt-2 text-xs text-muted-foreground">PPh final dihitung dari peredaran bruto; jurnalnya di bawah membebankan 8200 dan setoran bulanan melunasi utangnya (2145). Buku tidak menilai syarat PP 55/2022: peredaran bruto paling banyak Rp 4,8 M setahun, dan jangka waktu paling lama 3 tahun pajak untuk PT, 4 tahun untuk CV, firma dan koperasi, 7 tahun untuk orang pribadi (Pasal 59).</p>
             </>
           ) : (

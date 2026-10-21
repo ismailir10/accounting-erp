@@ -42,6 +42,10 @@ export async function taxWorkpaper(db: Db, pack: TaxPack, meta: { firm: string; 
   if (pack.regime === "FINAL_UMKM") {
     add("Peredaran bruto (pendapatan usaha)", pack.turnover, "Laba Rugi");
     add("PPh final 0,5% (PP 55/2022)", pack.tax.due);
+    if (pack.finalWithheld > 0n) {
+      add("  Dipotong pelanggan (PPh 4(2), sudah di 8200)", -pack.finalWithheld, "Rekening koran");
+      add("PPh final disetor sendiri", pack.tax.due > pack.finalWithheld ? pack.tax.due - pack.finalWithheld : 0n);
+    }
   } else {
     add("Laba sebelum pajak (komersial)", pack.profitBeforeTax, "Laba Rugi");
     for (const c of pack.corrections.filter((x) => x.direction === "POSITIVE")) add(`  (+) ${c.label}`, c.amount, source(c));

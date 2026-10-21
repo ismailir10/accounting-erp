@@ -17,6 +17,7 @@ function toView(p: TaxPack) {
     regime: p.regime,
     profitBeforeTax: s(p.profitBeforeTax),
     turnover: s(p.turnover),
+    finalWithheld: s(p.finalWithheld),
     months: p.months,
     annualTurnover: s(p.tax.annualTurnover),
     corrections: p.corrections.map((c) => ({ key: c.key, label: c.label, direction: c.direction, kind: c.kind, amount: s(c.amount), source: c.source })),
