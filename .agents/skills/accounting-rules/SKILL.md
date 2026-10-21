@@ -613,11 +613,19 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     list is unchanged; *Matikan* removes it from open months and its old notes stay, unused. The AI close review and *Jelaskan* may send
     its listed lines like any flagged control's rows (rule 20a caps). Deterministic: no model decides it.
 23. Tutup Buku requires: no FAIL, every REVIEW acknowledged with a note, all sign-offs ticked, and **no journal waiting for a second
-    approver** that would post into the month (dated in it, or a *Balik otomatis* request of the month before; `pendingJournalCount`,
-    checked again under the client lock): "Belum bisa tutup buku: 2 jurnal menunggu persetujuan kedua."
+    approver** dated by the month end (a lock freezes every earlier month, so a request in an empty earlier month — or a *Balik
+    otomatis* one landing on the 1st — could never post after it; `pendingJournalCount`, checked again under the client lock): "Belum
+    bisa tutup buku: 2 jurnal menunggu persetujuan kedua." A closed month is never locked again (who, when and why stay). A note is taken
+    only by a control asking for one (a REVIEW showing now): a note written ahead would clear whatever the control says later. **A post
+    can't race the lock:** the entry guard share-locks the client's periods from the entry's month on (`20261021130000`), and
+    `lockPeriod` takes its period row `FOR UPDATE` and refuses when the ledger it checked (count and latest entry of the months up to it)
+    changed meanwhile. The firm board says *Siap tutup buku* only when the lock would go through (no waiting journal, no earlier open
+    month). Schedules follow Jurnal berulang: an instalment in a month at or before the latest closed one is never proposed, and a
+    schedule with one there is refused at creation. An account a running Jurnal berulang or a waiting journal uses can't be archived.
     *Tutup bulan-bulan sebelumnya* (`lib/controls/history.ts`, admin only) closes the open months before the selected one in order, one
     month per call: the same rule per month, with one note written on each REVIEW still without a note and the sign-offs given by the
-    admin once for the run; a month whose open controls differ from what was previewed, or that fails, stops the run.
+    admin once for the run (one already ticked keeps its author); a month whose open controls differ from what was previewed, that fails,
+    or that has a waiting journal (refused before anything is written) stops the run.
 
 ## Tenancy
 24. Every row has `firmId`. Server actions resolve the client through `getClientForFirm()` before any write.
