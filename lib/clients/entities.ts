@@ -1,4 +1,5 @@
 import type { Db, Tx } from "@/lib/db";
+import { INTERCOMPANY_CODE_KEY, intercompanyName } from "@/lib/coa/intercompany";
 import { Prisma } from "@/lib/generated/prisma/client";
 import { recordEvent } from "@/lib/audit";
 import { npwp16, readNitku } from "@/lib/tax/coretax-codes";
@@ -47,6 +48,8 @@ const BY_ENTITY: [label: string, table: string][] = [
   ["dokumen yang dikonfirmasi untuk perusahaan ini", "EvidenceSelection"],
   ["pemeriksaan impor buku besar", "ImportCheck"],
   ["anggaran", "Budget"],
+  ["permintaan persetujuan jurnal", "JournalApproval"],
+  ["jurnal berulang", "RecurringJournal"],
 ];
 const DRAFT = "draf impor buku besar";
 const LOCKED_NOTE = "catatan kontrol di bulan yang sudah ditutup";
@@ -201,6 +204,7 @@ export async function renameEntity(db: Db, input: Actor & { entityId: string; na
   return db.$transaction(async (tx) => {
     const updated = await tx.entity.update({ where: { id: entity.id }, data: { name, shortName, npwp: npwp || null, ...(nitku === undefined ? {} : { nitku }) } });
     for (const b of entity.bankAccounts) await tx.account.update({ where: { id: b.accountId }, data: { name: glName(b.label, shortName) } });
+    await tx.account.updateMany({ where: { clientId: input.clientId, counterpartyEntityId: entity.id }, data: { name: intercompanyName(shortName) } });
     await recordEvent(tx, { clientId: input.clientId, entityId: entity.id, kind: "COMPANY_BANK", subject: `entity:${entity.id}`, summary: `Data ${before.name} diubah${before.name !== name ? ` menjadi ${name}` : ""}`, before, after, actorId: input.actorId });
     return updated;
   });
@@ -246,6 +250,11 @@ export async function removeBankAccount(db: Db, input: Actor & { bankAccountId: 
     .$transaction(async (tx) => {
       const reason = blockedReason("bank", (await clientUsage(tx, input.clientId)).banks.get(ba.id) ?? []);
       if (reason) throw new EntityEditError(reason);
+      // A journal waiting for approval or a running Jurnal berulang naming its GL account by code holds no line yet: removed, it would post
+      // to nothing (or to a later account given the same code).
+      const code = (await tx.account.findUniqueOrThrow({ where: { id: ba.accountId }, select: { code: true } })).code;
+      const stored = blockedReason("bank", await codeUsage(tx, input.clientId, code));
+      if (stored) throw new EntityEditError(stored);
       await dropAcks(tx, input.clientId, [ba.id]);
       await tx.bankAccount.delete({ where: { id: ba.id } });
       await tx.account.delete({ where: { id: ba.accountId } });
@@ -253,6 +262,33 @@ export async function removeBankAccount(db: Db, input: Actor & { bankAccountId: 
       return { label: ba.label };
     })
     .catch(raced("Rekening ini"));
+}
+
+/**
+ * What still names an account by its code (a company's intercompany `1190NN`, a rekening's GL account) — a journal waiting for a second approver, a running Jurnal
+ * berulang template, a bank row or split filed to it (or suggested), a client rule or remembered choice. None of these is a journal line,
+ * so the account looks empty; removed with the company, each would post or file to nothing — or, before codes were never reused, to the
+ * next company's account.
+ */
+async function codeUsage(tx: Tx, clientId: string, code: string): Promise<Usage> {
+  const rows = await tx.$queryRaw<{ k: string; n: number }[]>`
+    SELECT 'jurnal menunggu persetujuan' AS k, count(*)::int AS n FROM "JournalApproval" a
+      WHERE a."clientId" = ${clientId} AND a.status = 'PENDING'
+        AND (${code} = ANY(a.accounts) OR EXISTS (SELECT 1 FROM jsonb_array_elements(a.lines) x WHERE x->>'accountCode' = ${code}))
+    UNION ALL
+    SELECT 'jurnal berulang berjalan', count(*)::int FROM "RecurringJournal" r
+      WHERE r."clientId" = ${clientId} AND r."stoppedAt" IS NULL AND EXISTS (SELECT 1 FROM jsonb_array_elements(r.lines) x WHERE x->>'accountCode' = ${code})
+    UNION ALL
+    SELECT 'mutasi yang diklasifikasikan ke akun ini', count(*)::int FROM "BankTransaction" t JOIN "BankAccount" b ON b.id = t."bankAccountId" JOIN "Entity" e ON e.id = b."entityId"
+      WHERE e."clientId" = ${clientId} AND (t."accountCode" = ${code} OR t."suggestedCode" = ${code}
+        OR EXISTS (SELECT 1 FROM "BankTxSplit" s WHERE s."bankTransactionId" = t.id AND s."accountCode" = ${code}))
+    UNION ALL
+    SELECT 'aturan klasifikasi ke akun ini', count(*)::int FROM "Rule" WHERE "clientId" = ${clientId} AND "accountCode" = ${code}
+    UNION ALL
+    SELECT 'pilihan yang diingat ke akun ini', count(*)::int FROM "Memory" WHERE "clientId" = ${clientId} AND "accountCode" = ${code}`;
+  const usage: Usage = [];
+  for (const r of rows) add(usage, r.k, r.n);
+  return usage;
 }
 
 /** E4: a company/owner nothing points to, with its empty bank accounts; the client keeps at least one. */
@@ -273,6 +309,15 @@ export async function removeEntity(db: Db, input: Actor & { entityId: string }) 
       await dropAcks(tx, input.clientId, [entity.id, ...banks.map((b) => b.id)]);
       await tx.bankAccount.deleteMany({ where: { id: { in: banks.map((b) => b.id) } } });
       await tx.account.deleteMany({ where: { id: { in: banks.map((b) => b.accountId) } } });
+      // Its intercompany account (a group of three or more) goes with it while no company has recorded anything on it.
+      const ic = await tx.account.findFirst({ where: { clientId: input.clientId, counterpartyEntityId: entity.id }, select: { id: true, code: true, name: true, _count: { select: { lines: true } } } });
+      if (ic?._count.lines) throw new EntityEditError(`${ic.code} ${ic.name} masih berisi saldo perusahaan lain dengan ${entity.shortName}. Selesaikan saldonya dulu.`);
+      if (ic) {
+        // Its code is still named elsewhere (lines, but no journal line yet): refused with what names it, as for anything recorded.
+        const named = await codeUsage(tx, input.clientId, ic.code);
+        if (named.length) throw new EntityEditError(`${ic.code} ${ic.name} masih dipakai: ${list(named)}. Putuskan, hentikan atau ubah dulu, baru hapus ${entity.shortName}.`);
+        await tx.account.delete({ where: { id: ic.id } });
+      }
       await tx.entity.delete({ where: { id: entity.id } });
       await recordEvent(tx, {
         clientId: input.clientId,
@@ -280,7 +325,8 @@ export async function removeEntity(db: Db, input: Actor & { entityId: string }) 
         kind: "COMPANY_BANK",
         subject: `entity:${entity.id}`,
         summary: `${entity.name} dihapus${banks.length ? ` beserta ${banks.length} rekening kosong` : ""}`,
-        before: { name: entity.name, shortName: entity.shortName, kind: entity.kind, bankAccounts: banks.map((b) => b.label) },
+        // The intercompany code is kept here: ensureIntercompanyAccounts never issues a code a removed company had (lib/coa/intercompany.ts).
+        before: { name: entity.name, shortName: entity.shortName, kind: entity.kind, bankAccounts: banks.map((b) => b.label), ...(ic ? { [INTERCOMPANY_CODE_KEY]: ic.code } : {}) },
         actorId: input.actorId,
       });
       return { name: entity.name, bankAccounts: banks.length };

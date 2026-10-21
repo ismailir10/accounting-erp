@@ -43,7 +43,8 @@ describe("adding to an existing client", () => {
     expect(e).toMatchObject({ clientId: g.client.id, kind: "PERORANGAN", shortName: "Budi", functionalCurrency: "IDR", reportingFramework: "SAK_EMKM" }); // a person's own books default to SAK EMKM; the group still reports on its highest framework
     const acct = await db.bankAccount.findFirstOrThrow({ where: { entityId: e.id }, include: { account: true } });
     expect(acct.account).toMatchObject({ code: "1104", name: "Jenius Budi (Budi)" });
-    expect(await db.account.count({ where: { clientId: g.client.id } })).toBe(before + 1);
+    // Its bank account, and — the client's third company — an intercompany account per company (Antar entitas per pihak).
+    expect(await db.account.count({ where: { clientId: g.client.id } })).toBe(before + 1 + 3);
     const noBank = await addEntity(db, g.firm.id, g.client.id, { ...owner(), name: "PT Baru Sejahtera", shortName: "", kind: "PT" });
     expect(noBank.shortName).toBe("PT Baru Sejahtera");
     expect(await db.bankAccount.count({ where: { entityId: noBank.id } })).toBe(0);

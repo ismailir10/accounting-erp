@@ -6,6 +6,8 @@ import { ENTRY_SOURCE_SELECT, entrySource } from "@/lib/reports/entry-source";
 import { entryOrigins } from "@/lib/reports/entry-origin";
 import { approvalLines } from "@/lib/approvals/pending";
 import type { Scope } from "@/lib/reports/ledger";
+import { parseNumberQuery } from "@/lib/ledger/number";
+import { attachmentsOf } from "@/lib/ledger/attachments";
 
 /** The kinds Jurnal Umum filters by (`?jenis=`). A bank line's later reclassification belongs with the bank lines. */
 export const KIND_FILTERS: { value: string; label: string; kinds: EntryKind[] | null }[] = [
@@ -20,10 +22,11 @@ export const KIND_FILTERS: { value: string; label: string; kinds: EntryKind[] | 
 export const parseKindFilter = (v: unknown) => KIND_FILTERS.find((k) => k.value === v) ?? KIND_FILTERS[0];
 
 /**
- * What a search box text looks for: always the text itself (memo, bank row, account code or name), and — when it reads as an amount in
- * the scope's currency ("1.250.000", "Rp 1.250.000", "1250000") — lines of exactly that amount on either side.
+ * What a search box text looks for: always the text itself (memo, bank row, account code or name, part of a nomor bukti), when it reads
+ * as an amount in the scope's currency ("1.250.000", "Rp 1.250.000", "1250000") lines of exactly that amount on either side, and when
+ * it reads as a nomor bukti ("jp-2512-3") that journal.
  */
-export function parseSearch(q: string | undefined, currency: string): { text: string; amount: bigint | null } | null {
+export function parseSearch(q: string | undefined, currency: string): { text: string; amount: bigint | null; number: string | null } | null {
   const text = (q ?? "").trim().slice(0, 100);
   if (!text) return null;
   let amount: bigint | null = null;
@@ -35,10 +38,10 @@ export function parseSearch(q: string | undefined, currency: string): { text: st
       if (!(e instanceof MoneyError)) throw e;
     }
   }
-  return { text, amount };
+  return { text, amount, number: parseNumberQuery(text) };
 }
 
-export type RegisterFilter = { start: Date; end: Date; kinds: EntryKind[] | null; search: { text: string; amount: bigint | null } | null };
+export type RegisterFilter = { start: Date; end: Date; kinds: EntryKind[] | null; search: { text: string; amount: bigint | null; number?: string | null } | null };
 
 function entryWhere(scope: Scope, f: RegisterFilter): Prisma.JournalEntryWhereInput {
   const contains = (s: string) => ({ contains: s, mode: "insensitive" as const });
@@ -50,6 +53,8 @@ function entryWhere(scope: Scope, f: RegisterFilter): Prisma.JournalEntryWhereIn
       ? {
           OR: [
             { memo: contains(f.search.text) },
+            { number: contains(f.search.text) },
+            ...(f.search.number ? [{ number: f.search.number }] : []),
             { sourceRef: contains(f.search.text) },
             { bankTransaction: { description: contains(f.search.text) } },
             { lines: { some: { OR: [{ account: { code: f.search.text } }, { account: { name: contains(f.search.text) } }, { memo: contains(f.search.text) }] } } },
@@ -60,9 +65,12 @@ function entryWhere(scope: Scope, f: RegisterFilter): Prisma.JournalEntryWhereIn
   };
 }
 
-export type RegisterLine = { code: string; name: string; memo: string | null; debit: bigint; credit: bigint };
+/** `tags`: the line's Departemen & Proyek codes ("OUTLET-A · PRJ-01"), or null. */
+export type RegisterLine = { code: string; name: string; memo: string | null; debit: bigint; credit: bigint; tags?: string | null };
 export type RegisterEntry = {
   id: string;
+  /** Nomor bukti (lib/ledger/number.ts); null only for a journal written outside postJournal() in a test. */
+  number: string | null;
   date: Date;
   entity: string;
   kind: EntryKind;
@@ -76,6 +84,8 @@ export type RegisterEntry = {
   approval?: string | null;
   /** The date of the journal that reversed this one (*Balik jurnal*), if any. */
   reversedOn: Date | null;
+  /** Lampiran jurnal (lib/ledger/attachments.ts), without their bytes. */
+  attachments: { id: string; fileName: string; size: number }[];
   lines: RegisterLine[];
 };
 
@@ -97,6 +107,7 @@ export async function journalRegister(db: Db, scope: Scope, f: RegisterFilter, p
       ...(page === "all" ? {} : { skip: (Math.max(1, page) - 1) * PAGE_SIZE, take: PAGE_SIZE }),
       select: {
         id: true,
+        number: true,
         date: true,
         memo: true,
         createdAt: true,
@@ -104,14 +115,15 @@ export async function journalRegister(db: Db, scope: Scope, f: RegisterFilter, p
         entity: { select: { shortName: true } },
         postedBy: { select: { name: true } },
         reversedBy: { select: { date: true } },
-        lines: { select: { debit: true, credit: true, memo: true, account: { select: { code: true, name: true } } }, orderBy: { id: "asc" } },
+        lines: { select: { debit: true, credit: true, memo: true, account: { select: { code: true, name: true } }, department: { select: { code: true } }, project: { select: { code: true } } }, orderBy: { id: "asc" } },
         ...ENTRY_SOURCE_SELECT,
       },
     }),
   ]);
-  const [origins, approvals] = await Promise.all([entryOrigins(db, rows.map((e) => e.id)), approvalLines(db, rows)]);
+  const [origins, approvals, files] = await Promise.all([entryOrigins(db, rows.map((e) => e.id)), approvalLines(db, rows), attachmentsOf(db, rows.map((e) => e.id))]);
   const entries: RegisterEntry[] = rows.map((e) => ({
     id: e.id,
+    number: e.number,
     date: e.date,
     entity: e.entity.shortName,
     kind: e.kind,
@@ -122,9 +134,10 @@ export async function journalRegister(db: Db, scope: Scope, f: RegisterFilter, p
     postedAt: e.createdAt,
     approval: approvals.get(e.id) ?? null,
     reversedOn: e.reversedBy?.date ?? null,
+    attachments: files.get(e.id) ?? [],
     lines: [...e.lines]
       .sort((a, b) => Number(b.debit > 0n) - Number(a.debit > 0n))
-      .map((l) => ({ code: l.account.code, name: l.account.name, memo: l.memo, debit: l.debit, credit: l.credit })),
+      .map((l) => ({ code: l.account.code, name: l.account.name, memo: l.memo, debit: l.debit, credit: l.credit, tags: [l.department?.code, l.project?.code].filter(Boolean).join(" · ") || null })),
   }));
   return { count, debit: totals._sum.debit ?? 0n, credit: totals._sum.credit ?? 0n, entries, pageSize: PAGE_SIZE, pages: Math.max(1, Math.ceil(count / PAGE_SIZE)) };
 }

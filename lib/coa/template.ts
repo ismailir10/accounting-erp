@@ -203,6 +203,9 @@ export const TAX_TAG_LABEL: Record<TaxTag, string> = {
   PPH_25: "PPh 25",
 };
 
+/** 1190 and the per-company intercompany accounts of a group of three or more (`1190NN`, lib/coa/intercompany.ts). */
+export const isIntercompanyCode = (code: string | null | undefined) => code === ACCOUNT_CODES.INTERCOMPANY || /^1190\d{2}$/.test(code ?? "");
+
 /** Accounts a classifier (rules aside) may propose for a bank line: never a bank, the suspense, retained earnings or an opening difference. */
-export const isClassifiable = (a: { isBank: boolean; isSuspense: boolean; isRetained: boolean; fsLine: string }) =>
-  !a.isBank && !a.isSuspense && !a.isRetained && a.fsLine !== "SELISIH_SALDO_AWAL";
+export const isClassifiable = (a: { isBank: boolean; isSuspense: boolean; isRetained: boolean; fsLine: string; archivedAt?: Date | null }) =>
+  !a.isBank && !a.isSuspense && !a.isRetained && !a.archivedAt && a.fsLine !== "SELISIH_SALDO_AWAL";

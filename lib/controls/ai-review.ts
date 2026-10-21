@@ -72,7 +72,7 @@ export async function gather(db: Db, clientId: string, year: number, month: numb
       // between two asset accounts can't move the total, so send the asset accounts carrying credit balances and the bank
       // lines booked to those accounts or to non-asset accounts (expenses, liabilities, equity).
       const assets = kind === "nature-total";
-      const candidates = await db.account.findMany({ where: { clientId, type: { in: ["ASET", "LIABILITAS"] }, isBank: false, isSuspense: false, isClearing: false, isIntercompany: false } });
+      const candidates = await db.account.findMany({ where: { clientId, archivedAt: null, type: { in: ["ASET", "LIABILITAS"] }, isBank: false, isSuspense: false, isClearing: false, isIntercompany: false } });
       let flaggedCodes: string[];
       let bankCodes: string[];
       if (assets) {
@@ -186,7 +186,7 @@ export async function gather(db: Db, clientId: string, year: number, month: numb
     }
     reviewed.push({ key: c.key, title: c.title, scope: c.scope, status: c.status as "REVIEW" | "FAIL", detail: c.detail, rows });
   }
-  const accounts = aiAccounts(await db.account.findMany({ where: { clientId }, select: { code: true, name: true }, orderBy: { code: "asc" } }));
+  const accounts = aiAccounts(await db.account.findMany({ where: { clientId, archivedAt: null }, select: { code: true, name: true }, orderBy: { code: "asc" } }));
   return { input: { client: client.name, period: formatPeriod(year, month), accounts, controls: reviewed, entities: await reviewEntities(db, clientId) }, links, flagged };
 }
 

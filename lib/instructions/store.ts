@@ -34,7 +34,7 @@ export type ScopeCharts = { clients: { id: string; name: string }[]; codes: Map<
 export async function scopeCharts(db: Db | Tx, scope: InstructionScope): Promise<ScopeCharts> {
   const clients = await db.client.findMany({ where: { firmId: scope.firmId, ...(scope.clientId ? { id: scope.clientId } : {}) }, select: { id: true, name: true }, orderBy: { name: "asc" } });
   if (scope.clientId && !clients.length) throw new InstructionError("Klien tidak ditemukan.");
-  const rows = await db.account.findMany({ where: { clientId: { in: clients.map((c) => c.id) } }, select: { clientId: true, code: true, name: true, type: true, fsLine: true, isBank: true, isSuspense: true, isRetained: true, isClearing: true, isIntercompany: true }, orderBy: { code: "asc" } });
+  const rows = await db.account.findMany({ where: { clientId: { in: clients.map((c) => c.id) }, archivedAt: null }, select: { clientId: true, code: true, name: true, type: true, fsLine: true, isBank: true, isSuspense: true, isRetained: true, isClearing: true, isIntercompany: true }, orderBy: { code: "asc" } });
   const codes = new Map(clients.map((c) => [c.id, new Set<string>()]));
   const accounts = new Map<string, ScopeAccount>();
   const order = new Map(clients.map((c, i) => [c.id, i]));

@@ -1,5 +1,6 @@
 import type { Classification, ClassifyInput } from "@/lib/classify/types";
 import { ACCOUNT_CODES } from "@/lib/coa/template";
+import { MIN_COMPANIES } from "@/lib/coa/intercompany";
 import { CHANNEL_WORDS, isGenericKey, merchantKey } from "@/lib/import/normalize";
 import { formatDate } from "@/lib/format";
 import { formatRupiah } from "@/lib/money";
@@ -88,6 +89,8 @@ export type TransferCandidate = ClassifyInput & { matched?: boolean; pairRefused
 export function matchTransfers(
   items: TransferCandidate[],
   ownNames: { entityId: string; names: string[] }[],
+  /** The intercompany account to record a balance with that company on (its own `1190NN` in a group of three or more, else 1190). */
+  intercompanyCode: (counterpartyEntityId: string) => string = () => ACCOUNT_CODES.INTERCOMPANY,
 ): Map<string, Classification> {
   const result = new Map<string, Classification>();
   const allNames = ownNames.flatMap((e) => e.names);
@@ -99,10 +102,25 @@ export function matchTransfers(
   const naming = items.filter((i) => looksLikeTransfer(i) && !clean(i));
   const outs = hinted.filter((i) => i.amount < 0n);
   const ins = hinted.filter((i) => i.amount > 0n);
-  const fits = (o: TransferCandidate, i: TransferCandidate) => i.bankAccountId !== o.bankAccountId && i.amount === -o.amount && businessDaysApart(i.date, o.date) <= MATCH_BUSINESS_DAYS;
+  const sameMoney = (o: TransferCandidate, i: TransferCandidate) => i.bankAccountId !== o.bankAccountId && i.amount === -o.amount && businessDaysApart(i.date, o.date) <= MATCH_BUSINESS_DAYS;
+  // A group of three or more keeps an account per company, so a line naming another group company is a transfer with that company:
+  // it pairs only with a line of it (PT paying the CV is never the other half of the owner's receipt from PT). A line naming none pairs
+  // as before; with two companies the other side is implied, as before.
+  const parties = (x: TransferCandidate) => {
+    const d = x.description.toUpperCase();
+    return ownNames.filter((e) => e.entityId !== x.entityId && e.names.some((n) => says(d, n))).map((e) => e.entityId);
+  };
+  const perParty = ownNames.length >= MIN_COMPANIES;
+  const agrees = (a: TransferCandidate, b: TransferCandidate) => {
+    if (!perParty) return true;
+    const named = parties(a);
+    return !named.length || named.includes(b.entityId);
+  };
+  const fits = (o: TransferCandidate, i: TransferCandidate) => sameMoney(o, i) && agrees(o, i) && agrees(i, o);
   const candidatesOf = new Map(outs.map((o) => [o.id, ins.filter((i) => fits(o, i))]));
   const outsFor = (i: TransferCandidate) => outs.filter((o) => candidatesOf.get(o.id)!.includes(i));
-  const codeFor = (a: TransferCandidate, b: TransferCandidate) => (a.entityId === b.entityId ? ACCOUNT_CODES.CLEARING : ACCOUNT_CODES.INTERCOMPANY);
+  // `a`'s side of a transfer with `b`: its own money moving (1199), or a balance with b's company, on that company's account.
+  const codeFor = (a: TransferCandidate, b: TransferCandidate) => (a.entityId === b.entityId ? ACCOUNT_CODES.CLEARING : intercompanyCode(b.entityId));
   const named = (xs: TransferCandidate[]) => xs.map((y) => `${formatDate(y.date)} ${formatRupiah(y.amount < 0n ? -y.amount : y.amount)}`).join("; ");
 
   for (const o of outs) {
@@ -113,9 +131,9 @@ export function matchTransfers(
       const partner = cands[0];
       const same = partner.entityId === o.entityId;
       const reason = same ? "Transfer antar rekening sendiri (pasangan ditemukan)" : "Transfer antar entitas grup (pasangan ditemukan)";
-      const c = { method: "TRANSFER" as const, accountCode: codeFor(o, partner), taxTag: null, confidence: 0.99, reason };
-      result.set(o.id, { ...c, matchedTxId: partner.id });
-      result.set(partner.id, { ...c, matchedTxId: o.id });
+      const c = { method: "TRANSFER" as const, taxTag: null, confidence: 0.99, reason };
+      result.set(o.id, { ...c, accountCode: codeFor(o, partner), matchedTxId: partner.id });
+      result.set(partner.id, { ...c, accountCode: codeFor(partner, o), matchedTxId: o.id });
       continue;
     }
     // Several lines could be each other's other half: none is chosen. Each one involved waits in Review naming the others.
@@ -139,11 +157,11 @@ export function matchTransfers(
   // that names someone else sits on the other side: then it may be that line's money, and the reviewer decides.
   for (const i of hinted) {
     if (result.has(i.id) || !TRANSFER_HINT.test(i.description)) continue;
-    const lookalike = naming.filter((n) => (i.amount < 0n ? fits(i, n) : fits(n, i)));
+    const lookalike = naming.filter((n) => (i.amount < 0n ? sameMoney(i, n) : sameMoney(n, i)));
     const d = i.description.toUpperCase();
     const other = ownNames.find((e) => e.entityId !== i.entityId && e.names.some((n) => says(d, n)));
     const self = ownNames.find((e) => e.entityId === i.entityId && e.names.some((n) => says(d, n)));
-    const code = other ? ACCOUNT_CODES.INTERCOMPANY : self ? ACCOUNT_CODES.CLEARING : null;
+    const code = other ? intercompanyCode(other.entityId) : self ? ACCOUNT_CODES.CLEARING : null;
     if (!code) continue;
     if (lookalike.length) {
       result.set(i.id, {
@@ -176,7 +194,7 @@ export function matchTransfers(
     if (!name) continue;
     result.set(i.id, {
       method: "TRANSFER",
-      accountCode: ACCOUNT_CODES.INTERCOMPANY,
+      accountCode: intercompanyCode(other!.entityId),
       taxTag: null,
       confidence: AMBIGUOUS_CONFIDENCE,
       reason: rest.length

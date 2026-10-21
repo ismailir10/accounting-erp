@@ -36,7 +36,7 @@ export function JournalFilters({ ranges, kinds, range, kind, q }: { ranges: Opti
           go({ q: text.trim() });
         }}
       >
-        <Input aria-label="Cari jurnal" placeholder="Cari keterangan, akun, atau nominal" value={text} onChange={(e) => setText(e.target.value)} className="min-w-0 flex-1 sm:w-72" />
+        <Input aria-label="Cari jurnal" placeholder="Cari no. bukti, keterangan, akun, atau nominal" value={text} onChange={(e) => setText(e.target.value)} className="min-w-0 flex-1 sm:w-72" />
         <Button type="submit" variant="outline">
           <Search /> Cari
         </Button>

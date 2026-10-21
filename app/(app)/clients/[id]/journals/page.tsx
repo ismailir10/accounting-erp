@@ -15,6 +15,8 @@ import { ENTRY_KIND_LABEL } from "@/lib/reports/entry-source";
 import { parseRange, rangeBounds } from "@/lib/reports/general-ledger";
 import { journalRegister, KIND_FILTERS, parseKindFilter, parseSearch } from "@/lib/reports/journal-register";
 import { rangeLabel } from "@/lib/reports/ledger-workbook";
+import { JournalAttachments } from "@/components/app/journal-attachments";
+import { accessView, requireWorkspaceSession } from "@/lib/auth/session";
 
 export const metadata = { title: "Jurnal Umum" };
 
@@ -22,7 +24,8 @@ const monthKey = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 
 
 /**
  * Jurnal Umum: every journal of the month (or the financial year to date), with its lines and where it came from, filtered by kind and
- * searched by text or amount. Read-only; each account opens its Buku Besar for the journal's month.
+ * searched by text or amount. Read-only for the ledger; each account opens its Buku Besar for the journal's month, and a writer attaches
+ * lampiran (receipts, invoices) to any journal.
  */
 export default async function JournalsPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: SearchParams }) {
   const { client, period, scope, periodOptions, entityOptions, base, scopeLabel, currency, mixed, sp } = await loadClientPage(params, searchParams);
@@ -32,6 +35,7 @@ export default async function JournalsPage({ params, searchParams }: { params: P
   const page = Math.max(1, Math.floor(Number(sp.hal)) || 1);
   const bounds = await rangeBounds(prisma, client.id, range, period);
   const label = rangeLabel(range, bounds.start, bounds.end);
+  const { canWrite } = accessView(await requireWorkspaceSession());
   const header = (
     <PageHeader title="Jurnal Umum" description={`${scopeLabel} · ${label}`} actions={<ScopeBar entities={entityOptions} periods={periodOptions} entity={scope.value} period={period.key} />} />
   );
@@ -109,6 +113,7 @@ export default async function JournalsPage({ params, searchParams }: { params: P
                   <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                     <div className="min-w-0">
                       <p className="text-xs text-muted-foreground">
+                        {e.number && <><span className="num font-medium text-foreground" data-testid="entry-number">{e.number}</span> · </>}
                         <span className="num">{formatDate(e.date)}</span> · {ENTRY_KIND_LABEL[e.kind]}
                         {scope.mode === "combined" && ` · ${e.entity}`}
                         {e.reversedOn && <span className="text-review"> · dibalik {formatDateLong(e.reversedOn)}</span>}
@@ -121,6 +126,7 @@ export default async function JournalsPage({ params, searchParams }: { params: P
                   </div>
                   {e.source && <p className="text-xs break-words text-muted-foreground">Sumber: {e.source}</p>}
                   {e.origin && <p className="text-xs break-words text-muted-foreground" data-testid="entry-origin">Asal: {e.origin}</p>}
+                  <JournalAttachments clientId={client.id} entryId={e.id} files={e.attachments} canWrite={canWrite} label={e.number ?? e.memo} />
                   <table className="w-full max-w-3xl table-fixed text-sm">
                     <thead className="sr-only">
                       <tr>
@@ -137,6 +143,7 @@ export default async function JournalsPage({ params, searchParams }: { params: P
                               <span className="num text-muted-foreground">{l.code}</span> {l.name}
                             </Link>
                             {l.memo && l.memo !== e.memo && <span className="block truncate text-xs text-muted-foreground">{l.memo}</span>}
+                            {l.tags && <span className="num block truncate text-xs text-muted-foreground" data-testid="register-line-tags">{l.tags}</span>}
                           </td>
                           <td className="w-24 py-0.5 text-right align-top sm:w-36">{l.debit > 0n && <Money value={l.debit} currency={currency} />}</td>
                           <td className="w-24 py-0.5 text-right align-top sm:w-36">{l.credit > 0n && <Money value={l.credit} currency={currency} />}</td>

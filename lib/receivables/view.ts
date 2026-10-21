@@ -1,6 +1,6 @@
 import type { Db } from "@/lib/db";
 import type { InvoiceDirection } from "@/lib/generated/prisma/enums";
-import { BUCKETS, agingByContact, invoicesAt, subledgerVsLedger, type Bucket } from "@/lib/receivables/aging";
+import { BUCKETS, agingByContact, invoicesAt, openingDates, subledgerFrom, subledgerVsLedger, type Bucket } from "@/lib/receivables/aging";
 import { settleCandidates } from "@/lib/receivables/settle";
 import { formatDate } from "@/lib/format";
 
@@ -135,15 +135,18 @@ export async function receivablesView(db: Db, clientId: string, direction: Invoi
   const codes = [...new Set([...comparisons.flatMap((c) => c.accounts), direction === "SALES" ? "1130" : "2110"])];
   const lines = await db.bankTransaction.findMany({
     where: { entityId: { in: ids }, date: { lte: asOf }, status: { not: "NEEDS_REVIEW" }, OR: [{ accountCode: { in: codes }, splits: { none: {} } }, { splits: { some: { accountCode: { in: codes } } } }] },
-    include: { settlements: { select: { amount: true, withheld: true } }, contact: { select: { id: true, name: true } }, splits: { select: { accountCode: true, amount: true } } },
+    include: { settlements: { select: { amount: true, withheld: true, invoice: { select: { entityId: true, issueDate: true, opening: true } } } }, contact: { select: { id: true, name: true } }, splits: { select: { accountCode: true, amount: true } } },
     orderBy: [{ date: "asc" }, { rowNumber: "asc" }],
   });
   const settling = direction === "SALES" ? "IN" : "OUT";
+  // A settlement counts from the date its document entered the subledger: at a past date, an advance that paid a later invoice was free.
+  const lineOpenings = await openingDates(db, ids);
+  const settledBy = (x: (typeof lines)[number]["settlements"][number]) => +subledgerFrom(x.invoice, lineOpenings) <= +asOf;
   const unsettled: UnsettledLineView[] = lines
     .map((t) => ({
       t,
       // Cash still free on the line (a split line: its part on these accounts, never settled).
-      free: t.splits.length ? t.splits.filter((p) => codes.includes(p.accountCode)).reduce((u, p) => u + p.amount, 0n) : (t.amount < 0n ? -t.amount : t.amount) - t.settlements.reduce((u, x) => u + x.amount - x.withheld, 0n),
+      free: t.splits.length ? t.splits.filter((p) => codes.includes(p.accountCode)).reduce((u, p) => u + p.amount, 0n) : (t.amount < 0n ? -t.amount : t.amount) - t.settlements.filter(settledBy).reduce((u, x) => u + x.amount - x.withheld, 0n),
     }))
     .filter((x) => x.free > 0n)
     .map(({ t, free }) => ({

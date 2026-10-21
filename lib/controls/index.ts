@@ -9,6 +9,7 @@ import { balanceSheet, combinedWorksheet, trialBalance } from "@/lib/reports/led
 import { sanityControls } from "@/lib/controls/sanity";
 import { anomalyControls } from "@/lib/controls/anomaly";
 import { closeLock, dueProposals, schedulesDueBy } from "@/lib/adjust/schedules";
+import { recurringDue, recurringDueBy } from "@/lib/adjust/recurring";
 import { closeReopenRequests, pendingJournalCount, pendingLockMessage } from "@/lib/approvals/pending";
 import { paidAfterAccrual } from "@/lib/adjust/accruals";
 import { registerVsLedger } from "@/lib/assets/register";
@@ -253,11 +254,15 @@ async function collectControls(db: Db, clientId: string, year: number, month: nu
     );
     if (flags.length) controls.push(...(await instructionControls(db, { flags, entity: e, start, end, acks })));
 
-    // Adjustment schedules (rule 5a): an installment of this month not yet posted needs the click or a note.
-    const due = await dueProposals(db, clientId, year, month, e.id);
+    // Adjustment schedules (rule 5a) and Jurnal berulang: an instalment of this month not yet posted needs the click (or the template's
+    // stop) or a note. One waiting for a second approver is asked, not due: the lock waits for its decision instead.
+    const due = [
+      ...(await dueProposals(db, clientId, year, month, e.id)).map((p) => ({ memo: p.memo, amount: p.installment.amount })),
+      ...(await recurringDue(db, clientId, year, month, e.id)).filter((d) => !d.waitingId).map((d) => ({ memo: `${d.template.memo} (${formatPeriod(d.year, d.month)})`, amount: d.amount })),
+    ];
     if (due.length) {
       const sKey = `sched:${e.id}`;
-      const list = due.slice(0, 3).map((p) => `${p.memo} ${fmt(p.installment.amount)}`);
+      const list = due.slice(0, 3).map((p) => `${p.memo} ${fmt(p.amount)}`);
       controls.push({
         key: sKey,
         title: "Jurnal terjadwal belum dicatat",
@@ -594,28 +599,73 @@ async function collectControls(db: Db, clientId: string, year: number, month: nu
       if (e instanceof FxMissingError) return e;
       throw e;
     });
+    const icTitle = "Antar entitas (1190) tereliminasi";
+    // A group of three or more records balances per counterparty: what still sits on 1190 can't tell which company it is with.
+    const perParty = await db.account.count({ where: { clientId, counterpartyEntityId: { not: null } } });
+    let left: string[];
     if (ws instanceof FxMissingError) {
+      const missing = ws.missing.map((m) => `${m.entity}: ${m.need}`).join("; ");
       controls.push({
         key: "fx-translation",
         title: "Kurs penjabaran ke Rupiah lengkap",
         scope: "Grup",
         status: "REVIEW",
-        detail: ws.missing.map((m) => `${m.entity}: ${m.need}`).join("; "),
+        detail: missing,
         href: `${base}/rates`,
         ack: acks.get("fx-translation"),
       });
-      return controls;
+      // Without the rates the pairs can't be compared. A note on the missing rates must never close a month whose intercompany balances
+      // were never checked, so while the group has any intercompany line by the month end this is a FAIL until the rates are in.
+      const icLines = await db.journalLine.count({ where: { date: { lte: end }, account: { clientId, isIntercompany: true } } });
+      controls.push({
+        key: "intercompany",
+        title: icTitle,
+        scope: "Grup",
+        status: icLines ? "FAIL" : "PASS",
+        detail: icLines ? `Belum bisa diperiksa: kurs penjabaran ke Rupiah belum lengkap (${missing}). Isi kursnya di halaman Kurs` : "Tidak ada saldo antar entitas",
+        href: `${base}/rates`,
+        ack: acks.get("intercompany"),
+      });
+      // What sits on 1190 needs no rate to be seen: each company's balance in its own currency.
+      const generic = perParty
+        ? await db.journalLine.groupBy({ by: ["entityId"], where: { date: { lte: end }, account: { clientId, code: ACCOUNT_CODES.INTERCOMPANY } }, _sum: { debit: true, credit: true } })
+        : [];
+      left = entities.flatMap((e) => {
+        const g = generic.find((x) => x.entityId === e.id);
+        const v = (g?._sum.debit ?? 0n) - (g?._sum.credit ?? 0n);
+        return v ? [`${e.shortName} ${formatMoney(v, e.functionalCurrency)}`] : [];
+      });
+    } else {
+      const idr = (v: bigint) => formatMoney(v, ws.translated ? "IDR" : (entities[0]?.functionalCurrency ?? "IDR"));
+      const abs = (v: bigint) => (v < 0n ? -v : v);
+      // Per pair (a group of three or more): every pair must mirror; one broken pair never hides behind another that offsets it.
+      const broken = [...(ws.residual !== 0n ? [`Selisih ${idr(ws.residual)} antar entitas belum cocok`] : []), ...ws.pairs.map((p) => `${p.a}–${p.b} selisih ${idr(abs(p.difference))}`)];
+      controls.push({
+        key: "intercompany",
+        title: icTitle,
+        scope: "Grup",
+        status: broken.length ? "REVIEW" : "PASS",
+        detail: broken.length ? broken.join("; ") : `Tereliminasi ${idr(ws.matched)}`,
+        href: `${base}/reports?entity=combined`,
+        ack: acks.get("intercompany"),
+      });
+      const generic = perParty ? ws.rows.filter((r) => r.code === ACCOUNT_CODES.INTERCOMPANY) : [];
+      left = ws.entities.flatMap((e, k) => {
+        const v = generic.reduce((t, r) => t + r.values[k], 0n);
+        return v ? [`${e.shortName} ${idr(v)}`] : [];
+      });
     }
-    const idr = (v: bigint) => formatMoney(v, ws.translated ? "IDR" : (entities[0]?.functionalCurrency ?? "IDR"));
-    controls.push({
-      key: "intercompany",
-      title: "Antar entitas (1190) tereliminasi",
-      scope: "Grup",
-      status: ws.residual === 0n ? "PASS" : "REVIEW",
-      detail: ws.residual === 0n ? `Tereliminasi ${idr(ws.matched)}` : `Selisih ${idr(ws.residual)} antar entitas belum cocok`,
-      href: `${base}/reports?entity=combined`,
-      ack: acks.get("intercompany"),
-    });
+    if (left.length) {
+      controls.push({
+        key: "intercompany-party",
+        title: "Saldo 1190 tanpa pihak",
+        scope: "Grup",
+        status: "REVIEW",
+        detail: `${left.join("; ")} di 1190. Pindahkan ke akun antar entitas pihaknya (1190xx) lewat Jurnal Penyesuaian`,
+        href: `${base}/ledger/${ACCOUNT_CODES.INTERCOMPANY}`,
+        ack: acks.get("intercompany-party"),
+      });
+    }
   }
   return controls;
 }
@@ -662,14 +712,30 @@ export async function laterLockedMonth(db: Db | Tx, clientId: string, year: numb
 }
 const mustCloseFirst = (p: { year: number; month: number }) => new CloseError(`Tutup buku ${formatPeriod(p.year, p.month)} dulu: bulan sebelumnya yang berisi transaksi harus ditutup lebih dulu.`);
 
+/** Schedules and Jurnal berulang templates with an instalment due by the month (rule 5a). */
+const dueBy = async (db: Db | Tx, clientId: string, year: number, month: number) => [...(await schedulesDueBy(db, clientId, year, month)), ...(await recurringDueBy(db, clientId, year, month))];
+
+const alreadyLocked = (year: number, month: number) => new CloseError(`${formatPeriod(year, month)} sudah ditutup.`);
+
+/** The journals of the client dated in the month or before: their count and the latest written. Changes when one is posted or removed. */
+async function ledgerFingerprint(db: Db | Tx, clientId: string, year: number, month: number) {
+  const { end } = periodBounds(year, month);
+  const r = await db.journalEntry.aggregate({ where: { entity: { clientId }, date: { lte: end } }, _count: { _all: true }, _max: { createdAt: true } });
+  return `${r._count._all}|${r._max.createdAt?.toISOString() ?? ""}`;
+}
+
 export async function lockPeriod(db: Db, clientId: string, year: number, month: number, note: string, actorId?: string | null) {
+  // A closed month keeps who closed it, when and why (the board's *Terkirim* reads its lock time): a second close is refused.
+  if ((await db.period.findUnique({ where: { clientId_year_month: { clientId, year, month } }, select: { status: true } }))?.status === "LOCKED") throw alreadyLocked(year, month);
   const before = await earlierOpenMonth(db, clientId, year, month);
   if (before) throw mustCloseFirst(before);
   // A journal waiting for a second approver that would post into this month (Persetujuan kedua): the lock waits for its decision.
   const waiting = await pendingJournalCount(db, clientId, year, month);
   if (waiting) throw new CloseError(pendingLockMessage(waiting));
   // Schedules due by this month known before the controls run: one created meanwhile was never checked, so the lock refuses (rule 5a).
-  const known = new Set(await schedulesDueBy(db, clientId, year, month));
+  const known = new Set(await dueBy(db, clientId, year, month));
+  // The ledger the controls read: a journal posted (or removed) in this month or before while they ran was never checked.
+  const seen = await ledgerFingerprint(db, clientId, year, month);
   const controls = await runControls(db, clientId, year, month);
   const period = await db.period.upsert({
     where: { clientId_year_month: { clientId, year, month } },
@@ -688,11 +754,16 @@ export async function lockPeriod(db: Db, clientId: string, year: number, month: 
   }
   return db.$transaction(async (tx) => {
     await closeLock(tx, clientId);
+    // The period row first: a posting into this month or before holds a share lock on it (the entry guard), so this waits for any in
+    // flight, and one after it sees the month closed.
+    await tx.$queryRaw`SELECT id FROM "Period" WHERE id = ${period.id} FOR UPDATE`;
+    if ((await tx.period.findUniqueOrThrow({ where: { id: period.id }, select: { status: true } })).status === "LOCKED") throw alreadyLocked(year, month);
+    if ((await ledgerFingerprint(tx, clientId, year, month)) !== seen) throw new CloseError("Buku berubah saat tutup buku berjalan (ada jurnal baru atau yang dihapus). Muat ulang halaman, periksa kontrolnya, lalu tutup lagi.");
     const raced = await earlierOpenMonth(tx, clientId, year, month);
     if (raced) throw mustCloseFirst(raced);
     const asked = await pendingJournalCount(tx, clientId, year, month); // a request stored meanwhile (submits take the same lock)
     if (asked) throw new CloseError(pendingLockMessage(asked));
-    if ((await schedulesDueBy(tx, clientId, year, month)).some((id) => !known.has(id))) {
+    if ((await dueBy(tx, clientId, year, month)).some((id) => !known.has(id))) {
       throw new CloseError("Jadwal penyesuaian baru yang jatuh tempo sampai bulan ini ditambahkan saat tutup buku berjalan. Muat ulang halaman, periksa kontrolnya, lalu tutup lagi.");
     }
     return tx.period.update({ where: { id: period.id }, data: { status: "LOCKED", lockedAt: new Date(), lockNote: note, lockedById: actorId ?? null } });

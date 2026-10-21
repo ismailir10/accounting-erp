@@ -16,7 +16,7 @@ export async function rangeBounds(db: Db, clientId: string, range: LedgerRange, 
   return range === "ytd" ? { start: fiscalYearStart(await fiscalEndMonth(db, clientId), month.end), end: month.end } : month;
 }
 
-export type GlLine = { date: Date; entity: string; kind: EntryKind; memo: string; source: string | null; debit: bigint; credit: bigint; balance: bigint };
+export type GlLine = { date: Date; number: string | null; entity: string; kind: EntryKind; memo: string; source: string | null; debit: bigint; credit: bigint; balance: bigint };
 export type GlAccount = {
   account: { id: string; code: string; name: string; type: AccountType; normalBalance: NormalBalance };
   opening: bigint;
@@ -64,7 +64,7 @@ export async function generalLedger(db: Db, scope: Scope, start: Date, end: Date
         credit: true,
         sourceRef: true,
         entryId: true,
-        entry: { select: { memo: true, entity: { select: { shortName: true } }, ...ENTRY_SOURCE_SELECT } },
+        entry: { select: { memo: true, number: true, entity: { select: { shortName: true } }, ...ENTRY_SOURCE_SELECT } },
       },
       orderBy: [{ date: "asc" }, { entry: { createdAt: "asc" } }, { id: "asc" }],
     }),
@@ -91,7 +91,7 @@ export async function generalLedger(db: Db, scope: Scope, start: Date, end: Date
       debit += l.debit;
       credit += l.credit;
       const source = [lineSource(l), origins.get(l.entryId)].filter(Boolean).join(" · ") || null;
-      return { date: l.date, entity: l.entry.entity.shortName, kind: l.entry.kind, memo: l.entry.memo, source, debit: l.debit, credit: l.credit, balance };
+      return { date: l.date, number: l.entry.number, entity: l.entry.entity.shortName, kind: l.entry.kind, memo: l.entry.memo, source, debit: l.debit, credit: l.credit, balance };
     });
     out.push({ account: { id: a.id, code: a.code, name: a.name, type: a.type, normalBalance: a.normalBalance }, opening, priorYearProfit: fold * sign, lines: glLines, debit, credit, closing: balance });
   }

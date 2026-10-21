@@ -4,7 +4,7 @@ import type { Db, Tx } from "@/lib/db";
 import type { AccountTerm, AccountType, MapMethod } from "@/lib/generated/prisma/enums";
 import { AI_BATCH_SIZE, ACCOUNT_MAPPING_PROMPT_VERSION, aiConfig, buildMapPrompt, maxTokensFor, type AiProvider, type MapItem } from "@/lib/ai/provider";
 import { AiBudgetError, runBudgetedAi } from "@/lib/ai/budget";
-import { ACCOUNT_CODES, COA_TEMPLATE, FS_LINES, type FsLine } from "@/lib/coa/template";
+import { ACCOUNT_CODES, COA_TEMPLATE, FS_LINES, isIntercompanyCode, type FsLine } from "@/lib/coa/template";
 import { templateAccounts } from "@/lib/coa/ensure";
 
 /**
@@ -111,7 +111,6 @@ const KEYWORDS: { re: RegExp; code: string; types?: AccountType[]; not?: RegExp;
   { re: /(penyusutan|depreciation|amorti[sz]ation|amortisasi).*(right of use|hak guna|\brou\b)/, code: ACCOUNT_CODES.ROU_DEPRECIATION, types: ["BEBAN"], template: true },
   { re: /(akumulasi|accumulated|accumulation).*(penyusutan|depreciation|amortization|amortisasi)/, code: "1219" },
   { re: /(penyusutan|depreciation|amortisasi|amortization)/, code: "6180", types: ["BEBAN"] },
-  { re: /(rounding|pembulatan)/, code: ACCOUNT_CODES.ROUNDING },
   { re: /(selisih kurs|foreign exchange|exchange (gain|loss)|forex|\bfx\b|revaluation|revaluasi)/, code: ACCOUNT_CODES.FX_GAIN_LOSS },
   // The P&L side of deferred tax ("Penghasilan Pajak Tangguhan (laba rugi)", "Deferred tax expense/benefit") whatever type the file suggests.
   { re: /^(?=.*(pajak tangguhan|deferred tax))(?=.*(laba rugi|penghasilan|manfaat|benefit|income|expense|beban))/, code: ACCOUNT_CODES.DEFERRED_TAX, template: true },
@@ -251,10 +250,41 @@ export function aiMapCacheKey(name: string, typeHint: string | null, coaVersion:
 
 const TYPE_LABEL: Record<AccountType, string> = { ASET: "Aset", LIABILITAS: "Liabilitas", EKUITAS: "Ekuitas", PENDAPATAN: "Pendapatan", BEBAN: "Beban" };
 
-/** Accounts a source account may map to: the client chart minus bank GL (tied to statements), suspense and clearing. */
+/**
+ * Accounts only Buku's own writers fill, never a source account's target: 3290 (a Saldo Awal difference, opened with its Temuan; typed
+ * Saldo Awal refuses a 3290 line too), 3900 (the translation difference of combined reports) and 7190 (the rounding `roundEntry` leaves,
+ * which the import's rounding note and the anomaly scans read as Buku's own). A client's own rounding or translation account maps to an
+ * account of its own. 7200 stays mappable: a client's realised exchange gain or loss is what it holds (revaluation is told by its entry).
+ */
+export const SYSTEM_ONLY_CODES: ReadonlySet<string> = new Set([ACCOUNT_CODES.OPENING_DIFFERENCE, ACCOUNT_CODES.TRANSLATION, ACCOUNT_CODES.ROUNDING]);
+
+/** Accounts a source account may map to: the client chart minus bank GL (tied to statements), suspense, clearing and system-only codes. */
 async function mappableAccounts(db: Db | Tx, clientId: string): Promise<ClientAccount[]> {
-  const all = await db.account.findMany({ where: { clientId }, orderBy: { code: "asc" } });
-  return all.filter((a) => !a.isBank && !a.isSuspense && !a.isClearing);
+  const all = await db.account.findMany({ where: { clientId, archivedAt: null }, orderBy: { code: "asc" } });
+  return all.filter((a) => !a.isBank && !a.isSuspense && !a.isClearing && !SYSTEM_ONLY_CODES.has(a.code));
+}
+
+/**
+ * A bank GL account's movement comes only from its statements, so a file may only open it: a source account may map to a bank GL account
+ * of its own entity when every planned or posted line of it is a Saldo Awal (a Neraca, a trial balance's opening, a GL's own opening rows).
+ * Then the Neraca opens the bank account as a typed Saldo Awal does, and the first statement reconciles. Any GL or trial-balance movement
+ * of the same source account would count the bank's movement twice: refused (postImport refuses it again if the mapping came first).
+ */
+async function bankMappingRefusal(tx: Tx, clientId: string, source: { id: string; entityId: string; code: string; name: string }, acc: { id: string; code: string; name: string }): Promise<string | null> {
+  const bank = await tx.bankAccount.findFirst({ where: { accountId: acc.id }, select: { entityId: true } });
+  if (!bank || bank.entityId !== source.entityId) return `${acc.code} ${acc.name} adalah rekening bank entitas lain. Saldo awal hanya membuka rekening bank entitasnya sendiri.`;
+  const refusal = `${acc.code} ${acc.name} adalah akun rekening bank: mutasinya datang dari rekening koran. Hanya Saldo Awal yang boleh dipetakan ke rekening bank entitasnya sendiri; ${source.code} ${source.name} juga dipakai di buku besar atau mutasi neraca saldo, jadi petakan ke akun non-bank (mis. 1120).`;
+  if (await tx.journalLine.findFirst({ where: { sourceAccountId: source.id, entry: { kind: { not: "OPENING" } } }, select: { id: true } })) return refusal;
+  let opening = !!(await tx.journalLine.findFirst({ where: { sourceAccountId: source.id }, select: { id: true } }));
+  for (const d of await tx.ledgerImport.findMany({ where: { clientId, status: "DRAFT" }, select: { mode: true, data: true } })) {
+    const saved = d.data as unknown as { entities?: Record<string, string>; entries?: { entityKey: string; kind?: string; lines: { code: string }[] }[] };
+    for (const e of saved.entries ?? []) {
+      if (saved.entities?.[e.entityKey] !== source.entityId || !e.lines.some((l) => l.code === source.code)) continue;
+      if ((e.kind ?? (d.mode === "NERACA" ? "OPENING" : "IMPORTED")) !== "OPENING") return refusal;
+      opening = true;
+    }
+  }
+  return opening ? null : refusal;
 }
 
 /**
@@ -266,9 +296,13 @@ export async function suggestMappings(db: Db, args: { firmId: string; clientId: 
   const accounts = await mappableAccounts(db, args.clientId);
   const sources = await db.sourceAccount.findMany({ where: { clientId: args.clientId }, orderBy: [{ entityId: "asc" }, { code: "asc" }] });
   const byCode = new Map(accounts.map((a) => [a.code, a]));
-  const codeOfId = new Map((await db.account.findMany({ where: { clientId: args.clientId }, select: { id: true, code: true } })).map((a) => [a.id, a.code]));
+  // "Same name mapped before" only to an account still in use: a prior target archived since (Arsip akun) is suggested no more.
+  const codeOfId = new Map((await db.account.findMany({ where: { clientId: args.clientId, archivedAt: null }, select: { id: true, code: true } })).map((a) => [a.id, a.code]));
   const priorByName = new Map<string, string>();
-  for (const s of sources) if (s.accountId) priorByName.set(normName(s.name), codeOfId.get(s.accountId)!);
+  for (const s of sources) {
+    const code = s.accountId ? codeOfId.get(s.accountId) : undefined;
+    if (code) priorByName.set(normName(s.name), code);
+  }
 
   const pending = sources.filter((s) => !s.accountId);
   let deterministic = 0;
@@ -365,26 +399,37 @@ export async function acceptMappings(
       if (sources.length !== new Set(items.map((i) => i.sourceAccountId)).size) throw new MappingError("Akun sumber tidak ditemukan untuk klien ini");
       const nameOf = new Map(sources.map((x) => [x.id, x.name]));
       const client = await tx.client.findUniqueOrThrow({ where: { id: clientId }, select: { firmId: true } });
-      const chart = await tx.account.findMany({ where: { clientId }, select: { id: true, code: true, name: true, isBank: true, isSuspense: true, isClearing: true } });
+      const chart = await tx.account.findMany({ where: { clientId }, select: { id: true, code: true, name: true, isBank: true, isSuspense: true, isClearing: true, archivedAt: true } });
       const byCode = new Map(chart.map((a) => [a.code, a]));
       const used = new Set(chart.map((a) => a.code));
-      // One shared client chart: the same name from several entities (or accepted twice) is one account, not one per row.
+      // One shared client chart: the same name from several entities (or accepted twice) is one account, not one per row. An archived
+      // account is never a target (every picker hides it and postJournal refuses it): refused by code below, and by name too.
       const byName = new Map<string, string>();
-      for (const a of chart) if (!a.isBank && !a.isSuspense && !a.isClearing) byName.set(normName(a.name), a.code);
+      const archivedByName = new Map<string, { code: string; name: string }>();
+      for (const a of chart) {
+        if (a.archivedAt) archivedByName.set(normName(a.name), a);
+        else if (!a.isBank && !a.isSuspense && !a.isClearing && !SYSTEM_ONLY_CODES.has(a.code)) byName.set(normName(a.name), a.code);
+      }
+      const archivedRefusal = (a: { code: string; name: string }) => new MappingError(`Akun ${a.code} ${a.name} sudah diarsipkan, jadi tidak bisa dipakai untuk pemetaan. Aktifkan lagi di Bagan akun, atau pilih akun lain.`);
 
       // A template account the client predates (e.g. 1135) is created on first use when its code is free.
-      const templateCodes = [...new Set(items.flatMap((it) => (!it.newAccount && it.accountCode && !byCode.has(it.accountCode) && COA_TEMPLATE.some((a) => a.code === it.accountCode) ? [it.accountCode] : [])))];
+      const templateCodes = [...new Set(items.flatMap((it) => (!it.newAccount && it.accountCode && !byCode.has(it.accountCode) && !SYSTEM_ONLY_CODES.has(it.accountCode) && COA_TEMPLATE.some((a) => a.code === it.accountCode) ? [it.accountCode] : [])))];
       if (templateCodes.length) {
         await templateAccounts(tx, clientId, templateCodes);
-        for (const a of await tx.account.findMany({ where: { clientId, code: { in: templateCodes } }, select: { id: true, code: true, name: true, isBank: true, isSuspense: true, isClearing: true } })) {
+        for (const a of await tx.account.findMany({ where: { clientId, code: { in: templateCodes } }, select: { id: true, code: true, name: true, isBank: true, isSuspense: true, isClearing: true, archivedAt: true } })) {
           byCode.set(a.code, a);
           used.add(a.code);
-          if (!a.isBank && !a.isSuspense && !a.isClearing) byName.set(normName(a.name), a.code);
+          if (!a.isBank && !a.isSuspense && !a.isClearing && !SYSTEM_ONLY_CODES.has(a.code)) byName.set(normName(a.name), a.code);
         }
       }
 
       const toCreate: { code: string; name: string; fsLine: FsLine }[] = [];
       const plan: { sourceAccountId: string; code: string; mappedBy: MapMethod }[] = [];
+      // Antar entitas per pihak: a company's own intercompany account (1190NN) is never its own source account's target; postJournal()
+      // would refuse every line of it at posting, so the mapping is refused now.
+      const ownIc = new Map(
+        (await tx.account.findMany({ where: { clientId, counterpartyEntityId: { not: null } }, select: { code: true, name: true, counterpartyEntityId: true, counterpartyEntity: { select: { shortName: true } } } })).map((a) => [a.code, a]),
+      );
       for (const it of items) {
         let code = it.accountCode;
         // A `new:<FS_LINE>` suggestion accepted as-is creates the account under that line, named after the client's account.
@@ -392,7 +437,9 @@ export async function acceptMappings(
         const newAccount = it.newAccount ?? (suggestedLine ? { fsLine: suggestedLine, name: nameOf.get(it.sourceAccountId)! } : null);
         if (newAccount) {
           const existing = byName.get(normName(newAccount.name));
+          const archived = archivedByName.get(normName(newAccount.name));
           if (existing) code = existing;
+          else if (archived) throw archivedRefusal(archived);
           else {
             code = allocateAccountCode(newAccount.fsLine, used);
             used.add(code);
@@ -401,14 +448,23 @@ export async function acceptMappings(
           }
         } else {
           const acc = code ? byCode.get(code) : undefined;
-          if (!acc || acc.isBank || acc.isSuspense || acc.isClearing) throw new MappingError(`Akun ${code ?? "(kosong)"} tidak bisa dipakai untuk pemetaan`);
+          if (!acc || acc.isSuspense || acc.isClearing || SYSTEM_ONLY_CODES.has(acc.code)) throw new MappingError(`Akun ${code ?? "(kosong)"} tidak bisa dipakai untuk pemetaan`);
+          if (acc.archivedAt) throw archivedRefusal(acc);
+          const source = sources.find((x) => x.id === it.sourceAccountId)!;
+          const refusal = acc.isBank ? await bankMappingRefusal(tx, clientId, source, acc) : null;
+          if (refusal) throw new MappingError(refusal);
+        }
+        const ic = ownIc.get(code!);
+        const source = sources.find((x) => x.id === it.sourceAccountId)!;
+        if (ic && ic.counterpartyEntityId === source.entityId) {
+          throw new MappingError(`Akun ${ic.code} ${ic.name} adalah akun antar entitas untuk ${ic.counterpartyEntity?.shortName ?? "perusahaan ini"} sendiri, jadi tidak bisa menjadi tujuan akun sumber ${source.code} ${source.name} perusahaan itu. Petakan ke akun antar entitas pihak lawannya.`);
         }
         plan.push({ sourceAccountId: it.sourceAccountId, code: code!, mappedBy: newAccount ? "NEW" : it.method });
       }
 
       if (toCreate.length) {
         await tx.account.createMany({ data: toCreate.map((a) => ({ firmId: client.firmId, clientId, ...newAccountData(a.fsLine, a.name), code: a.code })) });
-        for (const a of await tx.account.findMany({ where: { clientId, code: { in: toCreate.map((x) => x.code) } }, select: { id: true, code: true, name: true, isBank: true, isSuspense: true, isClearing: true } })) byCode.set(a.code, a);
+        for (const a of await tx.account.findMany({ where: { clientId, code: { in: toCreate.map((x) => x.code) } }, select: { id: true, code: true, name: true, isBank: true, isSuspense: true, isClearing: true, archivedAt: true } })) byCode.set(a.code, a);
         // The chart changed, so cached AI answers keyed on the old chart no longer apply.
         await tx.client.update({ where: { id: clientId }, data: { coaVersion: { increment: 1 } } });
       }
@@ -476,7 +532,7 @@ export const NEW_ACCOUNT_FS_LINES = (Object.keys(FS_LINES) as FsLine[]).filter((
 // Template codes are skipped too: accounts added to the template later (1135, 1181, 2146 …) are created on first use and must stay free.
 const SPECIAL = new Set(["1190", "1199", "1999", "3200", "3900", "7190", "7200", ...Array.from({ length: 9 }, (_, i) => `110${i + 1}`), ...Array.from({ length: 9 }, (_, i) => `220${i + 1}`), ...COA_TEMPLATE.map((a) => a.code)]);
 /** A code a new account may not take: system codes, the bank ranges and every template code (created on first use elsewhere). */
-export const isReservedCode = (code: string) => SPECIAL.has(code);
+export const isReservedCode = (code: string) => SPECIAL.has(code) || isIntercompanyCode(code);
 const SECTION_TYPE: Record<string, AccountType> = { ASET_LANCAR: "ASET", ASET_TIDAK_LANCAR: "ASET", LIABILITAS_JANGKA_PENDEK: "LIABILITAS", LIABILITAS_JANGKA_PANJANG: "LIABILITAS", EKUITAS: "EKUITAS" };
 
 /** Next free code under an FS line's range, then under its anchor (1140 → 114001 … 114099, 1140100 … 1140999; sorts right after 1140). */

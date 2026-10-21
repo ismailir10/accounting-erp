@@ -13,10 +13,14 @@ import { entityRates, FxMissingError, isMixed, scopeEntities, translate, transla
  */
 export type Scope = { clientId: string; entityIds: string[] };
 
-export async function sumByAccount(db: Db, scope: Scope, range: { from?: Date; to: Date }, byEntity = false) {
+/** Departemen & Proyek (lib/dimensions): only the lines carrying one department or project, or (`id` null) none of that kind. */
+export type DimensionFilter = { kind: "DEPARTEMEN" | "PROYEK"; id: string | null };
+export const dimensionWhere = (d?: DimensionFilter) => (!d ? {} : d.kind === "DEPARTEMEN" ? { departmentId: d.id } : { projectId: d.id });
+
+export async function sumByAccount(db: Db, scope: Scope, range: { from?: Date; to: Date; dimension?: DimensionFilter }, byEntity = false) {
   const rows = await db.journalLine.groupBy({
     by: byEntity ? ["accountId", "entityId"] : ["accountId"],
-    where: { entityId: { in: scope.entityIds }, date: { gte: range.from, lte: range.to } },
+    where: { entityId: { in: scope.entityIds }, date: { gte: range.from, lte: range.to }, ...dimensionWhere(range.dimension) },
     _sum: { debit: true, credit: true },
   });
   return rows.map((r) => ({
@@ -172,18 +176,21 @@ function unmappedItem(rows: { account: Account; amount: bigint }[], line: Pseudo
 
 const sum = (items: FsItem[]) => items.reduce((s, i) => s + i.amount, 0n);
 
-/** Laba Rugi for [from, to]. Income positive, expenses positive; net = income − expenses. */
-export async function incomeStatement(db: Db, scope: Scope, from: Date, to: Date): Promise<IncomeStatement> {
+/**
+ * Laba Rugi for [from, to]. Income positive, expenses positive; net = income − expenses. With `dimension`, the part of it one department or
+ * project carries (lib/reports/by-dimension.ts): the columns of one kind, *Tanpa* included, add up to the whole.
+ */
+export async function incomeStatement(db: Db, scope: Scope, from: Date, to: Date, dimension?: DimensionFilter): Promise<IncomeStatement> {
   const accounts = await db.account.findMany({ where: { clientId: scope.clientId, type: { in: ["PENDAPATAN", "BEBAN"] } } });
   const entities = await scopeEntities(db, scope.entityIds);
   const netById = new Map<string, bigint>();
   if (!isMixed(entities)) {
-    for (const r of await sumByAccount(db, scope, { from, to })) netById.set(r.accountId, r.debit - r.credit);
+    for (const r of await sumByAccount(db, scope, { from, to, dimension })) netById.set(r.accountId, r.debit - r.credit);
   } else {
     // Income & expense of non-IDR entities at the average rate of the period ending `to`.
     const rates = await ratesByEntity(db, scope.clientId, entities, to);
     const cur = new Map(entities.map((e) => [e.id, e.functionalCurrency]));
-    for (const r of await sumByAccount(db, scope, { from, to }, true)) {
+    for (const r of await sumByAccount(db, scope, { from, to, dimension }, true)) {
       const v = translate(r.debit - r.credit, cur.get(r.entityId!)!, rates.get(r.entityId!)!.average);
       netById.set(r.accountId, (netById.get(r.accountId) ?? 0n) + v);
     }
@@ -229,8 +236,18 @@ export type BalanceSheet = {
 export async function balanceSheet(db: Db, scope: Scope, asOf: Date): Promise<BalanceSheet> {
   const tb = await trialBalance(db, scope, asOf);
   const bs = tb.filter((r) => !isPL(r.account));
-  const assetRows = bs.filter((r) => r.account.type === "ASET").map((r) => ({ account: r.account, amount: r.net }));
-  // Intercompany with a credit balance is presented as a liability ("utang antar entitas").
+  // Balances between companies of the scope are one group's money and are read together (they eliminate when both sides are booked): 1190
+  // in a scope of several companies, and the per-company accounts of the scope's own companies (lib/coa/intercompany.ts). A balance with a
+  // company outside the scope — any for one company's own books — stays on its counterparty's account.
+  const inScope = new Set(scope.entityIds);
+  const internal = (a: Account) => a.isIntercompany && scope.entityIds.length > 1 && (!a.counterpartyEntityId || inScope.has(a.counterpartyEntityId));
+  const raw = bs.filter((r) => r.account.type === "ASET").map((r) => ({ account: r.account, amount: r.net }));
+  const internalRows = raw.filter((r) => internal(r.account));
+  const assetRows = internalRows.length > 1
+    ? [...raw.filter((r) => !internal(r.account)), { account: internalRows.find((r) => !r.account.counterpartyEntityId)?.account ?? internalRows[0].account, amount: internalRows.reduce((t, r) => t + r.amount, 0n) }]
+    : raw;
+  // Intercompany with a credit balance is presented as a liability ("utang antar entitas"), per counterparty: never netted against a
+  // receivable from another party.
   const icCredit = assetRows.filter((r) => r.account.isIntercompany && r.amount < 0n);
   const assets = assetRows.filter((r) => !icCredit.includes(r));
   const liabRows = bs.filter((r) => r.account.type === "LIABILITAS").map((r) => ({ account: r.account, amount: -r.net }));
@@ -280,9 +297,39 @@ export async function combinedWorksheet(db: Db, clientId: string, asOf: Date) {
   const rows: WorksheetRow[] = [];
   let residual = 0n;
   let matched = 0n;
+  // Per-company intercompany accounts (a group of three or more): company A's balance on B's account against B's on A's — a pair.
+  const index = new Map(entities.map((e, k) => [e.id, k]));
+  const onAccountOf = new Map(accounts.flatMap((a, i) => (a.counterpartyEntityId ? [[a.counterpartyEntityId, i] as const] : [])));
+  const balance = (holder: number, party: string) => {
+    const i = onAccountOf.get(party);
+    return i === undefined ? 0n : perEntity[holder][i].net;
+  };
+  const pairs: { a: string; b: string; difference: bigint }[] = [];
+  entities.forEach((ea, x) =>
+    entities.forEach((eb, y) => {
+      if (y <= x || !onAccountOf.has(eb.id) || !onAccountOf.has(ea.id)) return;
+      const difference = balance(x, eb.id) + balance(y, ea.id);
+      if (difference !== 0n) pairs.push({ a: ea.shortName, b: eb.shortName, difference });
+    }),
+  );
   accounts.forEach((account, i) => {
     const values = perEntity.map((tb) => tb[i].net);
     if (values.every((v) => v === 0n)) return;
+    if (account.isIntercompany && account.counterpartyEntityId) {
+      // Each company's balance with the account's company is eliminated up to what that company shows back (opposite sign).
+      const party = index.get(account.counterpartyEntityId);
+      let elimination = 0n;
+      values.forEach((v, holder) => {
+        if (party === undefined || v === 0n) return;
+        const back = balance(party, entities[holder].id);
+        if ((v > 0n) === (back > 0n) || back === 0n) return;
+        const m = (v < 0n ? -v : v) < (back < 0n ? -back : back) ? (v < 0n ? -v : v) : back < 0n ? -back : back;
+        elimination -= v > 0n ? m : -m;
+        if (v > 0n) matched += m;
+      });
+      rows.push({ key: account.code, code: account.code, name: account.name, values, elimination, combined: values.reduce((t, v) => t + v, 0n) + elimination });
+      return;
+    }
     if (!account.isIntercompany) {
       rows.push({ key: account.code, code: account.code, name: account.name, values, elimination: 0n, combined: values.reduce((s, v) => s + v, 0n) });
       return;
@@ -297,7 +344,7 @@ export async function combinedWorksheet(db: Db, clientId: string, asOf: Date) {
     rows.push({ key: `${account.code}-P`, code: account.code, name: "Piutang antar entitas", values: recv, elimination: -m, combined: P - m });
     rows.push({ key: `${account.code}-U`, code: account.code, name: "Utang antar entitas", values: pay, elimination: m, combined: -(N - m) });
   });
-  return { entities, rows, matched, residual, translated: mixed };
+  return { entities, rows, matched, residual, pairs, translated: mixed };
 }
 
 export type MonthPoint = { year: number; month: number; cash: bigint; revenue: bigint; expense: bigint };

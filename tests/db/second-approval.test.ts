@@ -127,7 +127,7 @@ describe("Persetujuan kedua — Jurnal manual above Rp 100.000.000", () => {
     bad.lines[1].credit = "140.000.000";
     await expect(submitAdjustment(db, { ...bad, maker: maker(m.akuntan) })).rejects.toThrow(/Jurnal tidak seimbang/);
     await db.period.create({ data: { firmId: g.firm.id, clientId: g.client.id, year: 2026, month: 8, status: "LOCKED" } });
-    await expect(submitAdjustment(db, { ...accrual(g, "150.000.000", { reverseNextMonth: true }), maker: maker(m.akuntan) })).rejects.toThrow("Jurnal pembalik 1 Agu 2026 tidak bisa dicatat: Periode Agustus 2026 sudah ditutup. Jurnalnya tidak disimpan.");
+    await expect(submitAdjustment(db, { ...accrual(g, "150.000.000", { reverseNextMonth: true }), maker: maker(m.akuntan) })).rejects.toThrow("Agustus 2026 sudah ditutup, dan jurnal bertanggal sebelumnya mengubah saldo bulan itu. Buka kembali Agustus 2026 dulu di Tutup Buku.");
     expect(await db.journalApproval.count()).toBe(0);
   });
 
@@ -238,14 +238,14 @@ describe("Persetujuan kedua — Jurnal manual above Rp 100.000.000", () => {
     expect(["APPROVED", "REJECTED"]).toContain(row.status);
   });
 
-  it("an approval the writer refuses (the Balik otomatis month closed meanwhile) stays pending with the reason, until rejected", async () => {
+  it("an approval the writer refuses (the next month closed meanwhile) stays pending with the reason, until rejected", async () => {
     const { g, m } = await team();
     await setCard(g, MANUAL_100M);
     const o = await submitAdjustment(db, { ...accrual(g, "150.000.000", { reverseNextMonth: true }), maker: maker(m.akuntan) });
     const id = o.posted ? "" : o.approvalId;
     await db.period.create({ data: { firmId: g.firm.id, clientId: g.client.id, year: 2026, month: 8, status: "LOCKED" } });
     auth.userId = m.admin.userId;
-    expect(await approveJournalAction(g.client.id, id)).toEqual({ ok: false, error: "Jurnal pembalik 1 Agu 2026 tidak bisa dicatat: Periode Agustus 2026 sudah ditutup. Jurnalnya tidak disimpan." });
+    expect(await approveJournalAction(g.client.id, id)).toEqual({ ok: false, error: "Agustus 2026 sudah ditutup, dan jurnal bertanggal sebelumnya mengubah saldo bulan itu. Buka kembali Agustus 2026 dulu di Tutup Buku." });
     expect(await db.journalApproval.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "PENDING", entryId: null, decidedById: null });
     expect([await db.journalEntry.count(), (await listEvents(db, g.client.id, { subject: `approval:${id}` })).length]).toEqual([0, 1]);
     expect(await rejectJournalAction(g.client.id, id, "Agustus sudah ditutup")).toEqual({ ok: true });
@@ -414,13 +414,13 @@ describe("Persetujuan kedua — Draf AI above Rp 50.000.000 (MockProvider only)"
 describe("Persetujuan kedua — what a waiting journal counts in", () => {
   beforeEach(resetDb);
 
-  it("a pending request is in no report; it counts against its own month, and a Balik otomatis one against the next month too", async () => {
+  it("a pending request is in no report; it counts against its own month and every later one (a lock freezes the months before it)", async () => {
     const { g, m } = await team();
     await setCard(g, MANUAL_100M);
     await submitAdjustment(db, { ...accrual(g, "150.000.000"), maker: maker(m.akuntan) });
     expect((await tb(g)).every((r) => r.net === 0n)).toBe(true);
-    expect([await pendingJournalCount(db, g.client.id, 2026, 7), await pendingJournalCount(db, g.client.id, 2026, 8)]).toEqual([1, 0]);
+    expect([await pendingJournalCount(db, g.client.id, 2026, 7), await pendingJournalCount(db, g.client.id, 2026, 8)]).toEqual([1, 1]);
     await submitAdjustment(db, { ...accrual(g, "150.000.000", { reverseNextMonth: true, memo: "Dibalik" }), maker: maker(m.akuntan) });
-    expect([await pendingJournalCount(db, g.client.id, 2026, 7), await pendingJournalCount(db, g.client.id, 2026, 8), await pendingJournalCount(db, g.client.id, 2026, 9)]).toEqual([2, 1, 0]);
+    expect([await pendingJournalCount(db, g.client.id, 2026, 7), await pendingJournalCount(db, g.client.id, 2026, 8), await pendingJournalCount(db, g.client.id, 2026, 9)]).toEqual([2, 2, 2]);
   });
 });

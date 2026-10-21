@@ -32,6 +32,7 @@ export function MethodBadge({ method }: { method: string }) {
     MANUAL: ["Manual", "bg-muted text-muted-foreground"],
     // Kotak persetujuan: where a proposal that isn't a bank classification comes from
     SCHEDULE: ["Jadwal", "bg-secondary text-secondary-foreground"],
+    RECURRING: ["Berulang", "bg-secondary text-secondary-foreground"],
     CORETAX: ["Coretax", "bg-secondary text-secondary-foreground"],
     SUSPENSE: ["Koreksi 1999", "bg-secondary text-secondary-foreground"],
     // Account mapping (ledger import)

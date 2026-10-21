@@ -67,8 +67,8 @@ describe("tax postings", () => {
     // October: the gap stays 1 jt (both sides 1 jt a month) → nothing more to post.
     await postInstallment(db, { clientId: g.client.id, scheduleId: a.scheduleId!, k: 2 });
     expect((await pack(g, 10)).proposals.DEFERRED).toEqual([]);
-    await db.period.upsert({ where: { clientId_year_month: { clientId: g.client.id, year: 2026, month: 11 } }, update: { status: "LOCKED" }, create: { firmId: g.firm.id, clientId: g.client.id, year: 2026, month: 11, status: "LOCKED" } });
     await journal(g, dateOnly(2026, 10, 5), "1130", "4100", 100_000_000n);
+    await db.period.upsert({ where: { clientId_year_month: { clientId: g.client.id, year: 2026, month: 11 } }, update: { status: "LOCKED" }, create: { firmId: g.firm.id, clientId: g.client.id, year: 2026, month: 11, status: "LOCKED" } });
     await expect(post(g, 11, "CURRENT")).rejects.toThrow(/ditutup|dikunci/i);
   });
 

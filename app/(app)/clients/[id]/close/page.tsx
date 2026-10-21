@@ -78,7 +78,7 @@ export default async function ClosePage({ params, searchParams }: { params: Prom
   const reval = await revaluationProposals(prisma, client.id, period.year, period.month);
   const scheduled = locked ? [] : await proposalViews(prisma, client.id, period.year, period.month);
   const drafts = locked ? [] : await draftViews(prisma, client.id, period.year, period.month);
-  const chart = drafts.length ? (await prisma.account.findMany({ where: { clientId: client.id, isBank: false }, select: { code: true, name: true }, orderBy: { code: "asc" } })) : [];
+  const chart = drafts.length ? (await prisma.account.findMany({ where: { clientId: client.id, isBank: false, archivedAt: null }, select: { code: true, name: true }, orderBy: { code: "asc" } })) : [];
   const flagged = controls.filter((c) => c.status !== "PASS").length;
   const ai = await resolveAiConfig(prisma);
   const aiModel = ai.apiKey && ai.model ? ai.model : null;

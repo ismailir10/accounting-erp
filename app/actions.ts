@@ -12,17 +12,19 @@ import { clearReportComment, CommentError, draftCommentary, saveReportComment } 
 import { clearFluxExplanation, draftFluxExplanation, ExplanationError, saveFluxExplanation, type ExplanationDraft } from "@/lib/reports/flux-explanation";
 import { headers } from "next/headers";
 import { appUrl } from "@/lib/supabase/env";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatPeriod } from "@/lib/format";
 import { createUploadLink, revokeUploadLink, uploadPath, UploadLinkError } from "@/lib/upload-links";
 import { importStatement, type ImportSummary } from "@/lib/import/pipeline";
 import { resolveProvider } from "@/lib/settings/ai";
-import { acceptSimilar, reviewTransaction, splitTransaction, unpairTransfer, type SplitPartInput } from "@/lib/review";
+import { acceptSimilar, reviewTransaction, setBankTagsTx, splitTransaction, unpairTransfer, type SplitPartInput } from "@/lib/review";
 import { CloseError, lockPeriod, runControls } from "@/lib/controls";
 import { cancelReopen, confirmReopen, rejectReopen, requestReopen } from "@/lib/approvals/reopen";
 import { LedgerError } from "@/lib/ledger/post";
 import { approveJournal, rejectJournal, submitAccrual, submitAdjustment, submitProposal, submitReversal, withdrawJournal, type Outcome } from "@/lib/approvals/journals";
 import { ApprovalError } from "@/lib/approvals/second";
-import { createSchedule, postAllDue, postInstallment, stopSchedule, type ScheduleInput } from "@/lib/adjust/schedules";
+import { createSchedule, dueProposals, postAllDue, postInstallment, setScheduleTags, stopSchedule, type ScheduleInput } from "@/lib/adjust/schedules";
+import { createRecurring, stopRecurring } from "@/lib/adjust/recurring";
+import { postAllRecurring, postRecurring } from "@/lib/adjust/recurring-post";
 import { createAsset, type AssetInput } from "@/lib/assets/register";
 import { disposeAsset, type DisposalInput } from "@/lib/assets/dispose";
 import { cancelLease, createLease, postLeaseMonths, type LeaseInput } from "@/lib/leases/register";
@@ -79,14 +81,16 @@ import { acceptCheck, LedgerImportError, postImport, stageImport } from "@/lib/l
 import { acceptMappings, MappingError, suggestMappings } from "@/lib/ledger-import/mapping";
 import { infraErrorMessage } from "@/lib/db-errors";
 import { deleteClient, DeleteClientError } from "@/lib/clients/delete";
+import { createDimension, DimensionError, removeDimension, renameDimension, setDimensionArchived } from "@/lib/dimensions";
 import { EntityEditError, removeBankAccount, removeEntity, renameEntity, updateBankAccount } from "@/lib/clients/entities";
 import { AccessError, requireCapability } from "@/lib/auth/session";
-import { AccountEditError, createAccount, removeAccount, updateAccount } from "@/lib/coa/manage";
+import { AccountEditError, archiveAccount, createAccount, removeAccount, unarchiveAccount, updateAccount } from "@/lib/coa/manage";
 import { BudgetError, saveBudget, type BudgetCellInput } from "@/lib/budget";
 import type { Capability } from "@/lib/auth/permissions";
 import { OrgError } from "@/lib/org";
 import { acceptDefault, addTask, markTask, removeTask, setSignoff, updateTask, type MarkStep, type NewTask, type TaskEdit } from "@/lib/checklist/write";
 import { ChecklistError } from "@/lib/checklist/rules";
+import { addAttachments, AttachmentError, removeAttachment } from "@/lib/ledger/attachments";
 import type { FsLine } from "@/lib/coa/template";
 import type { MapMethod } from "@/lib/generated/prisma/enums";
 
@@ -99,7 +103,7 @@ type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; needs
 function fail(e: unknown): { ok: false; error: string; needsPassword?: boolean; needsYear?: boolean; yearGuess?: number | null } {
   if (e instanceof PdfPasswordError) return { ok: false, error: e.message, needsPassword: true };
   if (e instanceof YearNeededError) return { ok: false, error: e.message, needsYear: true, yearGuess: e.guess };
-  if (e instanceof DeleteClientError || e instanceof EntityEditError || e instanceof AccountEditError || e instanceof BudgetError || e instanceof AccessError || e instanceof OrgError || e instanceof ReasoningError || e instanceof ApprovalError) return { ok: false, error: e.message };
+  if (e instanceof DeleteClientError || e instanceof DimensionError || e instanceof EntityEditError || e instanceof AccountEditError || e instanceof BudgetError || e instanceof AccessError || e instanceof OrgError || e instanceof ReasoningError || e instanceof ApprovalError || e instanceof AttachmentError) return { ok: false, error: e.message };
   if (e instanceof ParseError || e instanceof LedgerError || e instanceof CloseError || e instanceof OpeningError || e instanceof FindingError || e instanceof RemoveImportError || e instanceof MoneyError || e instanceof RateError || e instanceof RevaluationError || e instanceof LedgerImportError || e instanceof MappingError || e instanceof EntitySettingsError || e instanceof FormatError || e instanceof SubledgerError || e instanceof FakturError || e instanceof BupotError || e instanceof ChecklistError) return { ok: false, error: e.message };
   const infra = infraErrorMessage(e);
   console.error(e);
@@ -341,7 +345,7 @@ export async function unpairTransferAction(input: { bankTxId: string }): Promise
   }
 }
 
-export async function reviewAction(input: { bankTxId: string; accountCode: string; taxTag: TaxTag | null; createRule?: boolean; /** Tax withheld (major units); undefined keeps the line's, null removes it. */ withholding?: { kind: WithholdingKind; amount: string } | null; /** Merge a split line back onto this one account (Buku Besar). */ replaceSplit?: boolean }): Promise<Result<{ learned: boolean }>> {
+export async function reviewAction(input: { bankTxId: string; accountCode: string; taxTag: TaxTag | null; createRule?: boolean; /** Tax withheld (major units); undefined keeps the line's, null removes it. */ withholding?: { kind: WithholdingKind; amount: string } | null; /** Merge a split line back onto this one account (Buku Besar). */ replaceSplit?: boolean; /** Departemen & Proyek; undefined keeps the line's. */ tags?: { departmentId: string | null; projectId: string | null } }): Promise<Result<{ learned: boolean }>> {
   try {
     const clientId = await assertTxInFirm(input.bankTxId);
     const { withholding, ...rest } = input;
@@ -354,6 +358,19 @@ export async function reviewAction(input: { bankTxId: string; accountCode: strin
     const { learned } = await reviewTransaction(prisma, { ...rest, withholding: parsed, actorId: (await getCurrentMember()).id });
     revalidatePath(`/clients/${clientId}`, "layout");
     return { ok: true, learned };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Departemen & Proyek of a bank line (Buku Besar): a RECLASS moves the classification side to the new tags (lib/review.ts). */
+export async function setBankTagsAction(input: { bankTxId: string; departmentId: string | null; projectId: string | null }): Promise<Result> {
+  try {
+    const clientId = await assertTxInFirm(input.bankTxId);
+    const actorId = (await getCurrentMember()).id;
+    await prisma.$transaction((tx) => setBankTagsTx(tx, { ...input, actorId }));
+    revalidatePath(`/clients/${clientId}`, "layout");
+    return { ok: true };
   } catch (e) {
     return fail(e);
   }
@@ -447,8 +464,10 @@ export async function ackControlAction(clientId: string, year: number, month: nu
     const period = await periodFor(clientId, year, month, { mustBeOpen: true });
     const ackedById = (await getCurrentMember()).id;
     // The note answers the control as it reads now; when its detail changes the note stops clearing it (lib/controls runControls).
+    // Only a control that asks for one takes a note: a note for a control not showing would clear it in advance, whatever it says later.
     const control = (await runControls(prisma, clientId, year, month)).find((c) => c.key === controlKey);
-    await saveControlNote(prisma, { clientId, periodId: period.id, year, month, controlKey, title: control ? `${control.title} · ${control.scope}` : undefined, note, detail: control?.detail ?? null, actorId: ackedById });
+    if (!control || control.status !== "REVIEW") return { ok: false, error: "Kontrol ini tidak sedang meminta catatan. Muat ulang halaman Tutup Buku." };
+    await saveControlNote(prisma, { clientId, periodId: period.id, year, month, controlKey, title: `${control.title} · ${control.scope}`, note, detail: control.detail, actorId: ackedById });
     revalidatePath(`/clients/${clientId}`, "layout");
     return { ok: true };
   } catch (e) {
@@ -657,7 +676,7 @@ export async function adjustmentAction(input: {
   entityId: string;
   date: string;
   memo: string;
-  lines: { accountCode: string; debit: string; credit: string; memo?: string }[];
+  lines: { accountCode: string; debit: string; credit: string; memo?: string; departmentId?: string; projectId?: string }[];
   /** An accrual: also post its reversal on the first of the next month (same transaction). */
   reverseNextMonth?: boolean;
 }): Promise<Result<Saved>> {
@@ -666,6 +685,39 @@ export async function adjustmentAction(input: {
     const o = await submitAdjustment(prisma, { clientId: client.id, entityId: input.entityId, date: new Date(`${input.date}T00:00:00Z`), memo: input.memo, lines: input.lines, reverseNextMonth: input.reverseNextMonth === true, maker: member });
     revalidatePath(`/clients/${client.id}`, "layout");
     return { ok: true, ...saved(o) };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Lampiran jurnal (lib/ledger/attachments.ts): files from FormData (`clientId`, `entryId`, `files`) added to one of the client's journals,
+ * and one removed while its month is open. Evidence only: nothing in the ledger changes.
+ */
+export async function addAttachmentsAction(formData: FormData): Promise<Result<{ added: number }>> {
+  try {
+    const client = await writeClient(String(formData.get("clientId")));
+    const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
+    if (files.some((f) => f.size > MAX_UPLOAD)) return { ok: false, error: "File terlalu besar (maks. 5 MB)." };
+    const added = await addAttachments(prisma, {
+      clientId: client.id,
+      entryId: String(formData.get("entryId")),
+      files: await Promise.all(files.map(async (f) => ({ name: f.name, data: Buffer.from(await f.arrayBuffer()) }))),
+      actorId: (await getCurrentMember()).id,
+    });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true, added: added.length };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function removeAttachmentAction(clientId: string, attachmentId: string): Promise<Result> {
+  try {
+    const client = await writeClient(clientId);
+    await removeAttachment(prisma, { clientId: client.id, attachmentId, actorId: (await getCurrentMember()).id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
   } catch (e) {
     return fail(e);
   }
@@ -1069,13 +1121,67 @@ export async function postInstallmentAction(clientId: string, scheduleId: string
   }
 }
 
-/** `entityId`: one company's instalments only (Kotak persetujuan scoped to a company); a foreign id matches no schedule of the client. */
-export async function postAllDueAction(clientId: string, year: number, month: number, entityId?: string): Promise<Result<{ posted: number }>> {
+/**
+ * *Catat semua*: every schedule instalment, then every Jurnal berulang instalment, due by the month. `entityId`: one company's only
+ * (Kotak persetujuan scoped to a company); a foreign id matches nothing of the client. `asked`: recurring ones stored as requests.
+ */
+export async function postAllDueAction(clientId: string, year: number, month: number, entityId?: string): Promise<Result<{ posted: number; asked: number }>> {
   try {
-    const client = await writeClient(clientId);
-    const posted = await postAllDue(prisma, { clientId: client.id, year, month, entityId, actorId: (await getCurrentMember()).id });
+    const { client, member } = await writer(clientId);
+    const scheduled = (await dueProposals(prisma, client.id, year, month, entityId)).length ? await postAllDue(prisma, { clientId: client.id, year, month, entityId, actorId: member.id }) : 0;
+    const recurring = await postAllRecurring(prisma, { clientId: client.id, year, month, entityId, maker: member });
     revalidatePath(`/clients/${client.id}`, "layout");
-    return { ok: true, posted };
+    if (!scheduled && !recurring.posted && !recurring.asked) throw new LedgerError(`Tidak ada jurnal terjadwal untuk ${formatPeriod(year, month)}.`);
+    return { ok: true, posted: scheduled + recurring.posted, asked: recurring.asked };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** *Ulangi tiap bulan* on a posted Jurnal Penyesuaian (lib/adjust/recurring.ts); `end` "YYYY-MM" is the last month it proposes, optional. */
+export async function createRecurringAction(clientId: string, entryId: string, end?: string): Promise<Result> {
+  try {
+    const { client, member } = await writer(clientId);
+    const m = end ? /^(\d{4})-(\d{2})$/.exec(end) : null;
+    if (end && !m) throw new LedgerError("Bulan terakhir tidak valid.");
+    await createRecurring(prisma, { clientId: client.id, entryId, end: m ? { year: Number(m[1]), month: Number(m[2]) } : null, actorId: member.id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** *Catat* on a Jurnal berulang instalment (`k` = year × 100 + month): posted, or a request above the *Jurnal manual* threshold. */
+export async function postRecurringAction(clientId: string, recurringId: string, k: number): Promise<Result<Saved>> {
+  try {
+    const { client, member } = await writer(clientId);
+    const o = await postRecurring(prisma, { clientId: client.id, recurringId, year: Math.floor(k / 100), month: k % 100, maker: member });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true, ...saved(o) };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function stopRecurringAction(clientId: string, recurringId: string): Promise<Result> {
+  try {
+    const { client, member } = await writer(clientId);
+    await stopRecurring(prisma, { clientId: client.id, recurringId, actorId: member.id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Departemen & Proyek of a running schedule: later instalments follow (lib/adjust/schedules.ts `setScheduleTags`). Everyday books work. */
+export async function setScheduleTagsAction(input: { clientId: string; scheduleId: string; departmentId: string | null; projectId: string | null }): Promise<Result> {
+  try {
+    const client = await writeClient(input.clientId);
+    await setScheduleTags(prisma, { ...input, clientId: client.id, actorId: (await getCurrentMember()).id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
   } catch (e) {
     return fail(e);
   }
@@ -1900,6 +2006,41 @@ export async function removeAccountAction(clientId: string, accountId: string): 
     const client = await writeClient(clientId);
     const member = await getCurrentMember();
     await removeAccount(prisma, { clientId: client.id, accountId, actorId: member.id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Arsip akun (lib/coa/manage.ts): *Arsipkan* an account nothing still counts on, *Aktifkan lagi* to bring it back. Everyday books work. */
+export async function archiveAccountAction(clientId: string, accountId: string, archived: boolean): Promise<Result> {
+  try {
+    const client = await writeClient(clientId);
+    const member = await getCurrentMember();
+    await (archived ? archiveAccount : unarchiveAccount)(prisma, { clientId: client.id, accountId, actorId: member.id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Departemen & Proyek (lib/dimensions): *Tambah*, *Ubah nama*, *Arsipkan* / *Aktifkan lagi*, *Hapus* (only one nothing carries). Everyday
+ * books work, like the Bagan akun.
+ */
+export async function dimensionAction(
+  clientId: string,
+  input: { op: "create"; kind: string; code: string; name: string } | { op: "rename"; id: string; name: string } | { op: "archive"; id: string; archived: boolean } | { op: "remove"; id: string },
+): Promise<Result> {
+  try {
+    const client = await writeClient(clientId);
+    const actorId = (await getCurrentMember()).id;
+    if (input.op === "create") await createDimension(prisma, { clientId: client.id, kind: input.kind, code: input.code, name: input.name, actorId });
+    else if (input.op === "rename") await renameDimension(prisma, { clientId: client.id, id: input.id, name: input.name, actorId });
+    else if (input.op === "archive") await setDimensionArchived(prisma, { clientId: client.id, id: input.id, archived: input.archived, actorId });
+    else await removeDimension(prisma, { clientId: client.id, id: input.id, actorId });
     revalidatePath(`/clients/${client.id}`, "layout");
     return { ok: true };
   } catch (e) {

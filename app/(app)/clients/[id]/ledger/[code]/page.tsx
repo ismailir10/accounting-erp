@@ -17,12 +17,14 @@ import { currencyNote } from "@/components/app/fx-missing";
 import { LedgerDownloads } from "@/components/app/ledger-downloads";
 import { requireWorkspaceSession } from "@/lib/auth/session";
 import { routeFor } from "@/lib/approvals/journals";
+import { listDimensions, DIMENSION_LABEL } from "@/lib/dimensions";
+import { TagFilter } from "@/components/app/tag-filter";
 
 export const metadata = { title: "Buku Besar" };
 
 export default async function AccountLedger({ params, searchParams }: { params: Promise<{ id: string; code: string }>; searchParams: SearchParams }) {
   const { code } = await params;
-  const { client, period, scope, periodOptions, entityOptions, base, scopeLabel, currency, mixed } = await loadClientPage(params, searchParams);
+  const { client, period, scope, periodOptions, entityOptions, base, scopeLabel, currency, mixed, sp } = await loadClientPage(params, searchParams);
   const account = await prisma.account.findUnique({ where: { clientId_code: { clientId: client.id, code } } });
   if (!account) notFound();
   if (mixed) {
@@ -44,7 +46,10 @@ export default async function AccountLedger({ params, searchParams }: { params: 
       </div>
     );
   }
-  const { opening, rows } = await accountLedger(prisma, { accountId: account.id, entityIds: scope.entityIds, start: period.start, end: period.end, normalBalance: account.normalBalance });
+  // Departemen & Proyek: `?tag=` filters the lines (the Laba Rugi per departemen drills here); a bank line's tags change in its drawer.
+  const dimensions = await listDimensions(prisma, client.id);
+  const tag = dimensions.find((d) => d.id === sp.tag);
+  const { opening, priorYearProfit, rows } = await accountLedger(prisma, { accountId: account.id, entityIds: scope.entityIds, start: period.start, end: period.end, normalBalance: account.normalBalance, dimensionId: tag?.id });
   // Persetujuan kedua: *Balik jurnal* above the firm's *Jurnal manual* threshold waits for a second member.
   const { member } = await requireWorkspaceSession();
   const reverseRoute = rows.some((r) => r.reversal && !r.reversal.blocker) ? await routeFor(prisma, client.id, { id: member.id, role: member.role }, "REVERSAL") : undefined;
@@ -52,12 +57,12 @@ export default async function AccountLedger({ params, searchParams }: { params: 
     <div className="space-y-6">
       <PageHeader
         title={`${account.code} ${account.name}`}
-        description={`${scopeLabel} · ${formatPeriod(period.year, period.month)}${currencyNote(currency, false) ? ` · ${currencyNote(currency, false)}` : ""} · klik baris untuk melihat sumbernya`}
-        actions={<><ScopeBar entities={entityOptions} periods={periodOptions} entity={scope.value} period={period.key} />{currency === "IDR" && <LedgerDownloads href={`${base}/ledger/export`} query={{ period: period.key, entity: scope.value, account: account.code }} testId="account-ledger-download" />}</>}
+        description={`${scopeLabel} · ${formatPeriod(period.year, period.month)}${tag ? ` · ${DIMENSION_LABEL[tag.kind]} ${tag.code} ${tag.name}` : ""}${currencyNote(currency, false) ? ` · ${currencyNote(currency, false)}` : ""} · klik baris untuk melihat sumbernya`}
+        actions={<><ScopeBar entities={entityOptions} periods={periodOptions} entity={scope.value} period={period.key} /><TagFilter value={tag?.id ?? ""} options={dimensions.map((d) => ({ id: d.id, label: `${DIMENSION_LABEL[d.kind]} ${d.code} · ${d.name}` }))} />{currency === "IDR" && !tag && <LedgerDownloads href={`${base}/ledger/export`} query={{ period: period.key, entity: scope.value, account: account.code }} testId="account-ledger-download" />}</>}
       />
       <Card>
         <CardContent className="px-0">
-          <LedgerTable rows={rows} opening={opening.toString()} currency={currency} reverseRoute={reverseRoute} accounts={rows.some((r) => r.source) ? classifiableOptions(await prisma.account.findMany({ where: { clientId: client.id }, orderBy: { code: "asc" } })) : undefined} />
+          <LedgerTable rows={rows} opening={opening.toString()} priorYearProfit={priorYearProfit.toString()} currency={currency} reverseRoute={reverseRoute} dimensions={dimensions} accounts={rows.some((r) => r.source) ? classifiableOptions(await prisma.account.findMany({ where: { clientId: client.id }, orderBy: { code: "asc" } })) : undefined} />
           {rows.length === 0 && <p className="px-6 py-8 text-center text-sm text-muted-foreground">Tidak ada transaksi di periode ini.</p>}
         </CardContent>
       </Card>

@@ -12,8 +12,10 @@ import { openingAction } from "@/app/actions";
 import { formatMoney, moneyExample, parseMoney } from "@/lib/money";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ACCOUNT_CODES } from "@/lib/coa/template";
+import { CURRENCY_CODES } from "@/lib/fx/currency";
 
-type Line = { accountCode: string; debit: string; credit: string };
+/** `currency` + `fxAmount`: a balance held in another currency, given in that currency too (revalued at month end from then on). */
+type Line = { accountCode: string; debit: string; credit: string; currency?: string; fxAmount?: string };
 const RETAINED = ACCOUNT_CODES.RETAINED;
 const DIFFERENCE = ACCOUNT_CODES.OPENING_DIFFERENCE;
 type BankLine = { accountCode: string; label: string; prefill: string; source: string | null; isOverdraft?: boolean };
@@ -66,9 +68,9 @@ export function OpeningForm({
 
   const cur = currency === "IDR" ? "" : ` (${currency})`;
   const bankParsed = bankBalances.map((v) => read(v, currency));
-  const otherParsed = others.map((l) => ({ debit: read(l.debit, currency), credit: read(l.credit, currency) }));
+  const otherParsed = others.map((l) => ({ debit: read(l.debit, currency), credit: read(l.credit, currency), fx: l.currency ? read(l.fxAmount ?? "", l.currency) : null }));
   const retainedParsed = { debit: read(retained.debit, currency), credit: read(retained.credit, currency) };
-  const error = [...bankParsed.map((p) => p.error), ...otherParsed.flatMap((p) => [p.debit.error, p.credit.error]), retainedParsed.debit.error, retainedParsed.credit.error].find(Boolean);
+  const error = [...bankParsed.map((p) => p.error), ...otherParsed.flatMap((p) => [p.debit.error, p.credit.error, p.fx?.error]), retainedParsed.debit.error, retainedParsed.credit.error].find(Boolean);
   // A bank balance is an asset: positive = debit, negative (overdraft) = credit. Sent back in the same major-unit
   // notation the server parses, never as raw minor units.
   const bankLines: Line[] = banks.map((b, i) => {
@@ -172,6 +174,19 @@ export function OpeningForm({
                     <SelectTrigger className="w-full min-w-64" aria-label={`Akun baris ${i + 1}`}><SelectValue placeholder="Pilih akun" /></SelectTrigger>
                     <SelectContent>{accounts.map((a) => <SelectItem key={a.code} value={a.code}>{a.code} {a.name}</SelectItem>)}</SelectContent>
                   </Select>
+                  {/* A dollar account, receivable or loan: its foreign amount too, so month-end revaluation sees the whole balance. */}
+                  {l.currency ? (
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <Select value={l.currency} onValueChange={(v) => setOther(i, { currency: v as string })}>
+                        <SelectTrigger size="sm" className="w-24" aria-label={`Mata uang baris ${i + 1}`}><SelectValue /></SelectTrigger>
+                        <SelectContent>{CURRENCY_CODES.filter((c) => c !== currency).map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                      </Select>
+                      <Input aria-label={`Nominal valas baris ${i + 1}`} aria-invalid={!!otherParsed[i].fx?.error || undefined} inputMode="decimal" className="num h-8 text-right" value={l.fxAmount ?? ""} onChange={(e) => setOther(i, { fxAmount: e.target.value })} placeholder={moneyExample(l.currency)} />
+                      <Button variant="ghost" size="sm" onClick={() => setOther(i, { currency: undefined, fxAmount: undefined })}>Bukan valas</Button>
+                    </div>
+                  ) : (
+                    <Button variant="link" size="sm" className="mt-1 h-auto p-0 text-xs" onClick={() => setOther(i, { currency: CURRENCY_CODES.find((c) => c !== currency && c !== "IDR") ?? "USD", fxAmount: "" })}>Saldo dalam valas?</Button>
+                  )}
                 </TableCell>
                 <TableCell className="p-2"><Input aria-label="Debit" aria-invalid={!!otherParsed[i].debit.error || undefined} inputMode="decimal" className="num text-right" value={l.debit} onBlur={() => setOther(i, { debit: tidy(l.debit) })} onChange={(e) => setOther(i, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} placeholder={formatMoney(0n, currency, { bare: true })} /></TableCell>
                 <TableCell className="p-2"><Input aria-label="Kredit" aria-invalid={!!otherParsed[i].credit.error || undefined} inputMode="decimal" className="num text-right" value={l.credit} onBlur={() => setOther(i, { credit: tidy(l.credit) })} onChange={(e) => setOther(i, { credit: e.target.value, debit: e.target.value ? "" : l.debit })} placeholder={formatMoney(0n, currency, { bare: true })} /></TableCell>

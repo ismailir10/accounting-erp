@@ -1,4 +1,5 @@
 import type { Db } from "@/lib/db";
+import { checkTags } from "@/lib/dimensions";
 import type { InvoiceDirection, WithholdingKind } from "@/lib/generated/prisma/enums";
 import { LedgerError, postJournal, type PostLine } from "@/lib/ledger/post";
 import { ACCOUNT_CODES } from "@/lib/coa/template";
@@ -7,6 +8,8 @@ import { closeLock } from "@/lib/adjust/schedules";
 import { formatMoney, parseMoney, PPN_EFFECTIVE_PERCENT } from "@/lib/money";
 import { recordEvent } from "@/lib/audit";
 import { checkWithholding, withholdingFor } from "@/lib/tax/withholding";
+import { assertAfterOpening } from "@/lib/ledger/opening-date";
+import { invoiceSeries } from "@/lib/ledger/number";
 
 /**
  * Receivable/payable subledger (accounting-rules 5c). An invoice is recorded by the accountant and posts its journal through
@@ -43,6 +46,9 @@ export type InvoiceInput = {
   whtAmount?: string | null;
   /** An open item at the opening date: recorded without a journal. */
   opening?: boolean;
+  /** Departemen & Proyek (lib/dimensions): on the revenue / expense (or asset) line only, never the receivable, payable or PPN line. */
+  departmentId?: string | null;
+  projectId?: string | null;
   actorId?: string | null;
 };
 
@@ -96,6 +102,7 @@ export async function createInvoice(db: Db, input: InvoiceInput) {
   const counter = byCode(input.counterCode);
   const counterOk = counter && !counter.isBank && !counter.isSuspense && !counter.isClearing && !counter.isIntercompany && counter.id !== arAp.id && (sales ? counter.type === "PENDAPATAN" : counter.type === "BEBAN" || counter.type === "ASET");
   if (!counterOk) throw new LedgerError(sales ? "Pilih akun pendapatan untuk faktur penjualan." : "Pilih akun beban atau aset untuk tagihan pembelian (bukan akun bank).");
+  const tags = await checkTags(db, input.clientId, input);
   const ppnAccount = ppn > 0n ? byCode(sales ? ACCOUNT_CODES.PPN_KELUARAN : ACCOUNT_CODES.PPN_MASUKAN) : null;
   if (ppn > 0n && !ppnAccount) throw new LedgerError(`Akun ${sales ? ACCOUNT_CODES.PPN_KELUARAN : ACCOUNT_CODES.PPN_MASUKAN} tidak ada di bagan akun klien.`);
 
@@ -107,6 +114,8 @@ export async function createInvoice(db: Db, input: InvoiceInput) {
     if (!opening) throw new LedgerError("Catat Saldo Awal entitas ini dulu; faktur saldo awal adalah rincian saldonya.");
     if (+issueDate > +opening.date) throw new LedgerError(`Faktur saldo awal harus bertanggal paling lambat ${formatDate(opening.date)} (tanggal Saldo Awal).`);
     openingMonth = { year: opening.date.getUTCFullYear(), month: opening.date.getUTCMonth() + 1 };
+  } else {
+    await assertAfterOpening(db, entity, issueDate, `, atau centang “${sales ? "Faktur" : "Tagihan"} saldo awal” bila sudah termasuk di Saldo Awal`);
   }
 
   const description = input.description?.trim() || (sales ? `Penjualan kepada ${contactName}` : `Pembelian dari ${contactName}`);
@@ -127,10 +136,11 @@ export async function createInvoice(db: Db, input: InvoiceInput) {
       let entryId: string | null = null;
       if (!input.opening) {
         const lines: PostLine[] = sales
-          ? [{ accountId: arAp.id, debit: total }, ...(dpp > 0n ? [{ accountId: counter!.id, credit: dpp }] : []), ...(ppn > 0n ? [{ accountId: ppnAccount!.id, credit: ppn }] : [])]
-          : [...(dpp > 0n ? [{ accountId: counter!.id, debit: dpp }] : []), ...(ppn > 0n ? [{ accountId: ppnAccount!.id, debit: ppn }] : []), { accountId: arAp.id, credit: total }];
+          ? [{ accountId: arAp.id, debit: total }, ...(dpp > 0n ? [{ accountId: counter!.id, credit: dpp, ...tags }] : []), ...(ppn > 0n ? [{ accountId: ppnAccount!.id, credit: ppn }] : [])]
+          : [...(dpp > 0n ? [{ accountId: counter!.id, debit: dpp, ...tags }] : []), ...(ppn > 0n ? [{ accountId: ppnAccount!.id, debit: ppn }] : []), { accountId: arAp.id, credit: total }];
         const memo = `${sales ? "Faktur" : "Tagihan"} ${number} · ${contactName}`;
-        entryId = (await postJournal(tx, { entityId: entity.id, date: issueDate, kind: "INVOICE", memo, lines, actorId: input.actorId })).id;
+        // Numbered by the document's direction (FJ / FB), never by its lines: a bill may be recharged to a receivable account.
+        entryId = (await postJournal(tx, { entityId: entity.id, date: issueDate, kind: "INVOICE", memo, lines, invoiceSeries: invoiceSeries(input.direction), actorId: input.actorId })).id;
       }
       return tx.invoice.create({
         data: {
@@ -152,6 +162,7 @@ export async function createInvoice(db: Db, input: InvoiceInput) {
           arApAccountId: arAp.id,
           opening: !!input.opening,
           entryId,
+          ...tags,
           createdById: input.actorId ?? null,
         },
       });
@@ -203,8 +214,10 @@ export async function voidInvoice(db: Db, input: { clientId: string; invoiceId: 
           kind: "INVOICE",
           memo: `Batal ${doc} · ${inv.contact.name}: ${reason}`,
           reversesId: inv.entry.id,
+          // In its original's series: FJ / FB as the original was numbered (journals numbered before the direction decided keep theirs).
+          invoiceSeries: inv.entry.number?.startsWith("FJ-") ? "FJ" : inv.entry.number?.startsWith("FB-") ? "FB" : invoiceSeries(inv.direction),
           actorId: input.actorId,
-          lines: inv.entry.lines.map((l) => ({ accountId: l.accountId, debit: l.credit, credit: l.debit, memo: l.memo ?? undefined, sourceAccountId: l.sourceAccountId, sourceRef: l.sourceRef })),
+          lines: inv.entry.lines.map((l) => ({ accountId: l.accountId, debit: l.credit, credit: l.debit, memo: l.memo ?? undefined, sourceAccountId: l.sourceAccountId, sourceRef: l.sourceRef, departmentId: l.departmentId, projectId: l.projectId })),
         })
       ).id;
     } else {

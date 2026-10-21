@@ -14,6 +14,7 @@ import { matchRule, sortRules } from "@/lib/classify/rules";
 import { financingSuggestion, taxPaymentSuggestion } from "@/lib/classify/financing";
 import { simpleGuess } from "@/lib/classify/fallback";
 import { matchTransfers } from "@/lib/classify/transfer";
+import { intercompanyCodes } from "@/lib/coa/intercompany";
 import type { Classification } from "@/lib/classify/types";
 import { decidePosting, type HoldKind } from "@/lib/classify/dial";
 import { readAutomation } from "@/lib/settings/automation";
@@ -234,7 +235,8 @@ export async function importStatement(
     : [];
   // Short names ("PT AND") are too collision-prone for substring matching; use distinctive names only.
   const ownNames = client.entities.map((e) => ({ entityId: e.id, names: [e.name, e.shortName].map((n) => n.toUpperCase()).filter((n) => n.length >= 8) }));
-  const transfers = matchTransfers([...items, ...openCounterparts], ownNames);
+  const icCodes = await intercompanyCodes(db, client.id);
+  const transfers = matchTransfers([...items, ...openCounterparts], ownNames, (id) => icCodes.get(id) ?? ACCOUNT_CODES.INTERCOMPANY);
 
   const rules = sortRules(await db.rule.findMany({ where: { firmId: client.firmId, OR: [{ clientId: client.id }, { clientId: null }] } }));
   const memories = await db.memory.findMany({ where: { clientId: client.id } });
@@ -242,7 +244,8 @@ export async function importStatement(
   const memoryMap = new Map(memories.filter((m) => !isGenericKey(m.merchantKey)).map((m) => [`${m.merchantKey}|${m.direction}`, m]));
 
   const accounts = await db.account.findMany({ where: { clientId: client.id }, orderBy: { code: "asc" } });
-  const codes = new Set(accounts.map((a) => a.code));
+  // An archived account is never proposed (Arsip akun): a rule or a remembered choice for it falls through to the next source or Review.
+  const codes = new Set(accounts.filter((a) => !a.archivedAt).map((a) => a.code));
 
   const result = new Map<string, Classification>();
   const pendingAi: { key: string; direction: Direction; sample: string }[] = [];
@@ -255,7 +258,7 @@ export async function importStatement(
       matchRule(rules, it.description, it.direction, codes) ??
       (() => {
         const m = memoryMap.get(`${it.merchantKey}|${it.direction}`);
-        return m
+        return m && codes.has(m.accountCode)
           ? ({ method: "MEMORY", accountCode: m.accountCode, taxTag: m.taxTag, confidence: 0.95, reason: `Pernah dikonfirmasi ${m.hits}× untuk "${m.merchantKey}"` } as Classification)
           : null;
       })() ??

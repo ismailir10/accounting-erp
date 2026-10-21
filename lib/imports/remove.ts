@@ -5,6 +5,7 @@ import { importKindLabel } from "@/lib/ledger-import/code";
 import { formatDate, formatPeriod } from "@/lib/format";
 import { formatMoney } from "@/lib/money";
 import { can } from "@/lib/auth/permissions";
+import { lockedAfter } from "@/lib/ledger/post";
 import type { MemberRole } from "@/lib/generated/prisma/enums";
 
 /**
@@ -35,12 +36,23 @@ async function entriesOf(tx: Tx, where: { bankTransactionId?: { in: string[] }; 
       schedulesFrom: { select: { memo: true } },
       assetsFrom: { select: { name: true } },
       reversedBy: { select: { id: true } },
+      _count: { select: { attachments: true } },
     },
   });
   const locked = [...new Set(entries.filter((e) => e.period.status === "LOCKED").map((e) => formatPeriod(e.period.year, e.period.month)))];
   if (locked.length) throw new RemoveImportError(`Bulan ${locked.join(", ")} sudah ditutup. Buka kembali dulu di Tutup Buku (tercatat dengan alasannya), lalu hapus impor ini.`);
+  // A closed month after the import's journals would change too (accounting-rules 4).
+  const earliest = entries.reduce<Date | null>((m, e) => (!m || +e.date < +m ? e.date : m), null);
+  if (earliest) {
+    const { clientId } = await tx.entity.findUniqueOrThrow({ where: { id: entries[0].entityId }, select: { clientId: true } });
+    const later = await lockedAfter(tx, clientId, earliest.getUTCFullYear(), earliest.getUTCMonth() + 1);
+    if (later) throw new RemoveImportError(`${formatPeriod(later.year, later.month)} sudah ditutup, dan menghapus jurnal dari impor ini yang bertanggal sebelumnya mengubah saldo bulan itu. Buka kembali dulu di Tutup Buku, lalu hapus impor ini.`);
+  }
   const resting = [...entries.flatMap((e) => e.schedulesFrom.map((s) => `jadwal "${s.memo}"`)), ...entries.flatMap((e) => e.assetsFrom.map((a) => `aset tetap "${a.name}"`))];
   if (resting.length) throw new RemoveImportError(`Jurnal dari impor ini dipakai oleh ${resting.slice(0, 3).join(", ")}${resting.length > 3 ? ` dan ${resting.length - 3} lainnya` : ""}. Hapus atau hentikan itu dulu.`);
+  // Lampiran are evidence the accountant added by hand: removing the import would delete them with its journals.
+  const attached = entries.filter((e) => e._count.attachments > 0);
+  if (attached.length) throw new RemoveImportError(`${attached.length} jurnal dari impor ini punya lampiran (${attached.slice(0, 3).map((e) => e.number ?? e.memo).join(", ")}). Hapus lampirannya di Jurnal Umum dulu, lalu hapus impor ini.`);
   if (entries.some((e) => e.reversedBy)) throw new RemoveImportError("Ada jurnal dari impor ini yang sudah dibalik. Hapus jurnal pembaliknya dulu.");
   const nets = new Map<string, bigint>();
   for (const e of entries) for (const l of e.lines) nets.set(`${l.account.code} ${l.account.name}`, (nets.get(`${l.account.code} ${l.account.name}`) ?? 0n) + l.debit - l.credit);
@@ -48,7 +60,7 @@ async function entriesOf(tx: Tx, where: { bankTransactionId?: { in: string[] }; 
   return {
     ids: entries.map((e) => e.id),
     openings: entries.filter((e) => e.kind === "OPENING").map((e) => ({ entityId: e.entityId, date: e.date })),
-    dated: entries.map((e) => ({ entityId: e.entityId, date: e.date })),
+    dated: entries.map((e) => ({ entityId: e.entityId, date: e.date, createdAt: e.createdAt })),
     lineIds: entries.flatMap((e) => e.lines.map((l) => l.id)),
     // What the import put on each account (debit +), so the log says what its removal took off.
     nets: Object.fromEntries([...nets].filter(([, v]) => v !== 0n).map(([k, v]) => [k, formatMoney(v, cur)])),
@@ -76,16 +88,17 @@ async function dropProposals(tx: Tx, ids: { entryIds: string[]; lineIds: string[
  */
 /**
  * An opening bridge (rule 15a) took the books' movement up to its anchor date into Saldo Awal: removing journals from that span would
- * leave the Neraca at the anchor date no longer equal to its file, silently. The bridge goes first.
+ * leave the Neraca at the anchor date no longer equal to its file, silently. The bridge goes first. Only journals the bridge took in count:
+ * one posted after it inside the span (it already broke the anchor) is not in the bridge, and removing it restores the anchor.
  */
-async function refuseBridgeDependents(tx: Tx, dated: { entityId: string; date: Date }[], ownImportId?: string) {
+async function refuseBridgeDependents(tx: Tx, dated: { entityId: string; date: Date; createdAt: Date }[], ownImportId?: string) {
   if (!dated.length) return;
   const bridges = await tx.journalEntry.findMany({
     where: { entityId: { in: [...new Set(dated.map((d) => d.entityId))] }, kind: "OPENING", ledgerImportId: { not: ownImportId ?? null }, lines: { some: { memo: { contains: "(opening bridge)" } } } },
-    select: { entityId: true, ledgerImport: { select: { fileName: true, periodEnd: true } } },
+    select: { entityId: true, createdAt: true, ledgerImport: { select: { fileName: true, periodEnd: true } } },
   });
   for (const b of bridges) {
-    if (!b.ledgerImport || !dated.some((d) => d.entityId === b.entityId && +d.date <= +b.ledgerImport!.periodEnd)) continue;
+    if (!b.ledgerImport || !dated.some((d) => d.entityId === b.entityId && +d.date <= +b.ledgerImport!.periodEnd && +d.createdAt < +b.createdAt)) continue;
     throw new RemoveImportError(`Saldo awal entitas ini dibangun dari Neraca ${b.ledgerImport.fileName} per ${formatDate(b.ledgerImport.periodEnd)} dengan mutasi buku sampai tanggal itu, termasuk jurnal dari impor ini. Hapus dulu impor Neraca itu, lalu impor ulang setelah buku diperbaiki.`);
   }
 }

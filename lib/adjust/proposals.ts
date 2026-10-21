@@ -117,7 +117,7 @@ export async function chosenAccounts(db: Db | Tx, clientId: string, lines: Propo
  * `guard` runs a caller's own precondition on the same serializable snapshot before the write; `onPosted` runs after it with the entry, in
  * the same transaction (the approval of a waiting draft records its decision there, so posting and deciding are one).
  */
-export async function postProposal(db: Db, input: { clientId: string; proposalId: string; accounts?: string[]; actorId?: string | null; origin?: { ledgerImportId?: string; sourceRef?: string }; guard?: (tx: Tx) => Promise<void>; onPosted?: (tx: Tx, entry: { id: string }) => Promise<void> }) {
+export async function postProposal(db: Db, input: { clientId: string; proposalId: string; accounts?: string[]; actorId?: string | null; origin?: { ledgerImportId?: string; sourceRef?: string }; guard?: (tx: Tx) => Promise<void>; onPosted?: (tx: Tx, entry: { id: string }) => Promise<void>; entry?: { kind: "OPENING"; date: Date } }) {
   const p = await db.proposedEntry.findFirst({ where: { id: input.proposalId, clientId: input.clientId } });
   if (!p) throw new LedgerError("Usulan tidak ditemukan.");
   if (p.status !== "PROPOSED") throw new LedgerError(p.status === "POSTED" ? "Usulan ini sudah dicatat." : "Usulan ini sudah diabaikan.");
@@ -158,7 +158,8 @@ export async function postProposal(db: Db, input: { clientId: string; proposalId
         const entry = p.bankTransactionId
           ? await bankReclass(tx, p, lines, codes, input.actorId)
           : // `origin` keeps the rule-15 chain when the draft corrects an imported row (its file and sheet!row).
-            await postJournal(tx, { entityId: p.entityId, date, kind: "ADJUSTMENT", memo: p.memo, lines: posting, actorId: input.actorId, ...input.origin });
+            // `entry`: a correction of a Saldo Awal is itself part of it (an OPENING entry on that date, lib/adjust/suspense.ts).
+            await postJournal(tx, { entityId: p.entityId, date: input.entry?.date ?? date, kind: input.entry?.kind ?? "ADJUSTMENT", memo: p.memo, lines: posting, actorId: input.actorId, ...input.origin });
         // Only a still-open proposal can be decided: a concurrent click rolls this transaction back.
         const done = await tx.proposedEntry.updateMany({ where: { id: p.id, status: "PROPOSED" }, data: { status: "POSTED", entryId: entry.id, decidedById: input.actorId ?? null, decidedAt: new Date() } });
         if (done.count !== 1) throw new LedgerError("Usulan ini sudah diputuskan.");

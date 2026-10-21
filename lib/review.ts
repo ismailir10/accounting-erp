@@ -5,9 +5,9 @@ import { isSimpleGuess, simpleGuess } from "@/lib/classify/fallback";
 import type { Db, Tx } from "@/lib/db";
 import type { TaxTag } from "@/lib/generated/prisma/enums";
 import { postBankTransaction } from "@/lib/ledger/bank";
-import { LedgerError } from "@/lib/ledger/post";
+import { LedgerError, lockedAfter } from "@/lib/ledger/post";
 import { isGenericKey } from "@/lib/import/normalize";
-import { ACCOUNT_CODES, isClassifiable } from "@/lib/coa/template";
+import { ACCOUNT_CODES, isClassifiable, isIntercompanyCode } from "@/lib/coa/template";
 import { defaultTaxMonth } from "@/lib/tax/masa";
 import { checkWithholding, type Withholding } from "@/lib/tax/withholding";
 
@@ -35,6 +35,8 @@ type ReviewArgs = {
    * similar lines — is refused while a split stands, so its parts never vanish silently.
    */
   replaceSplit?: boolean;
+  /** Departemen & Proyek chosen with the decision (Review); undefined keeps the line's. */
+  tags?: BankTags;
 };
 
 /**
@@ -76,6 +78,13 @@ export async function reviewTransactionTx(tx: Tx, args: ReviewArgs) {
   const parts = await tx.bankTxSplit.findMany({ where: { bankTransactionId: t.id }, orderBy: { position: "asc" }, select: { accountCode: true, amount: true } });
   if (parts.length && !args.replaceSplit) throw new LedgerError("Mutasi ini dipecah ke beberapa akun. Ubah lewat Pecah transaksi, atau gabungkan dulu ke satu akun di Buku Besar.");
   if (parts.length) await tx.bankTxSplit.deleteMany({ where: { bankTransactionId: t.id } });
+  // Tags chosen with the decision are on the line before it posts (postBankTransaction reads them from it).
+  const tags = args.tags && { departmentId: args.tags.departmentId || null, projectId: args.tags.projectId || null };
+  const retag = !!tags && (tags.departmentId !== t.departmentId || tags.projectId !== t.projectId);
+  if (retag) {
+    await checkBankTags(tx, clientId, t, tags);
+    await tx.bankTransaction.update({ where: { id: t.id }, data: tags });
+  }
   const entry = await postBankTransaction(tx, t.id, { accountCode: args.accountCode, taxTag: args.taxTag, withholding }, { actorId: args.actorId });
   // The proposal this decision was taken on (a line still in Review): kept on the event with the RECLASS it produced, so the entry
   // names its origin ("Usulan AI 6120 (92 %) disetujui", lib/reports/entry-origin.ts). A later *Ubah akun* decides on no proposal.
@@ -83,8 +92,8 @@ export async function reviewTransactionTx(tx: Tx, args: ReviewArgs) {
   // Merging a split back is a decision too, even onto the account first suggested.
   const changed = args.accountCode !== t.suggestedCode || args.taxTag !== t.taxTag || parts.length > 0;
   // Riwayat (ADR 0013): every decision that moves the line's classification, from where it was to where it goes.
-  const from = { accountCode: t.accountCode, taxTag: t.taxTag, whtKind: t.whtKind, whtAmount: t.whtAmount.toString(), ...(parts.length ? { parts: parts.map((p) => ({ accountCode: p.accountCode, amount: p.amount.toString() })) } : {}) };
-  const to = { accountCode: args.accountCode, taxTag: args.taxTag, whtKind: withholding?.kind ?? null, whtAmount: (withholding?.amount ?? 0n).toString() };
+  const from = { accountCode: t.accountCode, taxTag: t.taxTag, whtKind: t.whtKind, whtAmount: t.whtAmount.toString(), ...(retag ? { departmentId: t.departmentId, projectId: t.projectId } : {}), ...(parts.length ? { parts: parts.map((p) => ({ accountCode: p.accountCode, amount: p.amount.toString() })) } : {}) };
+  const to = { accountCode: args.accountCode, taxTag: args.taxTag, whtKind: withholding?.kind ?? null, whtAmount: (withholding?.amount ?? 0n).toString(), ...(retag ? tags : {}) };
   if (JSON.stringify(from) !== JSON.stringify(to)) {
     const tag = (x: { accountCode: string | null; taxTag: string | null; parts?: unknown[] }) => `${x.parts ? "dipecah " : ""}${x.accountCode ?? "—"}${x.taxTag ? ` (${x.taxTag})` : ""}`;
     await recordEvent(tx, {
@@ -100,7 +109,7 @@ export async function reviewTransactionTx(tx: Tx, args: ReviewArgs) {
   }
   // A paired half moved off the transfer accounts is no longer half of a transfer (UC-B2): the link goes, and this line is never paired
   // again; its old partner may still find its real other half.
-  const leavesPair = t.matchedTxId !== null && args.accountCode !== ACCOUNT_CODES.CLEARING && args.accountCode !== ACCOUNT_CODES.INTERCOMPANY;
+  const leavesPair = t.matchedTxId !== null && args.accountCode !== ACCOUNT_CODES.CLEARING && !isIntercompanyCode(args.accountCode);
   if (leavesPair) await tx.bankTransaction.updateMany({ where: { id: t.matchedTxId!, matchedTxId: t.id }, data: { matchedTxId: null } });
   await tx.bankTransaction.update({
     where: { id: t.id },
@@ -130,6 +139,65 @@ export async function reviewTransactionTx(tx: Tx, args: ReviewArgs) {
     });
   }
   return { id: t.id, learned: learn && !generic };
+}
+
+type BankTags = { departmentId: string | null; projectId: string | null };
+
+/** The client's own department and project of the right kind; an archived one only when the line already carries it. */
+async function checkBankTags(tx: Tx, clientId: string, t: BankTags, next: BankTags) {
+  const ids = [next.departmentId, next.projectId].filter((x): x is string => !!x);
+  const dims = new Map((await tx.dimension.findMany({ where: { id: { in: ids }, clientId } })).map((d) => [d.id, d]));
+  for (const [id, kind, label] of [[next.departmentId, "DEPARTEMEN", "Departemen"], [next.projectId, "PROYEK", "Proyek"]] as const) {
+    if (!id) continue;
+    const d = dims.get(id);
+    if (!d || d.kind !== kind) throw new LedgerError(`${label} tidak termasuk klien ini.`);
+    // Keeping an archived tag the line already has is fine; choosing one is not.
+    if (d.archivedAt && id !== (kind === "DEPARTEMEN" ? t.departmentId : t.projectId)) throw new LedgerError(`${label} ${d.code} ${d.name} sudah diarsipkan. Aktifkan lagi di Pengaturan klien untuk memakainya.`);
+  }
+  return dims;
+}
+
+/**
+ * Departemen & Proyek on a bank line (Review, Buku Besar): stored on the line and moved in the ledger by a RECLASS of the classification
+ * account (each part of a split) from the old tags to the new — the account, tax and bank legs stay. A line still in Review keeps the tags
+ * for when it is classified (its suspense leg carries none). An archived tag can't be chosen; empty removes it.
+ */
+export async function setBankTagsTx(tx: Tx, args: BankTags & { bankTxId: string; actorId?: string | null }) {
+  await tx.$queryRaw`SELECT id FROM "BankTransaction" WHERE id = ${args.bankTxId} FOR UPDATE`;
+  const t = await tx.bankTransaction.findUniqueOrThrow({ where: { id: args.bankTxId }, include: { bankAccount: { include: { entity: true } }, splits: { orderBy: { position: "asc" } } } });
+  const clientId = t.bankAccount.entity.clientId;
+  const next = { departmentId: args.departmentId || null, projectId: args.projectId || null };
+  if (next.departmentId === t.departmentId && next.projectId === t.projectId) return null;
+  const dims = await checkBankTags(tx, clientId, t, next);
+  // A closed month (or one before a closed month) keeps its lines as they are, the tags on the row included: a line still in Review posts
+  // nothing here, so postJournal's lock check would never run for it.
+  const month = { year: t.date.getUTCFullYear(), month: t.date.getUTCMonth() + 1 };
+  const closed = (await tx.period.findFirst({ where: { clientId, ...month, status: "LOCKED" }, select: { year: true, month: true } })) ?? (await lockedAfter(tx, clientId, month.year, month.month));
+  if (closed) throw new LedgerError(`${formatPeriod(closed.year, closed.month)} sudah ditutup. Buka kembali bulan itu dulu di Tutup Buku untuk mengubah departemen atau proyek mutasi ini.`);
+  await tx.bankTransaction.update({ where: { id: t.id }, data: next });
+  // Re-posted with the line's classification as it stands; postBankTransaction reads the new tags from the line. A line still in Review
+  // sits on 1999, whose leg carries no tag: nothing to move, and its suggestion (PPN, withholding) is nobody's decision yet.
+  let entry = null;
+  if (t.accountCode && t.status !== "NEEDS_REVIEW") {
+    const held = t.whtKind && t.whtAmount > 0n ? { kind: t.whtKind, amount: t.whtAmount } : null;
+    const target = t.splits.length ? { accountCode: t.accountCode, parts: t.splits.map((p) => ({ accountCode: p.accountCode, amount: p.amount })) } : { accountCode: t.accountCode, taxTag: t.taxTag, withholding: held };
+    entry = await postBankTransaction(tx, t.id, target, { actorId: args.actorId });
+  }
+  const names = new Map([...dims.values()].map((d) => [d.id, d.code]));
+  const before = await tx.dimension.findMany({ where: { id: { in: [t.departmentId, t.projectId].filter((x): x is string => !!x) } }, select: { id: true, code: true } });
+  for (const d of before) names.set(d.id, d.code);
+  const show = (x: { departmentId: string | null; projectId: string | null }) => [x.departmentId, x.projectId].flatMap((id) => (id ? [names.get(id) ?? "?"] : [])).join(" · ") || "tanpa tag";
+  await recordEvent(tx, {
+    clientId,
+    entityId: t.entityId,
+    kind: "DIMENSION",
+    subject: `bankTx:${t.id}`,
+    summary: `${t.description.slice(0, 70)} · ${formatMoney(t.amount < 0n ? -t.amount : t.amount, t.bankAccount.currency)}: ${show(t)} → ${show(next)}`,
+    before: { departmentId: t.departmentId, projectId: t.projectId },
+    after: { ...next, entryId: entry?.id ?? null },
+    actorId: args.actorId,
+  });
+  return entry;
 }
 
 /**
@@ -256,7 +324,7 @@ export async function splitTransaction(db: Db, args: { bankTxId: string; parts: 
       const n = i + 1;
       const a = accounts.get(p.accountCode);
       if (!a) throw new LedgerError(`Bagian ${n}: pilih akun.`);
-      if (blocked.has(a.code) || !isClassifiable(a)) throw new LedgerError(`Bagian ${n}: akun ${a.code} ${a.name} tidak bisa dipakai untuk pecahan. Pilih akun pendapatan, beban, aset atau liabilitas.`);
+      if (blocked.has(a.code) || isIntercompanyCode(a.code) || !isClassifiable(a)) throw new LedgerError(`Bagian ${n}: akun ${a.code} ${a.name} tidak bisa dipakai untuk pecahan. Pilih akun pendapatan, beban, aset atau liabilitas.`);
       if (seen.has(a.code)) throw new LedgerError(`Akun ${a.code} ${a.name} dipakai di dua bagian. Gabungkan nominalnya dalam satu bagian.`);
       seen.add(a.code);
       let amount: bigint;

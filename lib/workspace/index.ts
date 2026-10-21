@@ -3,13 +3,15 @@ import type { Db } from "@/lib/db";
 import { formatDate, formatPeriod, periodBounds } from "@/lib/format";
 import { formatMoney } from "@/lib/money";
 import { incomeStatement, trialBalance } from "@/lib/reports/ledger";
-import { closeReadiness, runControls } from "@/lib/controls";
+import { closeReadiness, earlierOpenMonth, runControls } from "@/lib/controls";
+import { pendingJournalCount } from "@/lib/approvals/pending";
 import { setupProgress } from "@/lib/setup-progress";
 import { askEvidence } from "@/lib/evidence/answers";
 import { completenessMatrix } from "@/lib/controls/completeness";
 import { financialYear, fiscalEndMonth } from "@/lib/fiscal";
 import { approvalCounts } from "@/lib/approvals/queue";
 import { checklistRollup } from "@/lib/checklist/view";
+import { isIntercompanyCode } from "@/lib/coa/template";
 
 export type WorkspaceInput = { scope?: string; period?: string; /** When overdue is judged (tests); now by default. */ now?: Date };
 export class WorkspaceInputError extends Error {}
@@ -102,8 +104,10 @@ export async function getWorkspaceOverview(db: Db, access: WorkspaceAccess, inpu
       ? await db.auditEvent.findFirst({ where: { clientId: c.id, kind: "REPORT_EXPORT", subject: `period:${scope.period}`, createdAt: { gte: period.lockedAt } }, orderBy: { createdAt: "asc" }, select: { createdAt: true } })
       : null;
     const readiness = closeReadiness(controls, period?.signoffs.map(s => s.key) ?? []);
+    // "Siap tutup buku" only when the lock would go through: no journal waiting for a second approver and no earlier month left open.
+    const lockable = readiness.ready && !(await pendingJournalCount(db, c.id, scope.year, scope.month)) && !(await earlierOpenMonth(db, c.id, scope.year, scope.month));
     // A failed control outranks "no journal this month": a client with nothing booked can still have broken books.
-    const state = period?.status === "LOCKED" ? "LOCKED" : readiness.fails.length ? "FAIL" : !activity ? "EMPTY" : readiness.ready ? "READY" : "REVIEW";
+    const state = period?.status === "LOCKED" ? "LOCKED" : readiness.fails.length ? "FAIL" : !activity ? "EMPTY" : lockable ? "READY" : "REVIEW";
     const labels = { LOCKED: "Buku ditutup", EMPTY: "Belum ada jurnal bulan ini", FAIL: "Kontrol gagal", READY: "Siap tutup buku", REVIEW: "Perlu dicek" };
     const missingStatements = controls.filter(control => control.key.startsWith("bank:") && control.detail.includes("belum diimpor")).map(control => ({ title: control.title, detail: `${control.scope} · ${control.detail}`, href: workspaceHref(control.href ?? `/clients/${c.id}/import`, scope) }));
     // A masa paid short or late is a penalty in waiting (accounting-rules 5j): its own task, until fixed or explained in a note.
@@ -463,7 +467,7 @@ export async function askWorkspace(db: Db, access: WorkspaceAccess, input: Works
             const side = /\b(utang|hutang|payables?|liabilitas|kewajiban)\b/.test(q) && !/\bpiutang\b/.test(q) ? "LIABILITAS" : /\b(piutang|receivables?|tagihan)\b/.test(q) ? "ASET" : null;
             const words = (n: string) => n.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").split(" ");
             found = candidates.filter((c) =>
-              (c.code === "1190" || /related|berelasi|afiliasi|affiliat|pemegang saham|shareholder|direksi|director|induk|subsidiar|anak perusahaan/i.test(c.name) || words(c.name).some((w) => siblings.includes(w))) &&
+              (isIntercompanyCode(c.code) || /related|berelasi|afiliasi|affiliat|pemegang saham|shareholder|direksi|director|induk|subsidiar|anak perusahaan/i.test(c.name) || words(c.name).some((w) => siblings.includes(w))) &&
               (!side || !c.type || c.type === side));
           } else {
             found = accountsNamed(question, candidates, 5, ownNames);

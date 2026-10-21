@@ -12,10 +12,16 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
 1. **GL is the single source of truth for Buku books.** Never store derived ledger balances. Versioned source-reported figures in `lib/evidence/` are evidence, explicitly labeled separately, and never feed Buku financial reports directly (ADR 0007). TB, Laba Rugi, Neraca, combined worksheet,
    charts and tax card are all derived from `JournalLine` at read time (`lib/reports/*`). So are the other comprehensive income (movement
    of the PKL equity lines), the changes in equity and the indirect cash flow (`lib/reports/statements.ts`: every balance-sheet account's
-   movement, classified by FS line — leases, employee benefits and deferred tax by code; single-currency scopes), whose opening is 31
-   December plus the year's Saldo Awal (kind OPENING) entries — never a flow — and each is checked against the Neraca. CALK and the Excel
-   set (`lib/reports/notes.ts`, `workbook.ts`) reuse those functions and the registers; notes are never stored. In the cash flow a register disposal's **collected** proceeds (nothing links a receipt to a disposal, so the proceeds account is read first-in-first-out: cash credits clear its older debits first, later debits never take from it — conservative, an older unrelated receivable delays the disposal's inflow) and the paid part
-   of a purchase bill's investing debit (by the cash of its settlements, i.e. less the tax they withheld; any year) are investing; the rest of those entries is a non-cash operating line, so the sections still add up to the Neraca's change in cash.
+   movement, classified by FS line — leases, employee benefits and deferred tax by code; single-currency scopes), whose opening is the
+   previous year end plus the year's Saldo Awal (kind OPENING) when it opens the scope's books (nothing of the scope dated before it) —
+   never a flow — and each is checked against the Neraca. A Saldo Awal of a company joining the scope later in the year stays apart:
+   "Ekuitas entitas yang bergabung" in the changes in equity, "Kas entitas yang bergabung" in the cash flow, additions in the fixed-asset
+   movement; the Neraca's comparative is "Saldo awal" only when that Saldo Awal opened the books. A month-end FX revaluation (lines with a
+   currency and fx amount 0) moves no cash (PSAK 207): its cash part is "Pengaruh perubahan kurs terhadap kas" (`fxEffect`) outside the
+   three sections, the unrealised 7200 a non-cash adjustment of profit, and the revalued receivable or loan leaves its section. CALK and the Excel
+   set (`lib/reports/notes.ts`, `workbook.ts`) reuse those functions and the registers; notes are never stored. In the cash flow a register disposal's **collected** proceeds (nothing links a receipt to a disposal, so the proceeds account is read first-in-first-out: cash credits clear its older debits first, later debits never take from it — conservative, an older unrelated receivable delays the disposal's inflow; a buyer's deposit received before the disposal counts as collected when the disposal absorbs it, and proceeds of an earlier year's disposal collected in this one are this year's investing inflow) and the paid part
+   of a purchase bill's investing debit (by the cash of its settlements, i.e. less the tax they withheld; any year — apportioned cumulatively,
+   paid by the period end less paid before it, so a bill paid across years adds up to its cost exactly) are investing; the rest of those entries is a non-cash operating line, so the sections still add up to the Neraca's change in cash.
    `Entity.reportingFramework` (SAK EMKM / EP / Umum, default EP; a group takes the most demanding) decides **wording only** — the standard the CALK
    names, statement titles, which policies are described (EMKM has no PSAK 109 matrix, right-of-use, deferred tax or OCI wording) and
    who signs (Direksi for PT / foreign, Pemilik/Pengurus for CV / individual) — through `lib/reports/framework.ts`; no figure may depend on it.
@@ -37,6 +43,20 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
    **The database holds the same rules** (migration `ledger_guards`, I0): a deferred trigger refuses at commit an entry with < 2 lines or
    Σdebit ≠ Σcredit; an entry must sit in its client's period of its own date, and a line carries its entry's entity and date. A refusal
    there means code went around `postJournal` — fix the caller, never the trigger.
+   **Nomor bukti:** every entry gets `number` = `PREFIX-YYMM-NNNN` from its company's series per prefix and month (`lib/ledger/number.ts`:
+   SA, BM/BK by the bank line's side, RK, JP, JI, FJ/FB by the invoice's direction — `invoiceSeries`, a void keeping its original's —
+   else by the receivable/payable line), taken by `postJournal` in the posting
+   transaction (`JournalSequence`, row-locked, so a rollback returns the number); the database refuses changing or clearing it.
+   **Arsip akun:** `postJournal` refuses an account with `archivedAt` set; pickers, the AI scope (`isClassifiable`) and the import
+   classifier skip it (a rule or memory for it falls through to Review), as do the ledger-import mapping (never suggested, refused when
+   accepted) and accrual proposals. Archiving (`lib/coa/manage.ts`) needs an editable account with a zero balance-sheet balance **in each
+   company's own currency**, no line in an open month, no running schedule or registered asset, and no stored journal naming it (a
+   waiting request, a Jurnal berulang template that still owes a month, a draft proposal); removal counts the same stored journals.
+   `postJournal` re-reads its accounts `FOR KEY SHARE` after taking its number, so an archive racing a post serialises with it.
+   **Lampiran jurnal** (`lib/ledger/attachments.ts`) are evidence beside an entry, never ledger data: never read for amounts or sent to a
+   model, removable only while the entry's month and every later month are open (re-checked under the close lock); an import whose
+   entries carry one is not removed. The ten-file limit is counted under the journal's row lock; a file keeps its name's extension only
+   when it matches its bytes.
    A bank GL account belongs to one entity (`BankAccount.entityId`): another entity's entry may not use it — money between
    entities goes through 1190 in each entity's own books (rule 10). The only exception clears what older books left there (a
    line moving that entity's balance on the account toward zero); close control `bank-entity:` (REVIEW) shows such leftovers.
@@ -77,8 +97,25 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     owns, a foreign-currency or revaluation entry, and every non-adjustment are refused with where to change them instead.
     Above the firm's *Jurnal manual* threshold (by the original's Σdebit) the reversal waits for a second approver (rule 2a); while one
     reversal request of an entry waits, no other reversal of it is taken (a partial unique index keeps one PENDING per entry).
+3b. **Departemen & Proyek are labels, never balances** (`lib/dimensions`, cycle 2026-10-21-departemen-proyek). A client's `Dimension` rows
+    (kind DEPARTEMEN | PROYEK, code, name, archived); a `JournalLine` carries at most one of each (`departmentId`, `projectId`). `postJournal()`
+    refuses another client's, the wrong kind, or an archived one — except where a tag was stored while active: a reversal (it mirrors the
+    original's tags, so a per-department column nets out), a bank line's re-posting, a schedule's instalment, a Jurnal berulang instalment
+    and an approved request (`keepTags`). Archiving only stops new choices. A bank line keeps its tags on `BankTransaction` and they go on its
+    classification account only (each split part, and a withheld tax that is an expense — final PPh 4(2), 8200; never the bank, PPN,
+    suspense or a tax receivable / payable leg); `postBankTransaction` nets by account **and** tags, so changing only a tag posts a RECLASS of
+    the difference as a change of account does (rule 3). A line still in Review moves nothing (its suggestion is nobody's decision), and a
+    closed month refuses a tag change before anything is written. Reports filter by tag: the Laba Rugi per departemen / proyek is
+    `incomeStatement` per tag plus *Tanpa …*; a mixed-currency group's per-column rounding goes to *Tanpa …*, so the columns add up to the
+    Laba Rugi on every row. Removing a tag locks its row and re-checks; storing a request or template share-locks the tags it names.
+    Documents carry them too (round ten): an `Invoice` tags its revenue / expense (or asset) line — never the receivable, payable or PPN
+    line — and voiding mirrors it; an `AdjustmentSchedule` tags each instalment's income or expense side (a change applies to later
+    instalments only; a running schedule keeps posting an archived tag it carries); a fixed asset's tags are its depreciation
+    schedule's, and its disposal gain or loss carries them. One in use (a line, a bank line, an invoice, a schedule, a Jurnal berulang
+    template or a waiting request names it) is archived, never removed.
 4. **Locked periods reject every write** — imports, reclasses, adjustments. The database refuses inserting or deleting a journal entry
-   or line dated in a LOCKED month; only `deleteClient` passes, through `set_config('buku.client_delete', 'on', true)` in its own transaction. Closing goes in order: a month can't be locked while an earlier
+   or line dated in a LOCKED month **or in any month before one** (an earlier month may stay open only while it is empty, and a write
+   into it would change the locked month's Neraca; `postJournal` says so first, naming the month to reopen); only `deleteClient` passes, through `set_config('buku.client_delete', 'on', true)` in its own transaction. Closing goes in order: a month can't be locked while an earlier
    month with entries other than the Saldo Awal is open (`lockPeriod`, checked again under the client lock). Unlock (`unlockPeriod`) is
    explicit, **ADMIN only**, needs a reason (≥ 5 characters), runs in reverse order (refused while a later month is locked) and writes a
    `PeriodUnlockLog` row in the same transaction. With the firm's *Buka kembali bulan* on (Persetujuan kedua, `lib/approvals/reopen.ts`)
@@ -93,7 +130,11 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
    from the difference by an explicit click). A Temuan is resolved once: a written decision (≥ 10 characters) and one `OPENING` entry dated the
    Saldo Awal date moving the entity's 3290 balance to the decided account (`lib/findings.ts`); it keeps who, when and the entry. Control
    `opening-diff:` FAILs while 3290 holds a balance (GL, not the row); `opening:` is REVIEW for an entity with entries and no Saldo Awal.
-   Prior-year P&L folds into 3200 in the TB.
+   Prior-year P&L folds into 3200 in the TB, and the on-screen Buku Besar of 3200 opens with it too (labelled), so a drill-down shows the
+   TB's number. Saldo Awal is a **balance-sheet position**: income and expense accounts are refused (a result earned before it is typed on
+   3200), so every statement labelled from the day after agrees. **Nothing typed by hand lands inside it:** a Jurnal Penyesuaian (and so an
+   approved accrual or waiting journal) or a new invoice dated on or before the entity's Saldo Awal is refused (`assertAfterOpening`), and
+   Saldo Awal can't be dated on or after a journal already in the books.
    Saldo Awal prefills bank lines from the first statement and proposes (never posts) time deposits the statements list
    (`StatementImport.deposits`, on 1260, changeable); loan rows in the statements prompt for the loan balance.
    Saldo Awal precedes activity from both sides: `postOpening` refuses a date on/after the first bank row, and `importStatement` refuses the
@@ -104,6 +145,19 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     through `postJournal()` (kind `ADJUSTMENT`), carrying `scheduleId` + `installment` (unique: posts once). Never edited after posting —
     stop and create a new one (a stop is checked under a row lock when posting; installments due through the month of the stop stay owed and proposed until posted, later ones are dropped; a stopped accrual still reverses what it posted). An installment stays proposed from its month until posted, in every later month too, unless its month is locked; a schedule with any installment (or reversal) in an already locked month is refused at creation (under a per-client close lock that closing a month also takes; a close refuses if a schedule due by that month, overdue ones included, appeared while its controls ran). Candidates (fixed-asset purchase, prepayment, deferred revenue; never an accrual — see *Usulan akrual* below) are
     deterministic suggestions only; a schedule made from an entry stores that line (`sourceEntryId` + `sourceAccountId`, which it must release: an asset by depreciation — an expense debited, accumulated depreciation or that asset credited — a prepayment or deferred revenue by amortisation, the prepayment on credit, the deferred revenue on debit) and covers only it; schedules made before the line was stored are matched one to one by memo, then amount. A due, unposted installment is a REVIEW control `sched:`.
+    **Jurnal berulang** (`lib/adjust/recurring.ts` + `recurring-post.ts`, cycle 2026-10-21-jurnal-berulang): *Ulangi tiap bulan* on a
+    posted Jurnal Penyesuaian (not a reversal, a schedule's or a template's instalment, a foreign-currency journal, or a journal a register
+    owns — `reversalBlocker`; nor one whose lines could never post: an archived account or tag, the company's own 1190NN) stores a
+    `RecurringJournal` — company, memo, lines in minor units with their notes, the day (0 = the month's last; a shorter month takes its
+    last day), *Balik otomatis*, start (the next month, or after the last month an earlier template of the same journal posted or has
+    waiting) and an optional end. Lines never change: stop it and repeat a newer journal. Every
+    month from start to end not yet posted is **proposed at read time, posted only by a click** through `submitPrepared` — Jurnal
+    Penyesuaian's own route (rule 2a: above the *Jurnal manual* threshold it is a request carrying `recurringId` + `recurringMonth`,
+    and the month counts as waiting, not due; a rejection makes it due again) — with `recurringId` + `recurringMonth` on the entry
+    (unique: posts once; the reversal carries neither). Posting takes the close lock and the template's row lock, refusing a stopped
+    template, a waiting or posted month. A month at or before the client's latest locked month is never proposed (it could not post). A
+    stop proposes nothing more, overdue months included; posted stays. A due, unwaiting instalment joins the `sched:` REVIEW control and
+    the close's race check (`recurringDueBy`). Create, post and stop are Riwayat `RECURRING`.
     **Usulan akrual** (`lib/adjust/accruals.ts`, cycle 2026-10-18-usulan-akrual): a cost that recurs per counterparty and is missing
     from a month is proposed as an accrual — deterministic, no AI, computed at read time, nothing stored until decided.
     - **Bucket** = company, expense account (BEBAN on *Beban umum & administrasi*, *Beban penjualan*, *Beban lain-lain*, except 7190,
@@ -156,7 +210,9 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     `ar:`/`ap:` include it only from the opening date; it ages from its own due date). PPN is
     the tax invoice's amount (prefill = effective 11 %, rule 8). An `InvoiceSettlement` links a **bank line** to an invoice for an
     amount — a subledger link only, never a journal: the line must be the entity's, in the invoice's direction, **posted to the invoice's
-    receivable/payable account**, in an open month; Σ per invoice ≤ total and Σ per line ≤ its amount under row locks. A line elsewhere
+    receivable/payable account**, in an open month — or, already tagged as that contact's (their advance), in a closed month when the
+    document enters the subledger after every closed month and no tax is withheld (the closed months' aging and proof read the same);
+    Σ per invoice ≤ total and Σ per line ≤ its amount under row locks. A line elsewhere
     is first classified through the reviewer's writer (`reviewTransactionTx`, rule 3) in the same transaction. Suggestions (equal open
     amount, contact name or number in the description) are never applied on their own. Open amount at a date = total − settlements by
     bank lines dated by then; aging by days past due (0 / 1–30 / 31–60 / 61–90 / > 90).
@@ -168,7 +224,8 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
       the cash);
     - close controls `ar:` / `ap:` prove Σ open − advances − unallocated = GL balance of the accounts the documents use (a split line
       counts its parts there): unequal or unallocated cash = REVIEW; `overpaid:` (REVIEW) lists contacts whose advance exceeds what they
-      owe, never netting a receivable below zero silently;
+      owe, never netting a receivable below zero silently; every aging that sits beside the Neraca line (the CALK note, the credit pack's
+      Umur Piutang / Utang) subtracts advances and unallocated cash so its total is the line;
     - **a wrong document is voided, never deleted**: a reason (≥ 10 characters), refused while settled, its journal reversed by a mirror
       INVOICE entry dated on the original (`reversesId`, open month only); a Saldo Awal item is only marked. A voided document leaves open
       items, aging, CKPN, proofs and sales figures, and stays listed with its reason and audit event;
@@ -190,9 +247,13 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
 5d. **Tax pack — PPh badan** (`lib/tax`): per company (not PERORANGAN) with IDR books and calendar fiscal year, **computed at read time**
     through the chosen month; only the accountant's records are stored (`TaxYear` regime, `FiscalCorrection`, `TaxCredit`, dismissed
     suggestions, `TaxPosting`). Laba sebelum pajak (BEBAN_PAJAK excluded) + koreksi fiskal → PKP rounded down to thousands (a loss = 0; no
-    carry-forward). Automatic corrections: book − fiscal depreciation of the asset register (beda waktu); *pendapatan lain* named bunga / jasa
-    giro / deposito out as final-taxed income (beda tetap). Correction **categories** by account-name words (`lib/tax/categories.ts`:
-    entertainment, donations, penalties, natura, PPh expensed, 50 % phones and service vehicles, provisions, employee benefits) are
+    carry-forward). Automatic corrections: book − fiscal depreciation of the asset register (beda waktu), and for an asset disposed this
+    year fiscal − book accumulated depreciation at disposal (the fiscal gain or loss differs by exactly that); *pendapatan lain* named bunga / jasa
+    giro / deposito out as final-taxed income (beda tetap), and the gross of income a customer or tenant withheld PPh 4(2) **final** on
+    (incoming bank lines with that withholding, per income account; also out of the Pasal 31E turnover). Under PP 55 (FINAL_UMKM) the
+    0,5 % proposed is net of the year's PPh 4(2) customers already withheld (shown as *Dipotong pelanggan*). Correction **categories** by
+    account-name words (`lib/tax/categories.ts`: entertainment, donations, penalties, PPh expensed, 50 % phones and service vehicles,
+    provisions, employee benefits — not natura, deductible for the employer since UU HPP / PMK 66/2023) are
     **suggestions only**; an accepted one follows its account's year-to-date balance × its % (1–100, changeable). **Kompensasi kerugian**:
     losses typed per origin year as left at 1 January (at most five years back), used oldest first up to fiscal profit, expired ones
     skipped; last year's December fiscal loss from the books is only suggested. The **Excel kertas kerja** is built from the same pack. Normal regime 22 %, Pasal 31E (turnover = usaha revenue ≤ Rp 50 M: PKP × 4,8 M ÷ turnover at
@@ -260,8 +321,11 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     An employee whose last day falls in a masa January–November gets the same recompute for the months worked through it (masa pajak
     terakhir), not TER; the masa's estimate is TER for the others plus that.
     The TER check uses the census wage (`Employee.wage`, the PSAK 219 *upah*) and the employee's PTKP status, so it is an **estimate** and
-    says so. A masa is judged on what was booked *for* it (credits in the month; PPN keluaran − masukan), paid by bank lines classified to
-    the tax account up to its due date (PPh: the 15th of the next month; PPN: the end of the next month); an older balance is shown apart,
+    says so. A masa is judged on what was booked *for* it (credits in the month; PPN keluaran − masukan, a lebih bayar carried masa to masa
+    from the company's first tax line, across year ends), paid by bank lines classified to
+    the tax account — decided by the outgoing bank line, not the entry: the net of all its entries on the tax account (its BANK entry
+    and any RECLASS, e.g. a remittance confirmed in Review from 1999) is one payment on the bank date, less the line's own withholding
+    leg (tax owed); a line moved off the tax account pays nothing — up to its due date (PPh: the 15th of the next month; PPN: the end of the next month); an older balance is shown apart,
     never netted against a missed month. An opening balance on a tax account belongs to the masa before its date (the books start owing
     it), so the first remittance reads as paying it. Tutup Buku carries it as *Pajak masa disetor* per Rupiah company with tax activity
     (`masa:<entity>`): REVIEW while any tax is short, late, paid with nothing withheld or holding an unexplained balance. Buku prepares; the firm files in Coretax (ADR 0014: not a PJAP).
@@ -308,7 +372,13 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
    `postJournal` checks `round(fxAmount × fxRate) = functional amount` (±1 minor unit). Rates are `ExchangeRate` rows (typed in
    or taken from the file) — never fetched live. A file rate only **fills an empty date** (insert-only, so two imports racing keep the first); it never overwrites a Kurs row (the table
    is per firm), and a differing one is shown as REVIEW `FX_FILE_RATE_DIFFERS` on the draft. Month-end revaluation is **proposed** to **7200 Laba/Rugi Selisih Kurs** and
-   posted only by an explicit click.
+   posted only by an explicit click, re-read under the client's close lock (a second click finds nothing left). Only **monetary** items are
+   revalued: fixed assets and their depreciation, inventory, prepayments, other non-current assets and 2160 revenue received in advance
+   stay at their historical rate (PSAK 210) — except 1260, where Buku files time deposits and placements (monetary, PSAK 221). A Saldo
+   Awal line on a balance-sheet account may give its foreign amount; it posts as a foreign-currency line at the rate the two amounts
+   imply, so revaluation sees the whole balance. A ledger import converts only at a Kurs rate of the row's month or the month before
+   (an older one is `MISSING_RATE`); an inverted rate keeps 18 significant digits. The revaluation line's memo reads in the currency
+   ("USD 1.000,00 × kurs 15.500").
 7. Dates are date-only `@db.Date` (UTC midnight). Read with `getUTC*`. Use `dateOnly()` / `periodBounds()`.
 8. PPN split: tagged lines split gross → DPP + PPN at `PPN_EFFECTIVE_PERCENT` (11% = 12% × 11/12). `dpp + ppn === gross` always. It's an estimate — label it.
 
@@ -326,10 +396,27 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
    strong name words, then the file's own code scheme, then weak words (`inferType`).
 10. Same-entity transfer → 1199 (must net to 0). Cross-entity → 1190, posted in *each* entity's books,
     eliminated in the combined worksheet (receivable vs payable, matched = min). Residual ≠ 0 → REVIEW.
+    **Antar entitas per pihak** (`lib/coa/intercompany.ts`, cycle 2026-10-21-antar-entitas-per-pihak): a client of **three or more**
+    companies has an intercompany account per company — `1190NN` *Piutang/Utang Antar Entitas — <nama singkat>*, `isIntercompany`,
+    `Account.counterpartyEntityId` — created when the third company is added (and for each later one), renamed with it, removed with it
+    while unused. Company A records a balance with B on **B's account**; `postJournal()` refuses a company's own account. The transfer
+    matcher posts each half to the other company's account (`isIntercompanyCode` covers 1190 and 1190NN wherever 1190 was special: AI,
+    splits, Review unpairing, the sanity base, the credit pack, reserved codes). A company's own Neraca and cash flow keep each
+    counterparty apart (no set-off between parties); a scope of several companies reads the balances between them as one (they
+    eliminate), a balance with a company outside the scope stays apart. The worksheet eliminates **per pair** (A on B's account against B
+    on A's) and the control names every pair that does not mirror; a balance left on 1190 in such a client is REVIEW
+    `intercompany-party` (the way out: a Jurnal Penyesuaian to the party's account). Two companies keep the one 1190. A company can't be
+    removed while anything names its 1190NN (a waiting request, a running template, a bank line or split, a rule, a memory), and a code is
+    never issued twice (always above the highest the client ever had). In a group of three or more, a bank line naming a group company
+    pairs only with that company's line. With a group's rates missing, the `intercompany` control is FAIL (it can't be checked), never
+    skipped. A source account never maps to its own company's 1190NN.
 11. PT + owner individual combined is a **management "Gabungan"**, not SAK consolidation. Keep the label + tooltip.
     Gabungan / Beranda are in IDR: non-IDR entities are translated — assets & liabilities at the closing rate, income & expense at
-    the period's average rate, equity at the historical rate; the residue is the equity line **3900 Selisih penjabaran**. A missing
-    rate shows the entity as *belum dijabarkan* — never a number computed with a guessed rate.
+    the period's average rate (the first AVERAGE on or after the period end within the same **financial** year; demanded when the
+    financial year so far holds income or expense), equity at the historical rate; the residue is the equity line **3900 Selisih
+    penjabaran**. A missing rate shows the entity as *belum dijabarkan* — never a number computed with a guessed rate. Only 1190
+    balances are eliminated: intra-group income and expense and investments in group companies stay summed, and the Gabungan note and
+    CALK say so.
 
 ## Import & classification (`lib/import/pipeline.ts`)
 12. Parse → continuity check (opening + Σ = every printed balance → closing) → dedupe by row hash → classify → post, all-or-nothing in one transaction.
@@ -439,6 +526,21 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     The Neraca at the anchor date then equals the file. It is refused while 1999 or 1199 hold money at that date, and for an anchor line
     mapped to income or expense. Laba Rugi before the first journal is unknown and sits in Saldo Laba; the draft says so (REVIEW
     `OPENING_BRIDGE`).
+
+    **Never counted twice, never a flow in an opening** (round seven, cycle 2026-10-21-uji-keras-pajak-impor-tutup):
+    - a GL journal whose every line (date, source account, amount) another GL import already posted is BLOCK `GL_OVERLAP` (a re-export);
+    - a GL's own *Saldo Awal* rows (no voucher, its first date) open the books as OPENING the day before when the entity has no Saldo Awal
+      and no earlier journal (INFO `GL_OPENING`); otherwise BLOCK `GL_OPENING_ROWS`, which the accountant may accept to leave them out;
+    - GL rows inside an opening bridge's span are BLOCK `BRIDGE_COVERS`, checked again when posting;
+    - a source system's year-end closing journal (on the financial-year end, only income / expense / equity, each P&L line moving toward
+      zero) is left out with REVIEW `CLOSING_ENTRY`: Buku derives the fold into Saldo Laba (rule 1);
+    - a TB whose movement crosses a financial-year end is BLOCK `TB_YEAR_END` (one movement journal would put last year's P&L in this one);
+    - an OPENING journal from a file holds no income or expense (BLOCK `OPENING_PL` at staging, refused again at posting against the
+      mapping), as a typed Saldo Awal (rule 5); a one-date worksheet is its period's own figures and exempt;
+    - an OPENING journal's rounding residue goes to 3290 with a Temuan, never 7190;
+    - a source account maps to a bank GL account only for its own entity and only while all its lines are in OPENING entries; a later
+      file posting to it is refused (the movement comes from statements). 3290, 3900 and 7190 are never a mapping target;
+    - a 1999 correction whose 1999 line sits in an OPENING entry posts as OPENING on that date.
 16. Parsers detect format from **content**, not file name, and raise `ParseError` with a Bahasa message the UI shows verbatim.
 16a. **Two-number dates are read in one order per file, never guessed per row** (QA E17, `dayMonthEvidence` in `lib/import/parsers/common.ts`):
     day/month (Indonesian) unless a value proves month/day (a second number > 12) — then the whole file is month/day and says so;
@@ -559,11 +661,19 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     list is unchanged; *Matikan* removes it from open months and its old notes stay, unused. The AI close review and *Jelaskan* may send
     its listed lines like any flagged control's rows (rule 20a caps). Deterministic: no model decides it.
 23. Tutup Buku requires: no FAIL, every REVIEW acknowledged with a note, all sign-offs ticked, and **no journal waiting for a second
-    approver** that would post into the month (dated in it, or a *Balik otomatis* request of the month before; `pendingJournalCount`,
-    checked again under the client lock): "Belum bisa tutup buku: 2 jurnal menunggu persetujuan kedua."
+    approver** dated by the month end (a lock freezes every earlier month, so a request in an empty earlier month — or a *Balik
+    otomatis* one landing on the 1st — could never post after it; `pendingJournalCount`, checked again under the client lock): "Belum
+    bisa tutup buku: 2 jurnal menunggu persetujuan kedua." A closed month is never locked again (who, when and why stay). A note is taken
+    only by a control asking for one (a REVIEW showing now): a note written ahead would clear whatever the control says later. **A post
+    can't race the lock:** the entry guard share-locks the client's periods from the entry's month on (`20261021130000`), and
+    `lockPeriod` takes its period row `FOR UPDATE` and refuses when the ledger it checked (count and latest entry of the months up to it)
+    changed meanwhile. The firm board says *Siap tutup buku* only when the lock would go through (no waiting journal, no earlier open
+    month). Schedules follow Jurnal berulang: an instalment in a month at or before the latest closed one is never proposed, and a
+    schedule with one there is refused at creation. An account a running Jurnal berulang or a waiting journal uses can't be archived.
     *Tutup bulan-bulan sebelumnya* (`lib/controls/history.ts`, admin only) closes the open months before the selected one in order, one
     month per call: the same rule per month, with one note written on each REVIEW still without a note and the sign-offs given by the
-    admin once for the run; a month whose open controls differ from what was previewed, or that fails, stops the run.
+    admin once for the run (one already ticked keeps its author); a month whose open controls differ from what was previewed, that fails,
+    or that has a waiting journal (refused before anything is written) stops the run.
 
 ## Tenancy
 24. Every row has `firmId`. Server actions resolve the client through `getClientForFirm()` before any write.

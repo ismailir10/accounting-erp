@@ -1,4 +1,5 @@
 import type { Tx } from "@/lib/db";
+import { ensureIntercompanyAccounts } from "@/lib/coa/intercompany";
 import type { BankCode, EntityKind, GrantKind, MemberRole, OrgKind, ReportingFramework } from "@/lib/generated/prisma/enums";
 import { isAdminRole } from "@/lib/auth/permissions";
 import { assertCanAddClient } from "@/lib/org";
@@ -40,6 +41,7 @@ export async function createClient(tx: Tx, firmId: string, spec: ClientSpec, opt
   const codes: GlCodes = { bank: () => bankAccountCode(bankIndex++), overdraft: () => overdraftAccountCode(overdraftIndex++) };
   const entities = [];
   for (const e of spec.entities) entities.push(await createEntity(tx, firmId, client.id, e, codes));
+  await ensureIntercompanyAccounts(tx, client.id);
   if (spec.rules?.length) {
     await tx.rule.createMany({ data: spec.rules.map((r) => ({ ...r, firmId, clientId: client.id, source: "SEED" })) });
   }

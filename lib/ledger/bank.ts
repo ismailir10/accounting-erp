@@ -11,6 +11,10 @@ import { withholdingAccountCode, type Withholding } from "@/lib/tax/withholding"
  * The classification side (everything except the bank GL account) can be moved later
  * by a RECLASS entry that posts only the difference — so drill-down from any account
  * still lands on the same bank row (entries keep bankTransactionId).
+ *
+ * Departemen & Proyek (lib/dimensions): the line's tags (`BankTransaction.departmentId`, `projectId`) go on the classification account
+ * (each part of a split), never on the bank, tax or suspense legs, and the difference is taken per account and tags — so changing only
+ * a tag moves it by a RECLASS as changing the account does (rule 3).
  */
 type Target = {
   accountCode: string;
@@ -87,16 +91,32 @@ export async function postBankTransaction(
   const desired = classificationNets(bankTx.amount, target);
   const existing = await tx.journalLine.findMany({
     where: { entry: { bankTransactionId: bankTx.id }, accountId: { not: bankGlId } },
-    select: { accountId: true, debit: true, credit: true },
+    select: { accountId: true, debit: true, credit: true, departmentId: true, projectId: true },
   });
 
+  // Nets keyed by account and tags: "accountId|departmentId|projectId".
+  const tagged = new Set(target.parts ? target.parts.map((p) => p.accountCode) : [target.accountCode]);
+  tagged.delete(ACCOUNT_CODES.SUSPENSE);
+  // A withheld tax that is an expense (final PPh 4(2) on a receipt, 8200) belongs to the income it was withheld from: it carries the tags.
+  // A tax that is a receivable or payable (PPh 23 prepaid, PPh 21 owed) is the company's and doesn't.
+  if (target.withholding && target.withholding.amount > 0n) {
+    const code = withholdingAccountCode(target.withholding.kind, bankTx.amount > 0n ? "IN" : "OUT");
+    const acc = await tx.account.findFirst({ where: { clientId, code }, select: { type: true } });
+    if (acc && (acc.type === "BEBAN" || acc.type === "PENDAPATAN")) tagged.add(code);
+  }
+  const keyOf = (code: string) => (tagged.has(code) ? `${idOf(code)}|${bankTx.departmentId ?? ""}|${bankTx.projectId ?? ""}` : `${idOf(code)}||`);
   const toLines = (nets: Map<string, bigint>): PostLine[] =>
-    [...nets.entries()].map(([accountId, v]) => (v > 0n ? { accountId, debit: v } : { accountId, credit: -v }));
+    [...nets.entries()].map(([key, v]) => {
+      const [accountId, departmentId, projectId] = key.split("|");
+      const tags = { departmentId: departmentId || null, projectId: projectId || null };
+      return v > 0n ? { accountId, debit: v, ...tags } : { accountId, credit: -v, ...tags };
+    });
 
   if (existing.length === 0) {
     const nets = new Map<string, bigint>();
-    for (const [code, v] of desired) nets.set(idOf(code), v);
-    nets.set(bankGlId, (nets.get(bankGlId) ?? 0n) + bankTx.amount);
+    for (const [code, v] of desired) nets.set(keyOf(code), (nets.get(keyOf(code)) ?? 0n) + v);
+    const bankKey = `${bankGlId}||`;
+    nets.set(bankKey, (nets.get(bankKey) ?? 0n) + bankTx.amount);
     return postJournal(tx, {
       entityId: bankTx.entityId,
       date: bankTx.date,
@@ -109,11 +129,11 @@ export async function postBankTransaction(
   }
 
   const diff = new Map<string, bigint>();
-  for (const l of existing) diff.set(l.accountId, (diff.get(l.accountId) ?? 0n) - (l.debit - l.credit));
-  for (const [code, v] of desired) {
-    const id = idOf(code);
-    diff.set(id, (diff.get(id) ?? 0n) + v);
+  for (const l of existing) {
+    const key = `${l.accountId}|${l.departmentId ?? ""}|${l.projectId ?? ""}`;
+    diff.set(key, (diff.get(key) ?? 0n) - (l.debit - l.credit));
   }
+  for (const [code, v] of desired) diff.set(keyOf(code), (diff.get(keyOf(code)) ?? 0n) + v);
   for (const [k, v] of diff) if (v === 0n) diff.delete(k);
   if (diff.size === 0) return null;
   return postJournal(tx, {

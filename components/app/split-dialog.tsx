@@ -10,6 +10,7 @@ import { AccountPicker, type AccountOption } from "@/components/app/account-pick
 import { splitTransactionAction } from "@/app/actions";
 import { formatMoney, parseMoney } from "@/lib/money";
 import { cn } from "@/lib/utils";
+import { isIntercompanyCode } from "@/lib/coa/template";
 
 type Part = { accountCode: string; amount: string; memo: string };
 export type SplitPartView = { accountCode: string; amount: string; memo: string | null };
@@ -49,7 +50,7 @@ export function SplitDialog({ bankTxId, amount, currency, accounts, initial, onD
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Accounts a part can't use (the server refuses them too): unclassified and the transfer accounts.
-  const options = useMemo(() => accounts.filter((a) => !["1999", "1199", "1190"].includes(a.code)), [accounts]);
+  const options = useMemo(() => accounts.filter((a) => !["1999", "1199"].includes(a.code) && !isIntercompanyCode(a.code)), [accounts]);
 
   const parsed = parts.map((p) => {
     if (!p.amount.trim()) return 0n;

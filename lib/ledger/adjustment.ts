@@ -3,8 +3,13 @@ import { LedgerError, postJournal } from "@/lib/ledger/post";
 import { mirrorLines, reversalMemo } from "@/lib/ledger/reverse";
 import { dateOnly, formatDate } from "@/lib/format";
 import { parseMoney } from "@/lib/money";
+import { assertAfterOpening } from "@/lib/ledger/opening-date";
 
-export type AdjustmentLineInput = { accountCode: string; debit: string; credit: string; memo?: string };
+/** A typed line; `departmentId` / `projectId` are the client's Departemen & Proyek (lib/dimensions), empty for none. */
+export type AdjustmentLineInput = { accountCode: string; debit: string; credit: string; memo?: string; departmentId?: string | null; projectId?: string | null };
+
+/** A line's Departemen & Proyek as a stored line (a request's, a Jurnal berulang template's) keeps them: only the ones set. */
+export const storedTags = (l: { departmentId?: string | null; projectId?: string | null }) => ({ ...(l.departmentId ? { departmentId: l.departmentId } : {}), ...(l.projectId ? { projectId: l.projectId } : {}) });
 
 /** The first day of the month after `date`: where an accrual's automatic reversal goes. */
 export const firstOfNextMonth = (date: Date) => dateOnly(date.getUTCFullYear(), date.getUTCMonth() + 2, 1);
@@ -18,8 +23,12 @@ export type PreparedAdjustment = {
   entity: { id: string; functionalCurrency: string };
   date: Date;
   memo: string;
-  lines: { accountId: string; accountCode: string; debit: bigint; credit: bigint; memo?: string }[];
+  lines: { accountId: string; accountCode: string; debit: bigint; credit: bigint; memo?: string; departmentId?: string | null; projectId?: string | null }[];
   reverseNextMonth: boolean;
+  /** A Jurnal berulang instalment (lib/adjust/recurring.ts): set on the entry, never on its reversal; once per template and month. */
+  recurring?: { id: string; month: number };
+  /** Lines stored before (a request waiting for a second approver): an archived Departemen & Proyek on them still posts. */
+  keepTags?: boolean;
 };
 
 /**
@@ -35,6 +44,7 @@ export async function prepareAdjustment(
   const memo = input.memo.trim();
   if (!memo) throw new LedgerError("Isi keterangan jurnal.");
   if (Number.isNaN(+input.date)) throw new LedgerError("Pilih tanggal jurnal.");
+  await assertAfterOpening(db, entity, input.date, ", atau koreksi lewat jurnal bertanggal sesudah Saldo Awal");
   const accounts = new Map((await db.account.findMany({ where: { clientId: input.clientId } })).map((a) => [a.code, a]));
   const lines = input.lines
     .filter((l) => l.accountCode)
@@ -42,13 +52,14 @@ export async function prepareAdjustment(
       const a = accounts.get(l.accountCode);
       if (!a) throw new LedgerError(`Akun ${l.accountCode} tidak ditemukan`);
       const note = l.memo?.replace(/\s+/g, " ").trim().slice(0, 200);
-      return { accountId: a.id, accountCode: a.code, debit: parseMoney(l.debit, entity.functionalCurrency), credit: parseMoney(l.credit, entity.functionalCurrency), memo: note || undefined };
+      return { accountId: a.id, accountCode: a.code, debit: parseMoney(l.debit, entity.functionalCurrency), credit: parseMoney(l.credit, entity.functionalCurrency), memo: note || undefined, departmentId: l.departmentId || null, projectId: l.projectId || null };
     });
   return { entity: { id: entity.id, functionalCurrency: entity.functionalCurrency }, date: input.date, memo, lines, reverseNextMonth: input.reverseNextMonth === true };
 }
 
 /** The lines as postJournal() takes them (the code only names the account for a stored request). */
-export const adjustmentPosting = (lines: PreparedAdjustment["lines"]) => lines.map(({ accountId, debit, credit, memo }) => ({ accountId, debit, credit, memo }));
+export const adjustmentPosting = (lines: PreparedAdjustment["lines"]) =>
+  lines.map(({ accountId, debit, credit, memo, departmentId, projectId }) => ({ accountId, debit, credit, memo, departmentId: departmentId ?? null, projectId: projectId ?? null }));
 
 /**
  * The one writer behind Jurnal Penyesuaian, an approved *Usulan akrual* and the approval of a waiting journal (Persetujuan kedua): posts a
@@ -58,7 +69,7 @@ export const adjustmentPosting = (lines: PreparedAdjustment["lines"]) => lines.m
  */
 export async function postPreparedAdjustment(tx: Tx, a: PreparedAdjustment, actorId?: string | null) {
   const lines = adjustmentPosting(a.lines);
-  const entry = await postJournal(tx, { entityId: a.entity.id, date: a.date, kind: "ADJUSTMENT", memo: a.memo, lines, actorId });
+  const entry = await postJournal(tx, { entityId: a.entity.id, date: a.date, kind: "ADJUSTMENT", memo: a.memo, lines, actorId, recurringId: a.recurring?.id, recurringMonth: a.recurring?.month, keepTags: a.keepTags });
   if (a.reverseNextMonth) {
     const on = firstOfNextMonth(a.date);
     try {

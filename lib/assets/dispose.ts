@@ -1,6 +1,6 @@
 import type { Db } from "@/lib/db";
 import { LedgerError, postJournal, type PostLine } from "@/lib/ledger/post";
-import { installments, owed } from "@/lib/adjust/schedules";
+import { installments, owed, type Installment } from "@/lib/adjust/schedules";
 import { ACCOUNT_CODES, COA_TEMPLATE } from "@/lib/coa/template";
 import { dateOnly, formatPeriod } from "@/lib/format";
 import { formatMoney, parseMoney } from "@/lib/money";
@@ -53,9 +53,14 @@ export async function disposeAsset(db: Db, input: DisposalInput) {
 
   const s = asset.schedule;
   const month = date.getUTCFullYear() * 12 + date.getUTCMonth() + 1;
+  // An installment of a month closed without it (its control acknowledged) can never be posted; the register stops asking for it too, so
+  // the disposal does: the gain or loss is reckoned from what was booked.
+  const locked = new Set((await db.period.findMany({ where: { clientId: input.clientId, status: "LOCKED" }, select: { year: true, month: true } })).map((p) => p.year * 12 + p.month));
+  const owing = (i: Installment, posted: (k: number) => boolean) =>
+    !i.reversal && owed(s!.stoppedAt, i) && i.year * 12 + i.month <= month && !locked.has(i.year * 12 + i.month) && !posted(i.k);
   if (s) {
     const posted = new Set(s.entries.map((e) => e.installment));
-    const missing = installments(s).filter((i) => !i.reversal && owed(s.stoppedAt, i) && i.year * 12 + i.month <= month && !posted.has(i.k));
+    const missing = installments(s).filter((i) => owing(i, (k) => posted.has(k)));
     if (missing.length) throw new LedgerError(`Catat dulu penyusutan ${asset.name} sampai ${formatPeriod(missing.at(-1)!.year, missing.at(-1)!.month)} (${missing.length} angsuran) sebelum melepasnya.`);
     // Installments are dated the month's last day: one of a later month than the disposal can't stay.
     const monthOf = (d: Date) => d.getUTCFullYear() * 12 + d.getUTCMonth() + 1;
@@ -66,7 +71,7 @@ export async function disposeAsset(db: Db, input: DisposalInput) {
     // Serialise with a click posting an installment (it locks the schedule row too) and read the posted total inside the lock.
     if (s) await tx.$queryRaw`SELECT id FROM "AdjustmentSchedule" WHERE id = ${s.id} FOR UPDATE`;
     const entries = s ? await tx.journalEntry.findMany({ where: { scheduleId: s.id }, select: { installment: true, date: true, lines: { select: { accountId: true, credit: true, debit: true } } } }) : [];
-    if (s && installments(s).some((i) => !i.reversal && owed(s.stoppedAt, i) && i.year * 12 + i.month <= month && !entries.some((e) => e.installment === i.k))) throw new LedgerError("Penyusutan berubah sementara itu. Muat ulang halaman lalu coba lagi.");
+    if (s && installments(s).some((i) => owing(i, (k) => entries.some((e) => e.installment === k)))) throw new LedgerError("Penyusutan berubah sementara itu. Muat ulang halaman lalu coba lagi.");
     const booked = entries
       .filter((e) => e.installment !== null && e.installment <= s!.months)
       .reduce((t, e) => t + e.lines.filter((l) => l.accountId === asset.accumulatedAccountId).reduce((u, l) => u + l.credit - l.debit, 0n), 0n);
@@ -83,8 +88,10 @@ export async function disposeAsset(db: Db, input: DisposalInput) {
     if (accumulated > 0n) lines.push({ accountId: asset.accumulatedAccountId!, debit: accumulated });
     if (proceeds > 0n) lines.push({ accountId: proceedsAccount.id, debit: proceeds });
     lines.push({ accountId: asset.assetAccountId, credit: asset.cost });
-    if (result > 0n) lines.push({ accountId: gainLossId!, credit: result });
-    if (result < 0n) lines.push({ accountId: gainLossId!, debit: -result });
+    // The gain or loss is the asset's department's and project's, as its depreciation was (its schedule's tags).
+    const tags = { departmentId: s?.departmentId ?? null, projectId: s?.projectId ?? null };
+    if (result > 0n) lines.push({ accountId: gainLossId!, credit: result, ...tags });
+    if (result < 0n) lines.push({ accountId: gainLossId!, debit: -result, ...tags });
     const outcome = result > 0n ? `laba ${formatMoney(result, cur)}` : result < 0n ? `rugi ${formatMoney(-result, cur)}` : "tanpa laba/rugi";
     const entry = await postJournal(tx, { entityId: asset.entityId, date, kind: "ADJUSTMENT", memo: `Pelepasan aset: ${asset.name} (${outcome})`, lines, actorId: input.actorId });
     const done = await tx.fixedAsset.updateMany({ where: { id: asset.id, disposalEntryId: null }, data: { disposedOn: date, proceeds, disposalEntryId: entry.id } });

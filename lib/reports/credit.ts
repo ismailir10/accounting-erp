@@ -1,18 +1,21 @@
 import type { Db } from "@/lib/db";
 import { periodBounds } from "@/lib/format";
 import { incomeStatement, trialBalance } from "@/lib/reports/ledger";
+import { collectedProceeds } from "@/lib/reports/statements";
+import { isIntercompanyCode } from "@/lib/coa/template";
 
 /**
  * Paket Kredit Bank (I4a, ADR 0014): what a bank's analyst checks first, prepared from the books. Read-only; nothing is stored.
  *
  * `receiptsVsRevenue` — per month, the money in on the company's bank accounts, read by how each line was classified:
  *   transfers between own accounts (1199 / 1190), loans & capital (a LIABILITAS or EKUITAS account) and lines not classified yet
- *   (1999, or still in Review) are set apart; the rest is *penerimaan usaha*, set against the Laba Rugi's revenue. A split line counts
+ *   (1999, or still in Review) are set apart, and so are the proceeds of a fixed asset sold (what the bank receipts collected of a disposal's
+ *   proceeds, as the cash flow's investing line counts them); the rest is *penerimaan usaha*, set against the Laba Rugi's revenue. A split line counts
  *   by its parts. Receipts include PPN and collections of earlier sales, so the ratio is a reading, not a reconciliation.
  * `sourceTrail` — per account, how many journal lines came from bank rows, ledger file rows, Saldo Awal, and the rest (adjustments,
  *   invoices, manual journals): every number in Buku traces to one of these.
  */
-export type ReceiptsMonth = { year: number; month: number; moneyIn: bigint; transfers: bigint; financing: bigint; unclassified: bigint; operating: bigint; revenue: bigint };
+export type ReceiptsMonth = { year: number; month: number; moneyIn: bigint; transfers: bigint; financing: bigint; disposals: bigint; unclassified: bigint; operating: bigint; revenue: bigint };
 
 const TRANSFER = new Set(["1199", "1190"]);
 const SUSPENSE = "1999";
@@ -36,7 +39,7 @@ export async function receiptsVsRevenue(db: Db, input: { clientId: string; entit
     }),
   ]);
   const out = new Map<number, ReceiptsMonth>(
-    months.map((k) => [k, { year: Math.floor(k / 12), month: (k % 12) + 1, moneyIn: 0n, transfers: 0n, financing: 0n, unclassified: 0n, operating: 0n, revenue: 0n }]),
+    months.map((k) => [k, { year: Math.floor(k / 12), month: (k % 12) + 1, moneyIn: 0n, transfers: 0n, financing: 0n, disposals: 0n, unclassified: 0n, operating: 0n, revenue: 0n }]),
   );
   for (const l of lines) {
     const m = out.get(l.date.getUTCFullYear() * 12 + l.date.getUTCMonth())!;
@@ -45,9 +48,26 @@ export async function receiptsVsRevenue(db: Db, input: { clientId: string; entit
     for (const p of parts) {
       const type = p.accountCode ? types.get(p.accountCode) : undefined;
       if (l.status === "NEEDS_REVIEW" || !p.accountCode || p.accountCode === SUSPENSE) m.unclassified += p.amount;
-      else if (TRANSFER.has(p.accountCode)) m.transfers += p.amount;
+      else if (TRANSFER.has(p.accountCode) || isIntercompanyCode(p.accountCode)) m.transfers += p.amount;
       else if (type === "LIABILITAS" || type === "EKUITAS") m.financing += p.amount;
       else m.operating += p.amount;
+    }
+  }
+  // Disposal proceeds collected in each month (first in, first out on the proceeds account, cash receipts only) were counted above as
+  // receipts on an asset account: they are an asset sold, not business.
+  const disposals = await db.fixedAsset.findMany({ where: { entityId: input.entityId, disposalEntryId: { not: null } }, select: { disposalEntryId: true } });
+  if (disposals.length) {
+    const proceeds = (
+      await db.journalLine.findMany({ where: { entryId: { in: disposals.map((d) => d.disposalEntryId!) } }, select: { id: true, entryId: true, debit: true, credit: true, account: { select: { code: true, type: true, fsLine: true } } } })
+    ).filter((l) => l.debit > l.credit && l.account.type === "ASET" && l.account.fsLine !== "ASET_TETAP" && l.account.fsLine !== "AKUM_PENYUSUTAN");
+    const total = async (at: Date) => [...(await collectedProceeds(db, [input.entityId], at, proceeds)).values()].reduce((t, v) => t + v, 0n);
+    let before = await total(new Date(+from - 86_400_000));
+    for (const m of out.values()) {
+      const now = await total(periodBounds(m.year, m.month).end);
+      const sold = now - before < m.operating ? now - before : m.operating;
+      m.disposals += sold;
+      m.operating -= sold;
+      before = now;
     }
   }
   const scope = { clientId: input.clientId, entityIds: [input.entityId] };

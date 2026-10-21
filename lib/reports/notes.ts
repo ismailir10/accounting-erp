@@ -8,7 +8,7 @@ import { balanceSheet, incomeStatement, type FsItem, type Scope } from "@/lib/re
 import { fixedAssetMovement, MixedScopeError, otherComprehensiveIncome } from "@/lib/reports/statements";
 import { isMixed, scopeEntities } from "@/lib/reports/fx";
 import { assetRegister } from "@/lib/assets/register";
-import { BUCKETS, BUCKET_LABEL, invoicesAt } from "@/lib/receivables/aging";
+import { BUCKETS, BUCKET_LABEL, invoicesAt, subledgerVsLedger } from "@/lib/receivables/aging";
 import { ckpn, settingAt } from "@/lib/receivables/ckpn";
 import { leaseSchedule, positionAt } from "@/lib/leases/schedule";
 import { terms } from "@/lib/leases/register";
@@ -83,7 +83,9 @@ export async function financialNotes(db: Db, scope: Scope, year: number, month: 
       ? `${names}, entitas-entitas dalam grup ${client.name}, menyajikan laporan keuangan gabungan untuk ${per.beforeBooks ? "" : "periode "}${periodText}.`
       : `${names} ("Entitas") menyajikan laporan keuangan untuk ${per.beforeBooks ? "" : "periode "}${periodText}.`,
     ...entities.filter((e) => e.npwp).map((e) => `${e.name}: NPWP ${e.npwp}.`),
-    entities.length > 1 ? "Laporan gabungan ini adalah pandangan manajemen atas entitas-entitas dalam grup, bukan laporan konsolidasian menurut SAK." : "",
+    entities.length > 1
+      ? "Laporan gabungan ini adalah pandangan manajemen atas entitas-entitas dalam grup, bukan laporan konsolidasian menurut SAK. Hanya piutang dan utang antar entitas yang saling dihapus; pendapatan dan beban antar entitas serta investasi pada entitas grup dijumlahkan apa adanya."
+      : "",
     ...entities.flatMap((e) => {
       const who = entities.length > 1 ? `${e.name} — ` : "";
       return [
@@ -229,7 +231,14 @@ export async function financialNotes(db: Db, scope: Scope, year: number, month: 
     const note = lineByKey.get("PIUTANG_USAHA") ?? add("Piutang usaha");
     const by = BUCKETS.map((b) => items.filter((i) => i.bucket === b).reduce((t, i) => t + i.open, 0n));
     note.paragraphs.push(`Umur piutang usaha per ${formatDateLong(asOf)} dari daftar faktur.`);
-    note.tables.push({ columns: ["Umur", "Jumlah"], rows: BUCKETS.map((b, i) => [BUCKET_LABEL[b], by[i]]), total: ["Jumlah", by.reduce((t, v) => t + v, 0n)] });
+    // The line nets customers' advances and receipts not yet given to an invoice (the subledger proof): the note ties to it.
+    const proofs = await subledgerVsLedger(db, scope.clientId, "SALES", asOf, scope.entityIds);
+    const advances = proofs.reduce((t, p) => t + p.advances, 0n);
+    const unallocated = proofs.reduce((t, p) => t + p.unallocated, 0n);
+    const rows: (string | bigint)[][] = BUCKETS.map((b, i) => [BUCKET_LABEL[b], by[i]]);
+    if (advances) rows.push(["Dikurangi uang muka / kelebihan bayar pelanggan", -advances]);
+    if (unallocated) rows.push(["Dikurangi penerimaan yang belum dicocokkan ke faktur", -unallocated]);
+    note.tables.push({ columns: ["Umur", "Jumlah"], rows, total: ["Jumlah", by.reduce((t, v) => t + v, 0n) - advances - unallocated] });
     for (const e of entities) {
       if (!(await settingAt(db, e.id, year, month))) continue;
       const c = await ckpn(db, scope.clientId, e.id, year, month);

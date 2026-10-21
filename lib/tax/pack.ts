@@ -42,7 +42,10 @@ export type TaxPack = {
   regime: TaxRegime;
   taxYearId: string | null;
   profitBeforeTax: bigint;
+  /** Peredaran bruto: the Laba Rugi revenue; under the normal regime less income a customer withheld final PPh 4(2) on (Pasal 31E). */
   turnover: bigint;
+  /** PPh 4(2) customers withheld from the year's receipts (already on 8200): under PP 55 it is part of the 0,5 %, not remitted again. */
+  finalWithheld: bigint;
   /** Months of the year the books cover through the chosen month; under 12, Pasal 31E is judged on the turnover annualised. */
   months: number;
   /** The Laba Rugi behind profit before tax, per account: income positive, expenses negative (the workpaper's first sheet). */
@@ -97,10 +100,28 @@ export async function taxPack(db: Db, clientId: string, entityId: string, year: 
   const from = dateOnly(year, 1, 1);
   const taxYear = await db.taxYear.findUnique({ where: { entityId_year: { entityId, year } }, include: { losses: true, corrections: { include: { account: true }, orderBy: { createdAt: "asc" } }, credits: { include: { account: true }, orderBy: [{ date: "asc" }, { createdAt: "asc" }] } } });
   const regime: TaxRegime = taxYear?.regime ?? "NORMAL";
+  const final = regime === "FINAL_UMKM";
   const scope = { clientId, entityIds: [entityId] };
   const is = await incomeStatement(db, scope, from, through);
   const profitBeforeTax = is.totals.profitBeforeTax;
-  const turnover = is.totals.revenue;
+  // Receipts a customer or tenant withheld PPh 4(2) from (rule 5h: Dr 8200, the income credited gross): final tax already paid on that
+  // income. Under PP 55 it is part of the year's 0,5 % (the customer as designated withholder, Pasal 58); under the normal regime the
+  // income is taxed finally and leaves the PPh badan computation (UU PPh Pasal 4 ayat (2)).
+  const withheldFinal = await db.bankTransaction.findMany({ where: { entityId, direction: "IN", whtKind: "PPH_4_2", whtAmount: { gt: 0n }, date: { gte: from, lte: through } }, select: { id: true, whtAmount: true } });
+  const finalWithheld = withheldFinal.reduce((t, x) => t + x.whtAmount, 0n);
+  // The gross of that income, per income account: what the receipts' journals (bank entry and any reclass) credit to it.
+  const finalIncome = new Map<string, { name: string; amount: bigint }>();
+  if (!final && withheldFinal.length) {
+    const rows = await db.journalLine.findMany({ where: { entityId, entry: { bankTransactionId: { in: withheldFinal.map((x) => x.id) } }, account: { clientId, type: "PENDAPATAN" } }, select: { debit: true, credit: true, account: { select: { code: true, name: true } } } });
+    for (const r of rows) {
+      const cur = finalIncome.get(r.account.code) ?? { name: r.account.name, amount: 0n };
+      cur.amount += r.credit - r.debit;
+      finalIncome.set(r.account.code, cur);
+    }
+  }
+  // Pasal 31E is judged on peredaran bruto without income taxed finally (SE-02/PJ/2015); the 0,5 % of PP 55 is on all of it.
+  const revenueCodes = new Set(is.revenue.flatMap((i) => i.accounts.map((a) => a.code)));
+  const turnover = is.totals.revenue - [...finalIncome].reduce((t, [code, x]) => t + (revenueCodes.has(code) && x.amount > 0n ? x.amount : 0n), 0n);
 
   // ---- koreksi fiskal ----
   const corrections: Correction[] = [];
@@ -108,6 +129,12 @@ export async function taxPack(db: Db, clientId: string, entityId: string, year: 
   const depreciationDiff = assets.reduce((t, r) => t + (r.difference ?? 0n), 0n);
   if (depreciationDiff !== 0n) {
     corrections.push({ key: "auto:depreciation", label: "Selisih penyusutan komersial dan fiskal", direction: depreciationDiff > 0n ? "POSITIVE" : "NEGATIVE", kind: "TEMPORARY", amount: depreciationDiff < 0n ? -depreciationDiff : depreciationDiff, source: { type: "ASSETS" } });
+  }
+  // An asset disposed this year: the fiscal gain or loss is reckoned on the fiscal book value, so the difference of the two depreciations
+  // so far reverses (without it a disposal in the acquisition year keeps a correction for a deduction that both sides end up equal on).
+  const disposalDiff = assets.reduce((t, r) => t + (r.disposalDifference ?? 0n), 0n);
+  if (disposalDiff !== 0n) {
+    corrections.push({ key: "auto:disposal", label: "Selisih laba/rugi pelepasan aset tetap komersial dan fiskal", direction: disposalDiff > 0n ? "POSITIVE" : "NEGATIVE", kind: "TEMPORARY", amount: disposalDiff < 0n ? -disposalDiff : disposalDiff, source: { type: "ASSETS" } });
   }
   // Leases (rule 5f): the PSAK 116 depreciation + interest actually journalled (so an unposted month adds nothing the books don't carry)
   // out, rent straight line over the term in.
@@ -134,8 +161,15 @@ export async function taxPack(db: Db, clientId: string, entityId: string, year: 
     ...is.opex.flatMap((i) => i.accounts.map((a) => ({ code: a.code, name: a.name, section: i.label, amount: -a.amount }))),
     ...is.other.flatMap((i) => i.accounts.map((a) => ({ code: a.code, name: a.name, section: i.label, amount: a.amount }))),
   ];
-  for (const a of income.filter((x) => x.fsLine === "PENDAPATAN_LAIN" && FINAL_TAXED_INCOME.test(x.name) && x.amount > 0n)) {
+  const interest = income.filter((x) => x.fsLine === "PENDAPATAN_LAIN" && FINAL_TAXED_INCOME.test(x.name) && x.amount > 0n);
+  for (const a of interest) {
     corrections.push({ key: `auto:final:${a.code}`, label: `Penghasilan yang dikenai PPh final: ${a.name}`, direction: "NEGATIVE", kind: "PERMANENT", amount: a.amount, source: { type: "ACCOUNT", code: a.code, name: a.name } });
+  }
+  // Only the receipts' part of an account (the rest of it is taxed normally); an interest account already leaves whole above.
+  for (const [code, x] of finalIncome) {
+    if (x.amount <= 0n || interest.some((a) => a.code === code)) continue;
+    const label = `Penghasilan yang dipotong PPh final 4(2) oleh pelanggan/penyewa: ${x.name}${revenueCodes.has(code) ? " (juga dikeluarkan dari peredaran bruto Pasal 31E)" : ""}`;
+    corrections.push({ key: `auto:final42:${code}`, label, direction: "NEGATIVE", kind: "PERMANENT", amount: x.amount, source: { type: "ACCOUNT", code, name: x.name } });
   }
   for (const c of taxYear?.corrections ?? []) {
     // An accepted suggestion follows its account's year-to-date expense × its %; a typed correction keeps its amount.
@@ -159,7 +193,6 @@ export async function taxPack(db: Db, clientId: string, entityId: string, year: 
     return [{ key, code: x.code, name: x.name, amount, category: c.key, label: c.label, percent: c.percent, direction: reversal ? (c.direction === "POSITIVE" ? "NEGATIVE" : "POSITIVE") : c.direction, kind: c.kind, corrected: share(amount, c.percent) }];
   });
 
-  const final = regime === "FINAL_UMKM";
   const positive = final ? 0n : corrections.filter((c) => c.direction === "POSITIVE").reduce((t, c) => t + c.amount, 0n);
   const negative = final ? 0n : corrections.filter((c) => c.direction === "NEGATIVE").reduce((t, c) => t + c.amount, 0n);
   const fiscalProfit = profitBeforeTax + positive - negative;
@@ -218,13 +251,14 @@ export async function taxPack(db: Db, clientId: string, entityId: string, year: 
   const applicable = packApplies(entity);
   const proposals: Record<TaxPostingKind, ProposalLine[]> = { CURRENT: [], DEFERRED: [] };
   if (applicable && !laterPosting.CURRENT) {
-    // The final regime books its own tax (0,5 % of the year's turnover to 8200 against 2145, which the monthly payments clear); a
-    // normal-regime posting made before the switch is reversed in the same difference.
-    const target = settled ? currentTarget(tax.due, credits, settled.balance) : finalTarget(tax.due);
+    // The final regime books its own tax (0,5 % of the year's turnover to 8200 against 2145, which the monthly payments clear), less the
+    // part customers already withheld (on 8200 with the receipt, never on 2145); a normal-regime posting made before the switch is
+    // reversed in the same difference.
+    const target = settled ? currentTarget(tax.due, credits, settled.balance) : finalTarget(tax.due - finalWithheld);
     proposals.CURRENT = diff(target, postedCurrent);
   }
   if (applicable && deferred && !laterPosting.DEFERRED) proposals.DEFERRED = deferredDiff(deferred.amount, postedDeferred, deferred.oci);
-  return { entity, year, month, through, applicable, regime, taxYearId: taxYear?.id ?? null, profitBeforeTax, turnover, months, profitAndLoss, corrections, suggestions, positive, negative, fiscalProfit, losses: carried.rows, compensation: carried.used, lossSuggestion, tax, credits, settlement: settled, deferred, proposals, laterPosting };
+  return { entity, year, month, through, applicable, regime, taxYearId: taxYear?.id ?? null, profitBeforeTax, turnover, finalWithheld, months, profitAndLoss, corrections, suggestions, positive, negative, fiscalProfit, losses: carried.rows, compensation: carried.used, lossSuggestion, tax, credits, settlement: settled, deferred, proposals, laterPosting };
 }
 
 /**
@@ -246,7 +280,8 @@ export function currentTarget(due: bigint, credits: { amount: bigint; accountCod
 
 /**
  * PP 55/2022: the final tax on the year's turnover to date is an expense (8200) and a liability (2145) that the monthly payments —
- * filed to 2145 by the tax rules — clear; what is left on 2145 is the month not yet paid. Signed: debit +, credit −.
+ * filed to 2145 by the tax rules — clear; what is left on 2145 is the month not yet paid. `due` is what the company remits itself (the
+ * 0,5 % less what customers withheld); nothing when they withheld it all. Signed: debit +, credit −.
  */
 export function finalTarget(due: bigint): Map<string, bigint> {
   return due > 0n ? new Map([[ACCOUNT_CODES.FINAL_TAX, due], [FINAL_TAX_PAYABLE, -due]]) : new Map();

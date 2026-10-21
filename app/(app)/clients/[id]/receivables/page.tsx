@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { dimensionOptions } from "@/lib/dimensions";
 import { loadClientPage } from "@/lib/client-page";
 import type { SearchParams } from "@/lib/scope";
 import { formatPeriod, toIsoDate } from "@/lib/format";
@@ -60,7 +61,7 @@ export default async function ReceivablesPage({ params, searchParams }: { params
   // A line tagged with its contact is allocated: its rest is that contact's advance, not a to-do.
   const loose = view.unsettled.filter((l) => !l.contact);
   const overdue = view.aging.flatMap((a) => (BigInt(a.totals.OVER_90) > 0n ? [`${a.entity} ${formatMoney(BigInt(a.totals.OVER_90), a.currency)}`] : []));
-  const pick = (f: (a: (typeof accounts)[number]) => boolean) => accounts.filter(f).map((a) => ({ code: a.code, name: a.name }));
+  const pick = (f: (a: (typeof accounts)[number]) => boolean) => accounts.filter((a) => !a.archivedAt && f(a)).map((a) => ({ code: a.code, name: a.name })); // never an archived account
 
   return (
     <div className="space-y-6">
@@ -84,6 +85,7 @@ export default async function ReceivablesPage({ params, searchParams }: { params
         <NextStep>Catat {sales ? "faktur penjualan" : "tagihan pembelian"} klien, atau rincian {word} yang sudah ada di Saldo Awal.</NextStep>
       )}
       <Receivables
+        dimensions={await dimensionOptions(prisma, client.id)}
         clientId={client.id}
         direction={direction}
         entities={[...entities].sort((a, b) => Number(a.kind === "PERORANGAN") - Number(b.kind === "PERORANGAN")).map((e) => ({ id: e.id, name: e.name, currency: e.functionalCurrency }))}
@@ -153,7 +155,7 @@ async function Reconcile({ client, period, scope, periodOptions, entityOptions, 
   }));
   // The accounts an aging can stand for, the trade ones ticked (what the client's aging normally covers).
   const options = (lines: string[], trade: string, normal: "DEBIT" | "CREDIT") =>
-    accounts.filter((a) => lines.includes(a.fsLine) && !a.isClearing && !a.isIntercompany).map((a) => ({ code: a.code, name: a.name, checked: a.fsLine === trade && a.normalBalance === normal }));
+    accounts.filter((a) => lines.includes(a.fsLine) && !a.isClearing && !a.isIntercompany && !a.archivedAt).map((a) => ({ code: a.code, name: a.name, checked: a.fsLine === trade && a.normalBalance === normal }));
   const open = views.filter((v) => v.finding?.status === "OPEN");
   return (
     <div className="space-y-6">

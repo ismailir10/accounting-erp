@@ -14,7 +14,7 @@ import { ReasoningDisclosure } from "@/components/app/reasoning-panel";
 import { hasReasoning } from "@/lib/approvals/has-reasoning";
 import { Input } from "@/components/ui/input";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
-import { bookFakturAction, dismissAccrualAction, dismissProposalAction, postAccrualAction, postAllDueAction, postInstallmentAction, postProposalAction, reviewAction } from "@/app/actions";
+import { bookFakturAction, dismissAccrualAction, dismissProposalAction, postAccrualAction, postAllDueAction, postInstallmentAction, postProposalAction, postRecurringAction, reviewAction } from "@/app/actions";
 import type { AccrualCard, ApprovalKind, BankCard, DraftCard, FakturCard, ScheduledCard, SecondCard } from "@/lib/approvals/queue";
 import type { TaxTag } from "@/lib/generated/prisma/enums";
 import { cn } from "@/lib/utils";
@@ -358,6 +358,7 @@ export function ApprovalQueue({
                         <td className="py-1 pr-3">
                           <span className="font-mono text-xs">{l.accountCode}</span> {l.accountName}
                           {l.memo && <span className="block text-xs text-muted-foreground">{l.memo}</span>}
+                          {l.tags && <span className="block text-xs text-muted-foreground">{l.tags}</span>}
                         </td>
                         <td className="w-28 py-1 text-right">{BigInt(l.debit) > 0n && <Money value={BigInt(l.debit)} currency={s.currency} />}</td>
                         <td className="w-28 py-1 text-right">{BigInt(l.credit) > 0n && <Money value={BigInt(l.credit)} currency={s.currency} />}</td>
@@ -513,10 +514,10 @@ export function ApprovalQueue({
           kind="scheduled"
           title={labels.scheduled}
           count={openScheduled.length}
-          description="Cicilan penyusutan, amortisasi dan akrual yang jatuh tempo sampai bulan ini."
+          description="Cicilan penyusutan, amortisasi dan akrual, dan jurnal berulang, yang jatuh tempo sampai bulan ini."
           action={
             !readOnly && openScheduled.length > 1 ? (
-              <Button variant="outline" size="sm" disabled={disabled} onClick={() => run("all", () => postAllDueAction(clientId, year, month, entityId), `${openScheduled.length} jurnal terjadwal dicatat`, openScheduled.map((s) => `${s.scheduleId}:${s.k}`))}>
+              <Button variant="outline" size="sm" disabled={disabled} onClick={() => run("all", () => postAllDueAction(clientId, year, month, entityId), (r) => (r.ok && r.asked ? `${r.posted} jurnal terjadwal dicatat, ${r.asked} menunggu persetujuan` : `${openScheduled.length} jurnal terjadwal dicatat`), openScheduled.map((s) => `${s.scheduleId}:${s.k}`))}>
                 {busy === "all" && <Loader2 className="animate-spin" />} Catat semua {openScheduled.length}
               </Button>
             ) : undefined
@@ -539,14 +540,18 @@ export function ApprovalQueue({
                 currency={s.currency}
                 reason={
                   <>
-                    <MethodBadge method="SCHEDULE" />
+                    <MethodBadge method={s.recurring ? "RECURRING" : "SCHEDULE"} />
                     <span className="num">Debit {s.debit} · Kredit {s.credit}</span>
                   </>
                 }
               >
                 {!readOnly && (
                   <div className="flex flex-wrap gap-2">
-                    <Button variant="outline" size="sm" disabled={disabled} onClick={() => run(key, () => postInstallmentAction(clientId, s.scheduleId, s.k), `${s.memo} dicatat`)}>
+                    <Button variant="outline" size="sm" disabled={disabled} onClick={() =>
+                        s.recurring
+                          ? run(key, () => postRecurringAction(clientId, s.scheduleId, s.k), (r) => (r.ok && r.pending ? `${s.memo} menunggu persetujuan` : `${s.memo} dicatat`))
+                          : run(key, () => postInstallmentAction(clientId, s.scheduleId, s.k), `${s.memo} dicatat`)
+                      }>
                       <Check /> Setujui
                     </Button>
                     <Link href={adjustHref} className={buttonVariants({ variant: "ghost", size: "sm" })}>

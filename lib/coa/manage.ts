@@ -4,6 +4,7 @@ import { ACCOUNT_CODES, FS_LINES, type FsLine } from "@/lib/coa/template";
 import { allocateAccountCode, isReservedCode, NEW_ACCOUNT_FS_LINES, newAccountData } from "@/lib/ledger-import/mapping";
 import { withholdingAccountCode } from "@/lib/tax/withholding";
 import { GUESS_CODES } from "@/lib/classify/fallback";
+import { recurringOwing } from "@/lib/adjust/recurring";
 import type { Account } from "@/lib/generated/prisma/client";
 
 /**
@@ -102,6 +103,22 @@ export async function updateAccount(db: Db, input: { clientId: string; accountId
   });
 }
 
+/** Lines stored outside the ledger (a waiting request, a Jurnal berulang template, a draft journal) name an account by its code. */
+const namesCode = (lines: unknown, code: string) => Array.isArray(lines) && lines.some((l) => (l as { accountCode?: unknown } | null)?.accountCode === code);
+
+/**
+ * What would still post to the account by its code from outside the ledger: journals waiting for a second approver, Jurnal berulang
+ * templates still owing an instalment (`recurringOwing`, whatever today's date) and draft journals (Kotak persetujuan's *Draf jurnal*).
+ */
+async function storedUses(db: Db | Tx, clientId: string, code: string) {
+  const [waiting, templates, drafts] = await Promise.all([
+    db.journalApproval.findMany({ where: { clientId, status: "PENDING" }, select: { lines: true } }).then((rs) => rs.filter((r) => namesCode(r.lines, code)).length),
+    recurringOwing(db, clientId).then((ts) => ts.filter((t) => namesCode(t.lines, code)).length),
+    db.proposedEntry.findMany({ where: { clientId, status: "PROPOSED" }, select: { lines: true } }).then((ps) => ps.filter((p) => namesCode(p.lines, code)).length),
+  ]);
+  return { waiting, templates, drafts };
+}
+
 /** What still points at an account, in Bahasa ("12 baris jurnal", "1 aturan"…); empty = it can be removed. */
 export async function accountUsage(db: Db | Tx, clientId: string, accountId: string): Promise<string[]> {
   const a = await db.account.findFirst({
@@ -115,14 +132,16 @@ export async function accountUsage(db: Db | Tx, clientId: string, accountId: str
   if (!a) return [];
   const code = a.code;
   const ofClient = { bankAccount: { entity: { clientId } } };
-  const [rules, memories, bankLines, splits, agings, suggested, proposals] = await Promise.all([
+  // A waiting request or a running template names it by code: removed, the code could go to a new account, and the request would post
+  // there on approval.
+  const [rules, memories, bankLines, splits, agings, suggested, stored] = await Promise.all([
     db.rule.count({ where: { firmId: a.firmId, accountCode: code, OR: [{ clientId }, { clientId: null }] } }),
     db.memory.count({ where: { clientId, accountCode: code } }),
     db.bankTransaction.count({ where: { ...ofClient, OR: [{ accountCode: code }, { suggestedCode: code }] } }),
     db.bankTxSplit.count({ where: { accountCode: code, bankTransaction: ofClient } }),
     db.subledgerImport.count({ where: { clientId, accountCodes: { has: code } } }),
     db.sourceAccount.count({ where: { suggestedCode: code, entity: { clientId } } }),
-    db.proposedEntry.findMany({ where: { clientId, status: "PROPOSED" }, select: { lines: true } }).then((ps) => ps.filter((p) => JSON.stringify(p.lines).includes(`"${code}"`)).length),
+    storedUses(db, clientId, code),
   ]);
   const c = a._count;
   const parts: [number, string][] = [
@@ -137,7 +156,9 @@ export async function accountUsage(db: Db | Tx, clientId: string, accountId: str
     [memories, "ingatan klasifikasi"],
     [bankLines + splits, "mutasi bank"],
     [agings, "rekonsiliasi umur piutang/utang"],
-    [proposals, "usulan jurnal"],
+    [stored.drafts, "usulan jurnal"],
+    [stored.waiting, "jurnal menunggu persetujuan"],
+    [stored.templates, "jurnal berulang"],
     [c.budgets, "sel anggaran"],
   ];
   return parts.filter(([n]) => n > 0).map(([n, what]) => `${n.toLocaleString("id-ID")} ${what}`);
@@ -157,5 +178,61 @@ export async function removeAccount(db: Db, input: { clientId: string; accountId
     await tx.account.delete({ where: { id: a.id } });
     await bump(tx, input.clientId);
     await recordEvent(tx, { clientId: input.clientId, kind: "ACCOUNT", subject: `account:${a.code}`, summary: `Akun ${a.code} ${a.name} dihapus`, before: { code: a.code, name: a.name, fsLine: a.fsLine }, actorId: input.actorId });
+  });
+}
+
+/**
+ * Arsip akun (cycle 2026-10-20-lampiran-arsip): an account the client stopped using leaves every picker and the classifier, and
+ * postJournal() refuses it; reports keep its history. Archived only when nothing still counts on it: an editable account (not a system,
+ * bank or guess account), no line in a month that is still open, a zero balance-sheet balance in every company, and no running schedule,
+ * registered asset, Jurnal berulang still owing an instalment, waiting journal or draft journal on it. *Aktifkan lagi* undoes it at any time. Both are in Riwayat.
+ */
+export async function archiveAccount(db: Db, input: { clientId: string; accountId: string; actorId?: string | null }) {
+  await db.$transaction(async (tx) => {
+    const a = await tx.account.findFirst({ where: { id: input.accountId, clientId: input.clientId } });
+    if (!a) throw new AccountEditError("Akun tidak ditemukan.");
+    if (a.archivedAt) return;
+    const blocked = protection(a) ?? removalBlock(a);
+    if (blocked) throw new AccountEditError(blocked.replace("dihapus", "diarsipkan"));
+    // Under the account's row lock, as a removal: a posting that commits first is counted.
+    await tx.$queryRaw`SELECT id FROM "Account" WHERE id = ${a.id} FOR UPDATE`;
+    const open = await tx.journalLine.findFirst({ where: { accountId: a.id, entry: { period: { status: "OPEN" } } }, orderBy: { date: "desc" }, select: { date: true } });
+    if (open) throw new AccountEditError(`Akun ${a.code} ${a.name} masih dipakai di bulan yang belum ditutup (${open.date.getUTCMonth() + 1}/${open.date.getUTCFullYear()}). Tutup bukunya dulu, atau pindahkan saldonya.`);
+    if (a.type !== "PENDAPATAN" && a.type !== "BEBAN") {
+      // Each company's own Neraca, in its own currency: opposite balances of two companies (or Rupiah and dollar minor units) never net.
+      const byEntity = await tx.journalLine.groupBy({ by: ["entityId"], where: { accountId: a.id }, _sum: { debit: true, credit: true } });
+      if (byEntity.some((e) => (e._sum.debit ?? 0n) !== (e._sum.credit ?? 0n))) throw new AccountEditError(`Akun ${a.code} ${a.name} masih bersaldo. Nolkan saldonya lewat jurnal dulu, baru arsipkan.`);
+    }
+    const [schedules, assets] = await Promise.all([
+      tx.adjustmentSchedule
+        .findMany({ where: { stoppedAt: null, OR: [{ debitAccountId: a.id }, { creditAccountId: a.id }] }, select: { months: true, reverse: true, _count: { select: { entries: true } } } })
+        .then((ss) => ss.filter((x) => x._count.entries < x.months * (x.reverse ? 2 : 1)).length), // a finished schedule doesn't hold the account
+      tx.fixedAsset.count({ where: { disposedOn: null, OR: [{ assetAccountId: a.id }, { accumulatedAccountId: a.id }] } }),
+    ]);
+    // A Jurnal berulang still owing an instalment, a journal waiting for a second approver and a draft journal would post to it later, and
+    // could not (postJournal refuses it).
+    const { templates, waiting, drafts } = await storedUses(tx, input.clientId, a.code);
+    const held = [
+      schedules ? `${schedules} jadwal penyesuaian berjalan` : "",
+      assets ? `${assets} aset tetap` : "",
+      templates ? `${templates} jurnal berulang` : "",
+      waiting ? `${waiting} jurnal menunggu persetujuan` : "",
+      drafts ? `${drafts} usulan jurnal` : "",
+    ].filter(Boolean);
+    if (held.length) throw new AccountEditError(`Akun ${a.code} ${a.name} masih dipakai ${held.join(" dan ")}.`);
+    await tx.account.update({ where: { id: a.id }, data: { archivedAt: new Date() } });
+    await bump(tx, input.clientId);
+    await recordEvent(tx, { clientId: input.clientId, kind: "ACCOUNT", subject: `account:${a.code}`, summary: `Akun ${a.code} ${a.name} diarsipkan`, actorId: input.actorId });
+  });
+}
+
+export async function unarchiveAccount(db: Db, input: { clientId: string; accountId: string; actorId?: string | null }) {
+  await db.$transaction(async (tx) => {
+    const a = await tx.account.findFirst({ where: { id: input.accountId, clientId: input.clientId } });
+    if (!a) throw new AccountEditError("Akun tidak ditemukan.");
+    if (!a.archivedAt) return;
+    await tx.account.update({ where: { id: a.id }, data: { archivedAt: null } });
+    await bump(tx, input.clientId);
+    await recordEvent(tx, { clientId: input.clientId, kind: "ACCOUNT", subject: `account:${a.code}`, summary: `Akun ${a.code} ${a.name} diaktifkan lagi`, actorId: input.actorId });
   });
 }

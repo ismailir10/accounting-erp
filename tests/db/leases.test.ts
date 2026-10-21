@@ -75,8 +75,10 @@ describe("lease register (PSAK 116)", () => {
 
     const lease = await office(g);
     await db.period.upsert({ where: { clientId_year_month: { clientId: g.client.id, year: 2026, month: 7 } }, update: { status: "LOCKED" }, create: { firmId: g.firm.id, clientId: g.client.id, year: 2026, month: 7, status: "LOCKED" } });
-    await expect(postLeaseMonths(db, { clientId: g.client.id, entityId: g.pt.entity.id, year: 2026, month: 8 })).rejects.toThrow(/Juli 2026 sudah dikunci/);
+    await expect(postLeaseMonths(db, { clientId: g.client.id, entityId: g.pt.entity.id, year: 2026, month: 8 })).rejects.toThrow(/Juli 2026 sudah (dikunci|ditutup)/);
     expect(await db.leasePosting.count()).toBe(0); // all or nothing
+    // A locked July also freezes the months before it (accounting-rules 4): reopen it for the rest.
+    await db.period.update({ where: { clientId_year_month: { clientId: g.client.id, year: 2026, month: 7 } }, data: { status: "OPEN" } });
 
     const mistake = await office(g, { name: "Gudang salah input" });
     const cancelled = await cancelLease(db, { clientId: g.client.id, leaseId: mistake.id });

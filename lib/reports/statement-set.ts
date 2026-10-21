@@ -78,7 +78,7 @@ const itemRows = (cols: (FsItem[] | undefined)[], prefix: string): SetRow[] => {
 };
 
 /** Operating lines that are not cash movements of working capital: depreciation, non-cash and deferred items (cashFlow's keys). */
-const NON_CASH_KEYS = new Set(["AKUM_PENYUSUTAN", "BENEFITS", "DEFERRED_TAX", "OCI", "NONCASH", "DISPOSAL_NONCASH", "LEASE_INTEREST"]);
+const NON_CASH_KEYS = new Set(["AKUM_PENYUSUTAN", "BENEFITS", "DEFERRED_TAX", "OCI", "NONCASH", "DISPOSAL_NONCASH", "LEASE_INTEREST", "FX_UNREALISED"]);
 
 export async function statementSet(db: Db, scope: Scope, year: number, month: number): Promise<StatementSet> {
   const asOf = periodBounds(year, month).end;
@@ -183,7 +183,9 @@ export async function statementSet(db: Db, scope: Scope, year: number, month: nu
       ...flows(cf.financing),
       { label: "Kas bersih dari aktivitas pendanaan", values: [cf.totals.FINANCING], bold: true },
       { label: "Kenaikan (penurunan) bersih kas dan setara kas", values: [cf.net], bold: true },
+      ...(cf.fxEffect ? [{ label: "Pengaruh perubahan kurs terhadap kas dan setara kas", values: [cf.fxEffect] }] : []),
       { label: `Kas dan setara kas ${formatDateLong(cf.openedAt)}`, values: [cf.openingCash] },
+      ...(cf.joinedCash && cf.joinedOn ? [{ label: `Kas entitas yang bergabung (saldo awal ${formatDateLong(cf.joinedOn)})`, values: [cf.joinedCash] }] : []),
       { label: `Kas dan setara kas ${cur}`, values: [cf.closingCash], bold: true },
     ],
   });

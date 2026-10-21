@@ -45,12 +45,34 @@ async function movements(db: Db, scope: Scope, from: Date | undefined, to: Date,
   });
 }
 
-/** Balances at the start of the financial year: everything to the day before it plus the year's Saldo Awal entries up to `to`, and the first such date. */
+/**
+ * Balances at the start of the financial year (`rows`): everything to the day before it, plus the year's Saldo Awal when it opens the scope's
+ * books (nothing of the scope dated before it; `openedOn` is then its date). A Saldo Awal of a company joining the scope later in the year —
+ * a CV opened in May beside a PT kept since January — is not the group's opening: it comes back apart (`joined`), so the opening row stays
+ * the group's position at its date and the year's movements stay the year's.
+ */
 async function yearOpening(db: Db, scope: Scope, from: Date, to: Date) {
   const before = new Date(+from - 86_400_000);
-  const [prior, inYear] = await Promise.all([movements(db, scope, undefined, before), movements(db, scope, from, to, "only")]);
-  const first = await db.journalEntry.findFirst({ where: { entityId: { in: scope.entityIds }, kind: "OPENING", date: { gte: from, lte: to } }, orderBy: { date: "asc" }, select: { date: true } });
-  return { rows: prior.map((m, i) => ({ ...m, debit: m.debit + inYear[i].debit, credit: m.credit + inYear[i].credit, net: m.net + inYear[i].net })), openedOn: first?.date ?? null };
+  const [prior, openings] = await Promise.all([
+    movements(db, scope, undefined, before),
+    db.journalEntry.findMany({ where: { entityId: { in: scope.entityIds }, kind: "OPENING", date: { gte: from, lte: to } }, orderBy: { date: "asc" }, select: { id: true, date: true } }),
+  ]);
+  const first = openings[0]?.date ?? null;
+  const opensBooks = first !== null && !(await db.journalLine.findFirst({ where: { entityId: { in: scope.entityIds }, date: { lt: first } }, select: { id: true } }));
+  const atStart = openings.filter((o) => opensBooks && +o.date === +first!).map((o) => o.id);
+  const later = openings.filter((o) => !atStart.includes(o.id)).map((o) => o.id);
+  const sums = async (entryIds: string[]) =>
+    entryIds.length
+      ? new Map((await db.journalLine.groupBy({ by: ["accountId"], where: { entryId: { in: entryIds } }, _sum: { debit: true, credit: true } })).map((r) => [r.accountId, { debit: r._sum.debit ?? 0n, credit: r._sum.credit ?? 0n }]))
+      : new Map<string, { debit: bigint; credit: bigint }>();
+  const [start, joinedSums] = await Promise.all([sums(atStart), sums(later)]);
+  const plus = (m: Movement, x?: { debit: bigint; credit: bigint }) => (x ? { ...m, debit: m.debit + x.debit, credit: m.credit + x.credit, net: m.net + x.debit - x.credit } : m);
+  const joined = prior.map((m) => {
+    const x = joinedSums.get(m.account.id);
+    return { account: m.account, debit: x?.debit ?? 0n, credit: x?.credit ?? 0n, net: (x?.debit ?? 0n) - (x?.credit ?? 0n) };
+  });
+  const joinedOn = later.length ? openings.find((o) => o.id === later[0])!.date : null;
+  return { rows: prior.map((m) => plus(m, start.get(m.account.id))), joined, joinedOn, openedOn: opensBooks ? first : null };
 }
 
 async function single(db: Db, scope: Scope) {
@@ -71,10 +93,11 @@ export async function otherComprehensiveIncome(db: Db, scope: Scope, from: Date,
 
 // ─── Laporan Perubahan Ekuitas ────────────────────────────────────────────────
 
-export const EQUITY_ROWS = ["opening", "profit", "oci", "capital", "prive", "retained", "closing"] as const;
+export const EQUITY_ROWS = ["opening", "joined", "profit", "oci", "capital", "prive", "retained", "closing"] as const;
 export type EquityRow = (typeof EQUITY_ROWS)[number];
 export const EQUITY_ROW_LABEL: Record<EquityRow, string> = {
   opening: "Saldo awal",
+  joined: "Ekuitas entitas yang bergabung (saldo awal)",
   profit: "Laba (rugi) tahun berjalan",
   oci: "Penghasilan komprehensif lain",
   capital: "Setoran (penarikan) modal",
@@ -110,10 +133,12 @@ export async function equityChanges(db: Db, scope: Scope, to: Date): Promise<Equ
   const zero = () => EQUITY_LINES.map(() => 0n);
   const values = Object.fromEntries(EQUITY_ROWS.map((r) => [r, zero()])) as Record<EquityRow, bigint[]>;
   const col = (a: Account) => EQUITY_LINES.indexOf(a.fsLine as FsLine);
-  for (const m of opening) {
-    // Every P&L account up to last year is last year's (and earlier) profit, folded into Saldo laba.
-    if (m.account.type === "PENDAPATAN" || m.account.type === "BEBAN") values.opening[1] -= m.net;
-    else if (m.account.type === "EKUITAS" && col(m.account) >= 0) values.opening[col(m.account)] -= m.net;
+  for (const [row, ms] of [["opening", opening], ["joined", start.joined]] as const) {
+    for (const m of ms) {
+      // Every P&L account up to last year is last year's (and earlier) profit, folded into Saldo laba.
+      if (m.account.type === "PENDAPATAN" || m.account.type === "BEBAN") values[row][1] -= m.net;
+      else if (m.account.type === "EKUITAS" && col(m.account) >= 0) values[row][col(m.account)] -= m.net;
+    }
   }
   for (const m of moved) {
     if (m.account.type !== "EKUITAS" || col(m.account) < 0 || m.net === 0n) continue;
@@ -126,7 +151,7 @@ export async function equityChanges(db: Db, scope: Scope, to: Date): Promise<Equ
   const pick = (xs: bigint[]) => used.map(({ i }) => xs[i]);
   const picked = Object.fromEntries(EQUITY_ROWS.map((r) => [r, pick(values[r])])) as Record<EquityRow, bigint[]>;
   const totals = Object.fromEntries(EQUITY_ROWS.map((r) => [r, picked[r].reduce((t, v) => t + v, 0n)])) as Record<EquityRow, bigint>;
-  const codesOf = (fs: FsLine) => [...new Set([...opening, ...moved].filter((m) => m.account.fsLine === fs && m.net !== 0n).map((m) => m.account.code))].sort();
+  const codesOf = (fs: FsLine) => [...new Set([...opening, ...start.joined, ...moved].filter((m) => m.account.fsLine === fs && m.net !== 0n).map((m) => m.account.code))].sort();
   return { from, to, openedAt: start.openedOn ?? before, columns: used.map(({ fs }) => ({ fsLine: fs, label: FS_LINES[fs].label, codes: codesOf(fs) })), values: picked, totals, balanceSheetEquity: bs.totals.equity };
 }
 
@@ -162,8 +187,10 @@ export async function fixedAssetMovement(db: Db, scope: Scope, to: Date): Promis
   });
   const rows: AssetMovementRow[] = [];
   start.rows.forEach((o, i) => {
-    const m = moved[i];
-    if (!isLine(o.account) || (o.net === 0n && m.debit === 0n && m.credit === 0n && movedAll[i].net === 0n)) return;
+    // A company joining the scope in the year brings its assets in as additions (and its accumulation as a charge).
+    const j = start.joined[i];
+    const m = { debit: moved[i].debit + j.debit, credit: moved[i].credit + j.credit };
+    if (!isLine(o.account) || (o.net === 0n && m.debit === 0n && m.credit === 0n && movedAll[i].net === 0n && j.net === 0n)) return;
     const cost = o.account.fsLine === "ASET_TETAP";
     rows.push({
       code: o.account.code,
@@ -172,7 +199,7 @@ export async function fixedAssetMovement(db: Db, scope: Scope, to: Date): Promis
       opening: o.net,
       additions: cost ? m.debit : -m.credit,
       deductions: cost ? -m.credit : m.debit,
-      closing: o.net + movedAll[i].net,
+      closing: o.net + j.net + movedAll[i].net,
     });
   });
   rows.sort((a, b) => (a.kind === b.kind ? a.code.localeCompare(b.code) : a.kind === "COST" ? -1 : 1));
@@ -194,7 +221,12 @@ export type CashFlow = {
   financing: CashItem[];
   totals: Record<CashSection, bigint>;
   net: bigint;
+  /** Pengaruh perubahan kurs terhadap kas (PSAK 207): the month-end revaluation of foreign-currency cash, outside the three sections. */
+  fxEffect: bigint;
   openingCash: bigint;
+  /** Cash a company brought when it joined the scope in the year (its Saldo Awal, dated `joinedOn`): not a flow of the group's. */
+  joinedCash: bigint;
+  joinedOn: Date | null;
   closingCash: bigint;
 };
 
@@ -248,7 +280,7 @@ export function cashLine(a: Pick<Account, "code" | "fsLine" | "isIntercompany">,
  * earlier clearing back, so the receivable is open again. Conservative by construction: a collection is credited to the disposal only after every older
  * debit in the account has been cleared, and later debits never take from it.
  */
-async function collectedProceeds(db: Db, entityIds: string[], to: Date, proceedsLines: { id: string; entryId: string; account: { code: string } }[]) {
+export async function collectedProceeds(db: Db, entityIds: string[], to: Date, proceedsLines: { id: string; entryId: string; account: { code: string } }[]) {
   const collected = new Map<string, bigint>();
   if (!proceedsLines.length) return collected;
   const codes = [...new Set(proceedsLines.map((l) => l.account.code))];
@@ -268,6 +300,7 @@ async function collectedProceeds(db: Db, entityIds: string[], to: Date, proceeds
   }
   const queues = new Map<string, { tag: string | null; left: bigint }[]>();
   const surplus = new Map<string, bigint>(); // credits with nothing open yet (an advance): they absorb the next debit
+  const surplusCash = new Map<string, bigint>(); // the cash part of that advance: a disposal it absorbs was collected by it
   const cleared = new Map<string, { key: string; tag: string | null; amount: bigint; cash: bigint; advance: boolean }[]>(); // per bank line, to take back
   for (const r of rows) {
     const key = `${r.entityId}:${r.account.code}`;
@@ -284,7 +317,10 @@ async function collectedProceeds(db: Db, entityIds: string[], to: Date, proceeds
         const undo = c.amount < net ? c.amount : net;
         const nonCash = c.amount - c.cash;
         const cashBack = undo > nonCash ? undo - nonCash : 0n;
-        if (c.advance) surplus.set(key, (surplus.get(key) ?? 0n) - undo);
+        if (c.advance) {
+          surplus.set(key, (surplus.get(key) ?? 0n) - undo);
+          surplusCash.set(key, (surplusCash.get(key) ?? 0n) - cashBack);
+        }
         else {
           q.unshift({ tag: c.tag, left: undo });
           if (c.tag && cashBack > 0n) collected.set(c.tag, (collected.get(c.tag) ?? 0n) - cashBack);
@@ -300,6 +336,11 @@ async function collectedProceeds(db: Db, entityIds: string[], to: Date, proceeds
       const adv = surplus.get(key) ?? 0n;
       const absorbed = adv < net ? adv : net;
       surplus.set(key, adv - absorbed);
+      // A deposit received before the disposal (a buyer's advance) collected that much of its proceeds.
+      const advCash = surplusCash.get(key) ?? 0n;
+      const cashAbsorbed = advCash < absorbed ? advCash : absorbed;
+      surplusCash.set(key, advCash - cashAbsorbed);
+      if (tagged.has(r.id) && cashAbsorbed > 0n) collected.set(r.id, (collected.get(r.id) ?? 0n) + cashAbsorbed);
       net -= absorbed;
       if (net > 0n) q.push({ tag: tagged.has(r.id) ? r.id : null, left: net });
     } else if (net < 0n) {
@@ -327,6 +368,7 @@ async function collectedProceeds(db: Db, entityIds: string[], to: Date, proceeds
       }
       if (credit > 0n) {
         surplus.set(key, (surplus.get(key) ?? 0n) + credit);
+        surplusCash.set(key, (surplusCash.get(key) ?? 0n) + cashLeft);
         note(null, credit, cashLeft, true);
       }
     }
@@ -343,10 +385,26 @@ export async function cashFlow(db: Db, scope: Scope, to: Date): Promise<CashFlow
   const opening = start.rows;
   const isPl = (a: Account) => a.type === "PENDAPATAN" || a.type === "BEBAN";
   const netProfit = moved.filter((m) => isPl(m.account)).reduce((t, m) => t - m.net, 0n);
-  // Each intercompany account's side at the period end decides its section (cashLine).
+  // Each intercompany account's side at the period end decides its section (cashLine); a balance settled to zero by the period end keeps the
+  // side it opened with (a loan given and repaid is still lending).
+  // Per counterparty (its own account, lib/coa/intercompany.ts); balances between companies of the scope are read as one, so a loan inside
+  // a group shown together cancels instead of showing as lending and borrowing.
+  const inScope = new Set(scope.entityIds);
+  const counterpartyOf = new Map((await db.account.findMany({ where: { clientId: scope.clientId, isIntercompany: true }, select: { code: true, counterpartyEntityId: true } })).map((a) => [a.code, a.counterpartyEntityId]));
+  const icKey = (code: string) => {
+    const party = counterpartyOf.get(code);
+    return scope.entityIds.length > 1 && (!party || inScope.has(party)) ? "group" : code;
+  };
   const icNet = new Map<string, bigint>();
-  for (const m of [...opening, ...moved]) if (m.account.isIntercompany) icNet.set(m.account.code, (icNet.get(m.account.code) ?? 0n) + m.net);
-  const lineOf = (a: Pick<Account, "code" | "fsLine" | "isIntercompany">) => cashLine(a, a.isIntercompany && (icNet.get(a.code) ?? 0n) > 0n);
+  const icOpen = new Map<string, bigint>();
+  for (const m of opening) if (m.account.isIntercompany) icOpen.set(icKey(m.account.code), (icOpen.get(icKey(m.account.code)) ?? 0n) + m.net);
+  for (const m of [...opening, ...moved]) if (m.account.isIntercompany) icNet.set(icKey(m.account.code), (icNet.get(icKey(m.account.code)) ?? 0n) + m.net);
+  const lentOut = (code: string) => {
+    const key = icKey(code);
+    const end = icNet.get(key) ?? 0n;
+    return end !== 0n ? end > 0n : (icOpen.get(key) ?? 0n) > 0n;
+  };
+  const lineOf = (a: Pick<Account, "code" | "fsLine" | "isIntercompany">) => cashLine(a, a.isIntercompany && lentOut(a.code));
   const groups = new Map<string, CashItem & { section: CashSection }>();
   for (const m of moved) {
     if (isPl(m.account) || m.net === 0n) continue;
@@ -369,7 +427,7 @@ export async function cashFlow(db: Db, scope: Scope, to: Date): Promise<CashFlow
   // one "non-kas" line, where it offsets the other side (the payable, the obligation). Non-cash entries within one section stay as they are.
   const lines = await db.journalLine.findMany({
     where: { entityId: { in: scope.entityIds }, date: { gte: from, lte: to }, entry: { kind: { not: "OPENING" } } },
-    select: { id: true, entryId: true, debit: true, credit: true, entry: { select: { bankTransactionId: true } }, account: { select: { code: true, type: true, fsLine: true, isIntercompany: true } } },
+    select: { id: true, entryId: true, debit: true, credit: true, currency: true, fxAmount: true, entry: { select: { bankTransactionId: true } }, account: { select: { code: true, type: true, fsLine: true, isIntercompany: true } } },
     orderBy: [{ date: "asc" }, { id: "asc" }],
   });
   const byEntry = new Map<string, typeof lines>();
@@ -383,9 +441,28 @@ export async function cashFlow(db: Db, scope: Scope, to: Date): Promise<CashFlow
   const isProceeds = (l: (typeof lines)[number]) => l.account.fsLine !== "ASET_TETAP" && l.account.fsLine !== "AKUM_PENYUSUTAN" && l.account.type !== "PENDAPATAN" && l.account.type !== "BEBAN";
   const collectedBy = await collectedProceeds(db, scope.entityIds, to, [...byEntry.values()].filter((e) => disposals.has(e[0].entryId)).flat().filter((l) => isProceeds(l) && l.debit - l.credit > 0n));
   const sectionOf = (a: (typeof lines)[number]["account"]) => (a.type === "PENDAPATAN" || a.type === "BEBAN" ? "OPERATING" : (lineOf(a)?.section ?? "CASH"));
+  let fxEffect = 0n;
   for (const entry of byEntry.values()) {
     // A bank-derived entry is cash even without a cash line: a statement row is posted to 1999 first and moved by a RECLASS entry.
     if (entry[0].entry.bankTransactionId) continue;
+    // A month-end revaluation (lines in a currency with fx amount 0, lib/fx/revalue.ts) moves no cash (PSAK 207): its cash part is the
+    // effect of exchange rates on cash, shown apart; the rest — the revalued receivable or loan and the unrealised 7200 — leaves the
+    // sections, the gain or loss shown as a non-cash adjustment of the profit.
+    if (entry.some((l) => l.currency && l.fxAmount === 0n)) {
+      let unrealised = 0n;
+      for (const l of entry) {
+        const net = l.debit - l.credit;
+        const section = sectionOf(l.account);
+        if (section === "CASH") fxEffect += net;
+        else if (l.account.type === "PENDAPATAN" || l.account.type === "BEBAN") unrealised += net;
+        else {
+          const line = lineOf(l.account);
+          if (line) add(line.key, line.label, line.section, net);
+        }
+      }
+      if (unrealised) add("FX_UNREALISED", "Laba/rugi selisih kurs belum direalisasi", "OPERATING", unrealised);
+      continue;
+    }
     if (disposals.has(entry[0].entryId)) {
       const assetLines = entry.filter((l) => l.account.fsLine === "ASET_TETAP");
       const cost = -assetLines.reduce((t, l) => t + l.debit - l.credit, 0n);
@@ -422,6 +499,24 @@ export async function cashFlow(db: Db, scope: Scope, to: Date): Promise<CashFlow
     }
   }
 
+  // A disposal of an earlier year whose proceeds are collected in this period: the receipt only moved the receivable (operating above); the part
+  // of its proceeds collected between the year start and `to` is an investing inflow instead.
+  const earlier = await db.fixedAsset.findMany({ where: { entityId: { in: scope.entityIds }, disposalEntry: { date: { lt: from } } }, select: { disposalEntryId: true } });
+  if (earlier.length) {
+    const proceeds = (await db.journalLine.findMany({
+      where: { entryId: { in: earlier.map((d) => d.disposalEntryId!) } },
+      select: { id: true, entryId: true, debit: true, credit: true, account: { select: { code: true, type: true, fsLine: true, isIntercompany: true } } },
+    })).filter((l) => isProceeds(l as (typeof lines)[number]) && l.debit - l.credit > 0n);
+    const [byEnd, byStart] = await Promise.all([collectedProceeds(db, scope.entityIds, to, proceeds), collectedProceeds(db, scope.entityIds, before, proceeds)]);
+    for (const l of proceeds) {
+      const now = (byEnd.get(l.id) ?? 0n) - (byStart.get(l.id) ?? 0n);
+      if (now <= 0n) continue;
+      const line = lineOf(l.account);
+      if (line) add(line.key, line.label, line.section, -now, l.account.code);
+      add("DISPOSAL", "Hasil pelepasan aset tetap", "INVESTING", now);
+    }
+  }
+
   // Equipment bought on a payable: the bill's journal is non-cash (above), the payment only moves the payable. What the settled bank lines paid
   // (in the period, by the bill's settlements, less the tax they withheld) of the bill's investing debits is an investing outflow — also for a bill of an earlier year.
   const bills = await db.invoice.findMany({
@@ -431,11 +526,14 @@ export async function cashFlow(db: Db, scope: Scope, to: Date): Promise<CashFlow
   if (bills.length) {
     const debits = await db.journalLine.findMany({ where: { entryId: { in: bills.map((b) => b.entryId!) }, debit: { gt: 0n } }, select: { entryId: true, debit: true, account: { select: { code: true, type: true, fsLine: true, isIntercompany: true } } } });
     for (const bill of bills) {
-      const paid = bill.settlements.filter((x) => +x.bankTransaction.date >= +from && +x.bankTransaction.date <= +to).reduce((t, x) => t + x.amount - x.withheld, 0n); // cash only: the withheld part of a settlement is tax owed, not paid to the supplier
+      // Cash only: the withheld part of a settlement is tax owed, not paid to the supplier. Paid up to `to` less paid before `from`, each
+      // apportioned the same way, so a bill paid across two years adds up to its cost exactly (the rounding telescopes).
+      const paidBy = (until: Date) => bill.settlements.filter((x) => +x.bankTransaction.date <= +until).reduce((t, x) => t + x.amount - x.withheld, 0n);
+      const [paidTo, paidBefore] = [paidBy(to), paidBy(before)];
       for (const l of debits.filter((d) => d.entryId === bill.entryId)) {
         const line = lineOf(l.account);
         if (!line || line.section !== "INVESTING" || bill.total <= 0n) continue;
-        const part = (paid * l.debit) / bill.total;
+        const part = (paidTo * l.debit) / bill.total - (paidBefore * l.debit) / bill.total;
         add(line.key, line.label, "INVESTING", -part);
         add("NONCASH", NONCASH, "OPERATING", part, l.account.code);
       }
@@ -449,5 +547,6 @@ export async function cashFlow(db: Db, scope: Scope, to: Date): Promise<CashFlow
   const totals = { OPERATING: netProfit + operating.reduce((t, i) => t + i.amount, 0n), INVESTING: investing.reduce((t, i) => t + i.amount, 0n), FINANCING: financing.reduce((t, i) => t + i.amount, 0n) };
   const cash = (xs: Movement[]) => xs.filter((m) => m.account.fsLine === "KAS_SETARA_KAS").reduce((t, m) => t + m.net, 0n);
   const openingCash = cash(opening);
-  return { from, to, openedAt: start.openedOn ?? before, netProfit, operating, investing, financing, totals, net: totals.OPERATING + totals.INVESTING + totals.FINANCING, openingCash, closingCash: openingCash + cash(moved) };
+  const joinedCash = cash(start.joined);
+  return { from, to, openedAt: start.openedOn ?? before, netProfit, operating, investing, financing, totals, net: totals.OPERATING + totals.INVESTING + totals.FINANCING, fxEffect, openingCash, joinedCash, joinedOn: start.joinedOn, closingCash: openingCash + joinedCash + cash(moved) };
 }

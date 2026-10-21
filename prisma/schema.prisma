@@ -141,6 +141,12 @@ enum ClassifyMethod {
   MANUAL
 }
 
+/// Departemen & Proyek (cycle 2026-10-21-departemen-proyek): the two analysis dimensions a journal line may carry.
+enum DimensionKind {
+  DEPARTEMEN
+  PROYEK
+}
+
 enum EntryKind {
   OPENING
   BANK
@@ -423,76 +429,87 @@ model Client {
   coaVersion         Int                  @default(1)
   /// Modules turned on in the client menu (lib/clients/modules.ts): receivables · inventory · assets · leases · benefits. Presentation only.
   modules            String[]             @default([])
+  recurringJournals  RecurringJournal[]
+  dimensions         Dimension[]
 
   @@index([firmId])
 }
 
 model Entity {
-  id                 String               @id @default(cuid())
-  firmId             String
-  clientId           String
-  client             Client               @relation(fields: [clientId], references: [id])
-  name               String
-  shortName          String
-  kind               EntityKind
-  npwp               String?
+  id                   String               @id @default(cuid())
+  firmId               String
+  clientId             String
+  client               Client               @relation(fields: [clientId], references: [id])
+  name                 String
+  shortName            String
+  kind                 EntityKind
+  npwp                 String?
   /// ISO 4217 code; journal amounts of this entity are minor units of it (ADR 0006). Registry: lib/fx/currency.ts.
-  functionalCurrency String               @default("IDR")
-  reportingFramework ReportingFramework   @default(SAK_EP)
+  functionalCurrency   String               @default("IDR")
+  reportingFramework   ReportingFramework   @default(SAK_EP)
   /// Seller NITKU (22 digits) for the Coretax faktur file; null = head office, the NPWP16 + "000000".
-  nitku              String?
-  bankAccounts       BankAccount[]
-  entries            JournalEntry[]
-  sourceAccounts     SourceAccount[]
-  schedules          AdjustmentSchedule[]
-  proposals          ProposedEntry[]
-  fixedAssets        FixedAsset[]
-  invoices           Invoice[]
-  taxYears           TaxYear[]
-  ckpnSettings       CkpnSetting[]
-  inventoryCounts    InventoryCount[]
-  leases             Lease[]
-  employees          Employee[]
-  benefitSetting     BenefitSetting?
-  benefitPostings    BenefitPosting[]
-  findings           Finding[]
-  subledgerImports   SubledgerImport[]
-  journalApprovals   JournalApproval[]
-  budgets            Budget[]
+  nitku                String?
+  bankAccounts         BankAccount[]
+  entries              JournalEntry[]
+  sourceAccounts       SourceAccount[]
+  schedules            AdjustmentSchedule[]
+  proposals            ProposedEntry[]
+  fixedAssets          FixedAsset[]
+  invoices             Invoice[]
+  taxYears             TaxYear[]
+  ckpnSettings         CkpnSetting[]
+  inventoryCounts      InventoryCount[]
+  leases               Lease[]
+  employees            Employee[]
+  benefitSetting       BenefitSetting?
+  benefitPostings      BenefitPosting[]
+  findings             Finding[]
+  subledgerImports     SubledgerImport[]
+  journalApprovals     JournalApproval[]
+  budgets              Budget[]
+  journalSequences     JournalSequence[]
+  recurringJournals    RecurringJournal[]
+  intercompanyAccounts Account[]            @relation("IntercompanyCounterparty")
 
   @@index([clientId])
 }
 
 /// Chart of accounts is per Client (shared by its entities) so combined reports line up by code.
 model Account {
-  id              String               @id @default(cuid())
-  firmId          String
-  clientId        String
-  client          Client               @relation(fields: [clientId], references: [id])
-  code            String
-  name            String
-  type            AccountType
-  normalBalance   NormalBalance
-  fsLine          String
-  isBank          Boolean              @default(false)
-  isIntercompany  Boolean              @default(false)
-  isClearing      Boolean              @default(false)
-  isSuspense      Boolean              @default(false)
-  isRetained      Boolean              @default(false)
-  taxTag          TaxTag?
-  lines           JournalLine[]
-  bankAccounts    BankAccount[]
-  sourceAccounts  SourceAccount[]
-  scheduleDebits  AdjustmentSchedule[] @relation("ScheduleDebit")
-  scheduleCredits AdjustmentSchedule[] @relation("ScheduleCredit")
-  scheduleSources AdjustmentSchedule[] @relation("ScheduleSourceAccount")
-  fixedAssets     FixedAsset[]         @relation("AssetAccount")
-  fixedAssetsAcc  FixedAsset[]         @relation("AssetAccumulatedAccount")
-  invoiceCounter  Invoice[]            @relation("InvoiceCounter")
-  invoiceArAp     Invoice[]            @relation("InvoiceArAp")
-  taxCorrections  FiscalCorrection[]
-  taxCredits      TaxCredit[]
-  budgets         Budget[]
+  id                   String               @id @default(cuid())
+  firmId               String
+  clientId             String
+  client               Client               @relation(fields: [clientId], references: [id])
+  code                 String
+  name                 String
+  type                 AccountType
+  normalBalance        NormalBalance
+  fsLine               String
+  isBank               Boolean              @default(false)
+  isIntercompany       Boolean              @default(false)
+  isClearing           Boolean              @default(false)
+  isSuspense           Boolean              @default(false)
+  isRetained           Boolean              @default(false)
+  taxTag               TaxTag?
+  /// Arsip akun (cycle 2026-10-20-lampiran-arsip): hidden from every picker and refused by postJournal(); reports keep its history.
+  archivedAt           DateTime?
+  /// Antar entitas per pihak (cycle 2026-10-21-antar-entitas-per-pihak): the group company an intercompany account (`1190NN`) is with,
+  /// for a client of three or more companies; null for 1190 itself and every other account.
+  counterpartyEntityId String?
+  counterpartyEntity   Entity?              @relation("IntercompanyCounterparty", fields: [counterpartyEntityId], references: [id], onDelete: SetNull)
+  lines                JournalLine[]
+  bankAccounts         BankAccount[]
+  sourceAccounts       SourceAccount[]
+  scheduleDebits       AdjustmentSchedule[] @relation("ScheduleDebit")
+  scheduleCredits      AdjustmentSchedule[] @relation("ScheduleCredit")
+  scheduleSources      AdjustmentSchedule[] @relation("ScheduleSourceAccount")
+  fixedAssets          FixedAsset[]         @relation("AssetAccount")
+  fixedAssetsAcc       FixedAsset[]         @relation("AssetAccumulatedAccount")
+  invoiceCounter       Invoice[]            @relation("InvoiceCounter")
+  invoiceArAp          Invoice[]            @relation("InvoiceArAp")
+  taxCorrections       FiscalCorrection[]
+  taxCredits           TaxCredit[]
+  budgets              Budget[]
 
   @@unique([clientId, code])
 }
@@ -706,6 +723,11 @@ model BankTxSplit {
 model BankTransaction {
   id            String              @id @default(cuid())
   firmId        String
+  /// Departemen & Proyek of the classification side, set in Review (posted on the line's non-bank, non-tax leg).
+  departmentId  String?
+  department    Dimension?          @relation("BankTxDepartment", fields: [departmentId], references: [id], onDelete: Restrict)
+  projectId     String?
+  project       Dimension?          @relation("BankTxProject", fields: [projectId], references: [id], onDelete: Restrict)
   importId      String
   import        StatementImport     @relation(fields: [importId], references: [id])
   bankAccountId String
@@ -809,12 +831,111 @@ model JournalEntry {
   postedById        String?
   postedBy          FirmMember?          @relation("EntryPostedBy", fields: [postedById], references: [id])
   createdAt         DateTime             @default(now())
+  /// Nomor bukti, e.g. "JP-2512-0003" (PREFIX-YYMM-NNNN): set by postJournal() from the company's series, never changed (DB trigger).
+  number            String?
+  /// Lampiran: evidence files attached to the journal (never read for amounts).
+  attachments       JournalAttachment[]
+  /// Jurnal berulang: the template this entry is the instalment of, and its month (year × 100 + month); one per template and month.
+  recurringId       String?
+  recurring         RecurringJournal?    @relation("RecurringEntries", fields: [recurringId], references: [id], onDelete: Restrict)
+  recurringMonth    Int?
+  /// Templates made from this entry (*Ulangi tiap bulan*).
+  recurringFrom     RecurringJournal[]   @relation("RecurringSource")
   lines             JournalLine[]
 
   @@unique([scheduleId, installment])
+  @@unique([entityId, number])
+  @@unique([recurringId, recurringMonth])
   @@index([entityId, date])
   @@index([bankTransactionId])
   @@index([ledgerImportId])
+}
+
+/// Jurnal berulang (cycle 2026-10-21-jurnal-berulang): a Jurnal Penyesuaian repeated every month from its start to its end or stop, each
+/// month's instalment proposed and posted only by a click through Jurnal Penyesuaian's own writer (lib/adjust/recurring.ts). Its lines
+/// never change: a different journal is a new template.
+model RecurringJournal {
+  id               String            @id @default(cuid())
+  firmId           String
+  clientId         String
+  client           Client            @relation(fields: [clientId], references: [id])
+  entityId         String
+  entity           Entity            @relation(fields: [entityId], references: [id])
+  memo             String
+  /// [{ accountCode, debit, credit, memo? }]: minor units of the entity's currency as strings, as a stored Jurnal Penyesuaian request.
+  lines            Json
+  /// Day of the month the instalment is dated (1–31, a shorter month's last day when past it), or 0 for the month's last day.
+  day              Int
+  reverseNextMonth Boolean           @default(false)
+  startYear        Int
+  startMonth       Int
+  endYear          Int?
+  endMonth         Int?
+  stoppedAt        DateTime?
+  sourceEntryId    String?
+  sourceEntry      JournalEntry?     @relation("RecurringSource", fields: [sourceEntryId], references: [id], onDelete: SetNull)
+  createdById      String?
+  createdBy        FirmMember?       @relation("RecurringCreatedBy", fields: [createdById], references: [id])
+  createdAt        DateTime          @default(now())
+  entries          JournalEntry[]    @relation("RecurringEntries")
+  approvals        JournalApproval[] @relation("RecurringApprovals")
+
+  @@index([clientId])
+}
+
+/// Departemen & Proyek (cycle 2026-10-21-departemen-proyek): a client's departments and projects, set up on Pengaturan klien. An archived
+/// one leaves the pickers and stays in reports; one in use is never deleted.
+model Dimension {
+  id              String            @id @default(cuid())
+  firmId          String
+  clientId        String
+  client          Client            @relation(fields: [clientId], references: [id])
+  kind            DimensionKind
+  code            String
+  name            String
+  archivedAt      DateTime?
+  createdAt       DateTime          @default(now())
+  departmentLines JournalLine[]     @relation("LineDepartment")
+  projectLines    JournalLine[]     @relation("LineProject")
+  departmentTxs   BankTransaction[] @relation("BankTxDepartment")
+  projectTxs      BankTransaction[] @relation("BankTxProject")
+  departmentInvoices  Invoice[]            @relation("InvoiceDepartment")
+  projectInvoices     Invoice[]            @relation("InvoiceProject")
+  departmentSchedules AdjustmentSchedule[] @relation("ScheduleDepartment")
+  projectSchedules    AdjustmentSchedule[] @relation("ScheduleProject")
+
+  @@unique([clientId, kind, code])
+  @@index([clientId])
+}
+
+/// Lampiran jurnal (cycle 2026-10-20-lampiran-arsip): a receipt, invoice or approval kept with a journal. Evidence only: it never
+/// changes a number and is never sent to a model. PDF, JPG or PNG up to 5 MB, at most 10 per journal (lib/ledger/attachments.ts).
+model JournalAttachment {
+  id           String       @id @default(cuid())
+  firmId       String
+  entryId      String
+  entry        JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  fileName     String
+  contentType  String
+  size         Int
+  data         Bytes
+  uploadedById String?
+  uploadedBy   FirmMember?  @relation("AttachmentUploadedBy", fields: [uploadedById], references: [id])
+  createdAt    DateTime     @default(now())
+
+  @@index([entryId])
+}
+
+/// Nomor bukti series: the last number given per company, prefix (SA, BM, BK, RK, JP, JI, FJ, FB) and month (lib/ledger/number.ts).
+model JournalSequence {
+  entityId String
+  entity   Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  prefix   String
+  year     Int
+  month    Int
+  last     Int
+
+  @@id([entityId, prefix, year, month])
 }
 
 /// DB CHECK constraints (see migration): debit >= 0, credit >= 0, exactly one side non-zero.
@@ -837,6 +958,11 @@ model JournalLine {
   currency        String?
   fxAmount        BigInt?
   fxRate          String?
+  /// Departemen & Proyek: labels for analysis (Laba Rugi per departemen / proyek); they never change a balance.
+  departmentId    String?
+  department      Dimension?     @relation("LineDepartment", fields: [departmentId], references: [id], onDelete: Restrict)
+  projectId       String?
+  project         Dimension?     @relation("LineProject", fields: [projectId], references: [id], onDelete: Restrict)
 
   @@index([entityId, accountId, date])
   @@index([accountId])
@@ -1540,6 +1666,8 @@ model FirmMember {
   reopensAsked         ReopenRequest[]       @relation("ReopenRequester")
   reopensDecided       ReopenRequest[]       @relation("ReopenDecider")
   unlocksRequested     PeriodUnlockLog[]     @relation("PeriodUnlockRequestedBy")
+  attachmentsUploaded  JournalAttachment[]   @relation("AttachmentUploadedBy")
+  recurringCreated     RecurringJournal[]    @relation("RecurringCreatedBy")
 
   @@index([firmId])
 }
@@ -1595,6 +1723,11 @@ model AdjustmentSchedule {
   entries         JournalEntry[] @relation("ScheduleEntries")
   /// The fixed asset this schedule depreciates (accounting-rules 5b).
   asset           FixedAsset?    @relation("AssetSchedule")
+  /// Departemen & Proyek (lib/dimensions): on each instalment's income / expense side only; a change applies to later instalments.
+  departmentId    String?
+  department      Dimension?     @relation("ScheduleDepartment", fields: [departmentId], references: [id], onDelete: Restrict)
+  projectId       String?
+  project         Dimension?     @relation("ScheduleProject", fields: [projectId], references: [id], onDelete: Restrict)
 
   @@index([clientId])
   @@index([entityId])
@@ -1792,6 +1925,11 @@ model Invoice {
   fakturItemCode   String?
   fakturUnit       String?
   fakturItemName   String?
+  /// Departemen & Proyek (lib/dimensions): on the revenue / expense (or asset) line of its journal only.
+  departmentId     String?
+  department       Dimension?          @relation("InvoiceDepartment", fields: [departmentId], references: [id], onDelete: Restrict)
+  projectId        String?
+  project          Dimension?          @relation("InvoiceProject", fields: [projectId], references: [id], onDelete: Restrict)
 
   @@unique([entityId, direction, number])
   @@index([clientId])
@@ -2397,6 +2535,10 @@ model JournalApproval {
   accounts         String[]              @default([])
   /// MANUAL with *Balik otomatis* only: the *Usulan akrual* this request posts (its `ProposedEntry` key, stored POSTED on approval).
   accrualKey       String?
+  /// MANUAL only: the Jurnal berulang instalment this request posts (template and month, year × 100 + month).
+  recurringId      String?
+  recurring        RecurringJournal?     @relation("RecurringApprovals", fields: [recurringId], references: [id], onDelete: Restrict)
+  recurringMonth   Int?
   /// Σdebit in minor units of the entity's functional currency, and the threshold in force (whole Rupiah; null = every journal).
   amount           BigInt
   threshold        BigInt?

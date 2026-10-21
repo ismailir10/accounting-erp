@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { dimensionOptions } from "@/lib/dimensions";
 import { loadClientPage } from "@/lib/client-page";
 import type { SearchParams } from "@/lib/scope";
 import { formatDate } from "@/lib/format";
@@ -53,6 +54,8 @@ export default async function ReviewPage({ params, searchParams }: { params: Pro
     similar: isGenericKey(t.merchantKey) ? 1 : (similarCount.get(`${t.merchantKey}|${t.direction}`) ?? 1),
     guess: isSimpleGuess(t),
     entityKind: t.bankAccount.entity.kind,
+    departmentId: t.departmentId,
+    projectId: t.projectId,
   }));
   const options = classifiableOptions(accounts);
 
@@ -71,7 +74,7 @@ export default async function ReviewPage({ params, searchParams }: { params: Pro
           </a>
         </div>
       )}
-      <ReviewQueue items={items} accounts={options} scope={{ entityIds: scope.entityIds, period: period.key }} clientId={client.id} simpleGuesses={simpleGuesses} aiReady={Boolean(ai.apiKey && ai.model)} canSetUpAi={isAdminRole(member.role)} aiRun={aiRun} focusId={typeof sp.tx === "string" ? sp.tx : null} />
+      <ReviewQueue items={items} accounts={options} scope={{ entityIds: scope.entityIds, period: period.key }} clientId={client.id} simpleGuesses={simpleGuesses} aiReady={Boolean(ai.apiKey && ai.model)} canSetUpAi={isAdminRole(member.role)} aiRun={aiRun} focusId={typeof sp.tx === "string" ? sp.tx : null} dimensions={await dimensionOptions(prisma, client.id)} />
     </div>
   );
 }

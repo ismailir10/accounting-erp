@@ -2,13 +2,17 @@ import type { Tx } from "@/lib/db";
 import type { EntryKind } from "@/lib/generated/prisma/enums";
 import { formatPeriod } from "@/lib/format";
 import { convertMinor, isCurrency } from "@/lib/fx/currency";
+import { type InvoiceSeries, nextNumber, numberPrefix } from "@/lib/ledger/number";
 
 /**
  * The ONLY writer of JournalEntry/JournalLine. Enforces (accounting-rules):
  *  1. Σdebit = Σcredit, ≥ 2 lines, each line exactly one positive side (also DB CHECK)
- *  2. period open (locked periods reject every write)
- *  3. every account belongs to the entity's client COA; every source account belongs to the entity
+ *  2. period open (locked periods reject every write), and no later month of the client locked: a journal dated before a closed month
+ *     changes that month's Neraca (an earlier month may stay open only while it is empty, `lockPeriod`)
+ *  3. every account belongs to the entity's client COA, is not archived (Arsip akun) and is not the entity's own intercompany account;
+ *     every source account belongs to the entity; a line's department and project are the client's, of their kind, not archived
  *  4. foreign-currency lines: currency ≠ functional, round(fxAmount × fxRate) = amount ± 1 minor unit (rule 6b)
+ * and gives the entry its nomor bukti (lib/ledger/number.ts) in the same transaction.
  * Amounts are minor units of the entity's functional currency (IDR = whole Rupiah).
  * Posted entries are immutable — corrections go through a new RECLASS/ADJUSTMENT entry.
  */
@@ -23,6 +27,9 @@ export type PostLine = {
   sourceRef?: string | null;
   /** Foreign-currency line: original currency, its (unsigned) amount in minor units and the rate (functional per 1 unit). */
   fx?: { currency: string; amount: bigint; rate: string; revaluation?: boolean } | null;
+  /** Departemen & Proyek (lib/dimensions): labels for analysis, never a balance; one of each kind at most. */
+  departmentId?: string | null;
+  projectId?: string | null;
 };
 
 export type PostInput = {
@@ -36,10 +43,17 @@ export type PostInput = {
   /** Installment of an adjustment schedule (accounting-rules 5a); both or neither. */
   scheduleId?: string;
   installment?: number;
+  /** Instalment of a Jurnal berulang (lib/adjust/recurring.ts): the template and its month (year × 100 + month); both or neither. */
+  /** Lines a stored document already carried (an approved request): an archived tag on them still posts. */
+  keepTags?: boolean;
+  recurringId?: string;
+  recurringMonth?: number;
   /** Member doing the posting; null/undefined = system (seed, migration). Attribution only, never a rule. */
   actorId?: string | null;
   /** The entry this one reverses (lib/ledger/reverse.ts); unique, so an entry is reversed once. */
   reversesId?: string;
+  /** An INVOICE entry's nomor bukti series from its document (lib/receivables/invoices.ts): FJ sales, FB purchase; a void its original's. */
+  invoiceSeries?: InvoiceSeries;
   lines: PostLine[];
 };
 
@@ -54,20 +68,36 @@ export async function getOrCreatePeriod(tx: Tx, firmId: string, clientId: string
 
 /** Merge lines on the same account+side and drop zero lines. Keeps entries compact. */
 function normalizeLines(lines: PostLine[]) {
-  const out: (Required<Pick<PostLine, "accountId">> & { debit: bigint; credit: bigint; memo?: string; sourceAccountId: string | null; sourceRef: string | null; fx: PostLine["fx"] })[] = [];
+  const out: (Required<Pick<PostLine, "accountId">> & { debit: bigint; credit: bigint; memo?: string; sourceAccountId: string | null; sourceRef: string | null; fx: PostLine["fx"]; departmentId: string | null; projectId: string | null })[] = [];
   for (const l of lines) {
     const debit = l.debit ?? 0n;
     const credit = l.credit ?? 0n;
     if (debit < 0n || credit < 0n) throw new LedgerError("Nominal debit/kredit tidak boleh negatif");
     if (debit > 0n && credit > 0n) throw new LedgerError("Satu baris jurnal hanya boleh debit ATAU kredit");
     if (debit === 0n && credit === 0n) continue;
-    out.push({ accountId: l.accountId, debit, credit, memo: l.memo, sourceAccountId: l.sourceAccountId ?? null, sourceRef: l.sourceRef ?? null, fx: l.fx ?? null });
+    out.push({ accountId: l.accountId, debit, credit, memo: l.memo, sourceAccountId: l.sourceAccountId ?? null, sourceRef: l.sourceRef ?? null, fx: l.fx ?? null, departmentId: l.departmentId ?? null, projectId: l.projectId ?? null });
   }
   return out;
 }
 
+const archivedError = (a: { code: string; name: string }) => new LedgerError(`Akun ${a.code} ${a.name} sudah diarsipkan. Aktifkan lagi di Bagan akun untuk memakainya.`);
+
+/**
+ * Arsip akun under a lock: key-share the entry's accounts and read `archivedAt` again. An archive or removal (which takes the row FOR
+ * UPDATE) that committed since `validate` read the chart is seen here; one that starts now waits for this posting, then sees its lines
+ * and refuses. Taken after the posting's last wait (its number), so an archive never queues behind another journal's series; a rename or
+ * move does not wait on it. Sorted ids: one lock order for every posting.
+ */
+async function lockAccounts(tx: Tx, accounts: { id: string; code: string; name: string }[]) {
+  const ids = accounts.map((a) => a.id).sort();
+  const held = await tx.$queryRaw<{ id: string; archivedAt: Date | null }[]>`SELECT id, "archivedAt" FROM "Account" WHERE id = ANY(${ids}) ORDER BY id FOR KEY SHARE`;
+  if (held.length !== ids.length) throw new LedgerError("Akun tidak termasuk bagan akun klien ini");
+  const archived = held.find((h) => h.archivedAt);
+  if (archived) throw archivedError(accounts.find((a) => a.id === archived.id)!);
+}
+
 /** Every rule of postJournal() except the period (rules 1, 3, 4 above): the normalised lines and the entity, or a LedgerError. */
-async function validate(tx: Tx, input: Pick<PostInput, "entityId" | "lines">) {
+async function validate(tx: Tx, input: Pick<PostInput, "entityId" | "lines" | "reversesId" | "bankTransactionId" | "scheduleId" | "recurringId" | "keepTags">) {
   const lines = normalizeLines(input.lines);
   if (lines.length < 2) throw new LedgerError("Jurnal minimal dua baris");
   const totalDebit = lines.reduce((s, l) => s + l.debit, 0n);
@@ -82,6 +112,11 @@ async function validate(tx: Tx, input: Pick<PostInput, "entityId" | "lines">) {
   if (accounts.length !== accountIds.length || accounts.some((a) => a.clientId !== entity.clientId)) {
     throw new LedgerError("Akun tidak termasuk bagan akun klien ini");
   }
+  // Antar entitas per pihak: a company records what it owes or is owed by another on that company's account, never on its own.
+  const own = accounts.find((a) => a.counterpartyEntityId === entity.id);
+  if (own) throw new LedgerError(`Akun ${own.code} ${own.name} adalah akun antar entitas untuk ${entity.shortName} sendiri. Catat di akun pihak lawannya.`);
+  const archived = accounts.find((a) => a.archivedAt);
+  if (archived) throw archivedError(archived);
   // A bank GL account belongs to one entity (BankAccount.entityId): another entity's books never touch it — money between
   // entities goes through 1190 in each entity's own books (rule 10), else its reconciliation breaks with no pointer to why.
   // The one exception clears what older books left there: a move toward zero of this entity's balance on that account.
@@ -104,6 +139,23 @@ async function validate(tx: Tx, input: Pick<PostInput, "entityId" | "lines">) {
     }
   }
 
+  // Departemen & Proyek: the client's own, of the right kind, not archived.
+  const dimIds = [...new Set(lines.flatMap((l) => [l.departmentId, l.projectId]).filter((x): x is string => !!x))];
+  if (dimIds.length) {
+    const dims = new Map((await tx.dimension.findMany({ where: { id: { in: dimIds } } })).map((d) => [d.id, d]));
+    for (const l of lines) {
+      for (const [id, kind] of [[l.departmentId, "DEPARTEMEN"], [l.projectId, "PROYEK"]] as const) {
+        if (!id) continue;
+        const d = dims.get(id);
+        if (!d || d.clientId !== entity.clientId || d.kind !== kind) throw new LedgerError(kind === "DEPARTEMEN" ? "Departemen tidak termasuk klien ini." : "Proyek tidak termasuk klien ini.");
+        // A reversal mirrors its original's tags (so the per-department Laba Rugi nets out) even after the tag was archived; a bank line's
+        // re-posting keeps the tag the line carries (set while it was active: lib/review.ts `setBankTagsTx`), and a schedule's instalment the
+        // tag the schedule carries (lib/adjust/schedules.ts), as do a Jurnal berulang instalment and an approved request (`keepTags`): a
+        // tag stored while it was active. Archiving only stops new choices.
+        if (d.archivedAt && !input.reversesId && !input.bankTransactionId && !input.scheduleId && !input.recurringId && !input.keepTags) throw new LedgerError(`${kind === "DEPARTEMEN" ? "Departemen" : "Proyek"} ${d.code} ${d.name} sudah diarsipkan. Aktifkan lagi di Pengaturan klien untuk memakainya.`);
+      }
+    }
+  }
   const sourceIds = [...new Set(lines.map((l) => l.sourceAccountId).filter((x): x is string => !!x))];
   if (sourceIds.length) {
     const sources = await tx.sourceAccount.findMany({ where: { id: { in: sourceIds } }, select: { entityId: true } });
@@ -126,27 +178,54 @@ async function validate(tx: Tx, input: Pick<PostInput, "entityId" | "lines">) {
     const diff = expected > actual ? expected - actual : actual - expected;
     if (diff > 1n) throw new LedgerError(`Nominal ${actual} tidak sama dengan ${l.fx.amount} ${l.fx.currency} × kurs ${l.fx.rate}`);
   }
-  return { lines, entity };
+  return { lines, entity, accounts };
 }
 
 const closed = (p: { year: number; month: number }) => new LedgerError(`Periode ${formatPeriod(p.year, p.month)} sudah ditutup`);
+
+/** The first locked month after `year`/`month` of the client, if any: writing before it would change its balances. */
+export async function lockedAfter(db: Pick<Tx, "period">, clientId: string, year: number, month: number) {
+  return db.period.findFirst({
+    where: { clientId, status: "LOCKED", OR: [{ year: { gt: year } }, { year, month: { gt: month } }] },
+    orderBy: [{ year: "asc" }, { month: "asc" }],
+    select: { year: true, month: true },
+  });
+}
+
+const closedAfter = (p: { year: number; month: number }) =>
+  new LedgerError(`${formatPeriod(p.year, p.month)} sudah ditutup, dan jurnal bertanggal sebelumnya mengubah saldo bulan itu. Buka kembali ${formatPeriod(p.year, p.month)} dulu di Tutup Buku.`);
 
 /**
  * The same checks postJournal() makes, writing nothing: used where a journal is held back as a request (Persetujuan kedua) so the request
  * is refused now, not at approval, when it could never post. A month without a Period row yet is open.
  */
-export async function checkJournal(tx: Tx, input: Pick<PostInput, "entityId" | "date" | "lines">) {
+export async function checkJournal(tx: Tx, input: Pick<PostInput, "entityId" | "date" | "lines" | "reversesId" | "bankTransactionId" | "scheduleId" | "recurringId" | "keepTags">) {
   const { entity } = await validate(tx, input);
   const year = input.date.getUTCFullYear();
   const month = input.date.getUTCMonth() + 1;
   const period = await tx.period.findUnique({ where: { clientId_year_month: { clientId: entity.clientId, year, month } }, select: { status: true } });
   if (period?.status === "LOCKED") throw closed({ year, month });
+  const later = await lockedAfter(tx, entity.clientId, year, month);
+  if (later) throw closedAfter(later);
+}
+
+/**
+ * postJournal()'s checks of the lines alone (rules 1, 3, 4 above; no period, no tag exception unless the input names one): a stored
+ * template (Jurnal berulang) is refused when made if its lines could never post. The month is checked when each instalment posts.
+ */
+export async function checkLines(tx: Tx, input: Pick<PostInput, "entityId" | "lines">) {
+  await validate(tx, input);
 }
 
 export async function postJournal(tx: Tx, input: PostInput) {
-  const { lines, entity } = await validate(tx, input);
+  const { lines, entity, accounts } = await validate(tx, input);
   const period = await getOrCreatePeriod(tx, entity.firmId, entity.clientId, input.date);
   if (period.status === "LOCKED") throw closed(period);
+  const later = await lockedAfter(tx, entity.clientId, period.year, period.month);
+  if (later) throw closedAfter(later);
+  const byId = new Map(accounts.map((a) => [a.id, a]));
+  const number = await nextNumber(tx, entity.id, numberPrefix(input.kind, lines.map((l) => ({ ...l, account: byId.get(l.accountId)! })), input.invoiceSeries), input.date);
+  await lockAccounts(tx, accounts);
 
   return tx.journalEntry.create({
     data: {
@@ -161,8 +240,11 @@ export async function postJournal(tx: Tx, input: PostInput) {
       sourceRef: input.sourceRef,
       scheduleId: input.scheduleId,
       installment: input.installment,
+      recurringId: input.recurringId,
+      recurringMonth: input.recurringMonth,
       reversesId: input.reversesId,
       postedById: input.actorId ?? null,
+      number,
       lines: {
         create: lines.map((l) => ({
           firmId: entity.firmId,
@@ -177,6 +259,8 @@ export async function postJournal(tx: Tx, input: PostInput) {
           currency: l.fx?.currency ?? null,
           fxAmount: l.fx?.amount ?? null,
           fxRate: l.fx?.rate ?? null,
+          departmentId: l.departmentId,
+          projectId: l.projectId,
         })),
       },
     },

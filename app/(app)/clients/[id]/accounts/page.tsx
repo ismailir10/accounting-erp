@@ -46,26 +46,30 @@ export default async function AccountsPage({ params, searchParams }: { params: P
   const used = new Set(accounts.map((a) => a.code));
   const proposed = Object.fromEntries(ACCOUNT_FS_LINES.map((l) => [l.key, allocateAccountCode(l.key, used)]));
   const label = (fs: string) => FS_LINES[fs as FsLine]?.label ?? `${fs} (belum terpetakan)`;
-  const sections: AccountSection[] = SECTIONS.map((s) => ({
+  // Archived accounts (Arsip akun) sit in their own section at the end, each with *Aktifkan lagi*.
+  const row = (a: (typeof accounts)[number]) => ({
+    id: a.id,
+    code: a.code,
+    name: a.name,
+    fsLine: a.fsLine,
+    fsLabel: label(a.fsLine),
+    side: a.normalBalance === "DEBIT" ? ("D" as const) : ("K" as const),
+    balance: Array.isArray(tb) ? ((nets.get(a.id) ?? 0n) * (a.normalBalance === "DEBIT" ? 1n : -1n)).toString() : null,
+    lines: lineCount.get(a.id) ?? 0,
+    href: withParams(`${base}/ledger/${a.code}`, { period: period.key, entity: scope.value }),
+    locked: protection(a),
+    keep: removalBlock(a),
+    targets: moveTargets(a).map((k) => ({ value: k, label: FS_LINES[k].label })),
+    archived: a.archivedAt !== null,
+  });
+  const byLine = (a: (typeof accounts)[number], b: (typeof accounts)[number]) => FS_ORDER.indexOf(a.fsLine) - FS_ORDER.indexOf(b.fsLine) || a.code.localeCompare(b.code);
+  const sections: AccountSection[] = [...SECTIONS.map((s) => ({
     ...s,
     rows: accounts
-      .filter((a) => (FS_LINES[a.fsLine as FsLine]?.section ?? "LAINNYA") === s.key)
-      .sort((a, b) => FS_ORDER.indexOf(a.fsLine) - FS_ORDER.indexOf(b.fsLine) || a.code.localeCompare(b.code))
-      .map((a) => ({
-        id: a.id,
-        code: a.code,
-        name: a.name,
-        fsLine: a.fsLine,
-        fsLabel: label(a.fsLine),
-        side: a.normalBalance === "DEBIT" ? ("D" as const) : ("K" as const),
-        balance: Array.isArray(tb) ? ((nets.get(a.id) ?? 0n) * (a.normalBalance === "DEBIT" ? 1n : -1n)).toString() : null,
-        lines: lineCount.get(a.id) ?? 0,
-        href: withParams(`${base}/ledger/${a.code}`, { period: period.key, entity: scope.value }),
-        locked: protection(a),
-        keep: removalBlock(a),
-        targets: moveTargets(a).map((k) => ({ value: k, label: FS_LINES[k].label })),
-      })),
-  })).filter((s) => s.rows.length > 0);
+      .filter((a) => !a.archivedAt && (FS_LINES[a.fsLine as FsLine]?.section ?? "LAINNYA") === s.key)
+      .sort(byLine)
+      .map(row),
+  })), { key: "ARSIP", title: "Diarsipkan", rows: accounts.filter((a) => a.archivedAt).sort(byLine).map(row) }].filter((s) => s.rows.length > 0);
   return (
     <div className="space-y-6">
       <PageHeader

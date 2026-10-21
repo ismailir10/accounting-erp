@@ -71,8 +71,8 @@ export default async function TaxPage({ params, searchParams }: { params: Promis
         periodLabel={label}
         view={view}
         accounts={{
-          pl: accounts.filter((a) => a.type === "PENDAPATAN" || a.type === "BEBAN").map((a) => ({ code: a.code, name: a.name })),
-          credit: accounts.filter((a) => a.type === "ASET" && !a.isBank && !a.isSuspense && !a.isClearing).map((a) => ({ code: a.code, name: a.name })),
+          pl: accounts.filter((a) => !a.archivedAt && (a.type === "PENDAPATAN" || a.type === "BEBAN")).map((a) => ({ code: a.code, name: a.name })),
+          credit: accounts.filter((a) => !a.archivedAt && a.type === "ASET" && !a.isBank && !a.isSuspense && !a.isClearing).map((a) => ({ code: a.code, name: a.name })),
         }}
       />
     </div>

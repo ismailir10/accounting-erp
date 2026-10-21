@@ -2,6 +2,7 @@ import type { Db } from "@/lib/db";
 import { postJournal, type PostLine } from "@/lib/ledger/post";
 import { formatDate } from "@/lib/format";
 import { parseMoney } from "@/lib/money";
+import { divRound, exponentOf, formatRate, isCurrency } from "@/lib/fx/currency";
 import { ACCOUNT_CODES } from "@/lib/coa/template";
 import { templateAccounts } from "@/lib/coa/ensure";
 import { closeLock } from "@/lib/adjust/schedules";
@@ -15,7 +16,22 @@ import { findingLabel, openFinding, openingQuestion } from "@/lib/findings";
  */
 export class OpeningError extends Error {}
 
-export type OpeningLineInput = { accountCode: string; debit: string; credit: string };
+/** Why Saldo Awal refuses an income or expense line, typed or from a file (lib/ledger-import/post.ts says the same). */
+export const OPENING_PL_ADVICE = `Saldo awal berisi posisi neraca: masukkan laba (rugi) sampai tanggal ini ke ${ACCOUNT_CODES.RETAINED} Saldo Laba, atau impor buku besar klien untuk laba rugi setahun penuh.`;
+
+/**
+ * One typed Saldo Awal line in major units of the entity's currency. A balance held in another currency (a dollar account, a dollar
+ * receivable or loan) also gives its foreign amount (`fxAmount`, major units of `currency`): it posts as a foreign-currency line at the
+ * rate the two amounts imply, so month-end revaluation sees the whole balance, not only what moved after Saldo Awal.
+ */
+export type OpeningLineInput = { accountCode: string; debit: string; credit: string; currency?: string; fxAmount?: string };
+
+/** The rate (functional per 1 foreign unit) two amounts imply, with enough decimals that `convertMinor(fx, rate)` gives `amount` back. */
+export function impliedRate(amount: bigint, fx: bigint, currency: string, functional: string): string {
+  const scale = 12;
+  const num = divRound(amount * 10n ** BigInt(exponentOf(currency) + scale), fx * 10n ** BigInt(exponentOf(functional)));
+  return formatRate({ num, scale });
+}
 
 export async function openingContext(db: Db, clientId: string) {
   const entities = await db.entity.findMany({
@@ -113,6 +129,9 @@ export async function postOpening(db: Db, input: { clientId: string; entityId: s
   if (first && +input.date >= +first.date) {
     throw new OpeningError(`Tanggal saldo awal harus sebelum transaksi bank pertama (${formatDate(first.date)}).`);
   }
+  // A journal already typed on or before that date would sit inside the balances being entered (lib/ledger/opening-date.ts).
+  const typed = await db.journalEntry.findFirst({ where: { entityId: entity.id, date: { lte: input.date } }, orderBy: { date: "asc" }, select: { date: true, memo: true } });
+  if (typed) throw new OpeningError(`Tanggal saldo awal harus sebelum jurnal pertama entitas ini (${formatDate(typed.date)}: ${typed.memo}).`);
 
   const accounts = new Map((await db.account.findMany({ where: { clientId: input.clientId } })).map((a) => [a.code, a]));
   const lines: PostLine[] = [];
@@ -125,7 +144,21 @@ export async function postOpening(db: Db, input: { clientId: string; entityId: s
     if (dr === 0n && cr === 0n) continue;
     const acc = accounts.get(l.accountCode);
     if (!acc) throw new OpeningError("Pilih akun untuk setiap baris yang berisi nominal.");
-    lines.push({ accountId: acc.id, debit: dr, credit: cr });
+    // Saldo Awal is a position at a date: a result earned before it sits in Saldo Laba. An income or expense balance here would be a flow
+    // before the books start, counted in a Laba Rugi labelled from the day after (cycle 2026-10-20-paritas-inti).
+    if (acc.type === "PENDAPATAN" || acc.type === "BEBAN") {
+      throw new OpeningError(`${acc.code} ${acc.name} adalah akun laba rugi. ${OPENING_PL_ADVICE}`);
+    }
+    let fx: PostLine["fx"] = null;
+    if (l.currency || l.fxAmount?.trim()) {
+      const label = `${acc.code} ${acc.name}`;
+      if (!isCurrency(l.currency) || l.currency === entity.functionalCurrency) throw new OpeningError(`Pilih mata uang valas untuk ${label}.`);
+      if (acc.type !== "ASET" && acc.type !== "LIABILITAS") throw new OpeningError(`${label} bukan aset atau liabilitas: saldo valas hanya untuk kas, piutang, utang dan sejenisnya.`);
+      const amount = parseMoney(l.fxAmount ?? "", l.currency);
+      if (amount <= 0n) throw new OpeningError(`Isi nominal ${l.currency} untuk ${label}.`);
+      fx = { currency: l.currency, amount, rate: impliedRate(dr + cr, amount, l.currency, entity.functionalCurrency) };
+    }
+    lines.push({ accountId: acc.id, debit: dr, credit: cr, fx });
     debit += dr;
     credit += cr;
   }

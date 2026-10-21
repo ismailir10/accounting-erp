@@ -2,7 +2,7 @@ import type { Db } from "@/lib/db";
 import type { WithholdingKind } from "@/lib/generated/prisma/enums";
 import { dateOnly, formatDate, formatPeriod, periodBounds } from "@/lib/format";
 import { formatRupiah } from "@/lib/money";
-import { WITHHOLDING_LABEL } from "@/lib/tax/withholding";
+import { WITHHOLDING_LABEL, withholdingAccountCode } from "@/lib/tax/withholding";
 import { formatTerRate, PTKP_LABEL, pph21Annual, pph21Ter, type Pph21Annual, type PtkpStatus, type TerCategory } from "@/lib/tax/ter";
 import { defaultTaxMonth } from "@/lib/tax/masa";
 import { instalmentFor, instalments, type Instalment } from "@/lib/tax/instalment";
@@ -140,13 +140,60 @@ export async function masaReport(db: Db, input: { clientId: string; entityId: st
   const codes = [...TAXES.map((t) => t.code), PPN_MASUKAN];
   const accounts = await db.account.findMany({ where: { clientId, code: { in: codes } }, select: { id: true, code: true } });
   const codeOf = new Map(accounts.map((a) => [a.id, a.code]));
-  // From January of the previous masa's year: the PPN lebih bayar carried forward is rebuilt from there.
-  const from = dateOnly(prev.year, 1, 1);
+  // From the company's first tax line (at the latest January of the previous masa's year): the PPN lebih bayar carried forward is rebuilt
+  // from there, across year ends, as a December lebih bayar is compensated in January and on.
+  const first = await db.journalLine.findFirst({ where: { entityId, accountId: { in: accounts.map((a) => a.id) } }, orderBy: { date: "asc" }, select: { date: true } });
+  const yearStart = dateOnly(prev.year, 1, 1);
+  const from = first && +first.date < +yearStart ? dateOnly(first.date.getUTCFullYear(), first.date.getUTCMonth() + 1, 1) : yearStart;
+  // An opening line belongs to the masa before its date (owedIn below): start the chain one month earlier so it is counted.
+  const chainStart = shift({ year: from.getUTCFullYear(), month: from.getUTCMonth() + 1 }, -1);
   const raw = await db.journalLine.findMany({
     where: { entityId, accountId: { in: accounts.map((a) => a.id) }, date: { gte: from, lte: end } },
-    select: { accountId: true, date: true, debit: true, credit: true, entry: { select: { kind: true, sourceRef: true, lines: { where: { credit: { gt: 0 }, account: { isBank: true } }, select: { id: true }, take: 1 } } } },
+    select: {
+      accountId: true,
+      date: true,
+      debit: true,
+      credit: true,
+      entry: {
+        select: {
+          kind: true,
+          sourceRef: true,
+          bankTransaction: { select: { id: true, date: true, direction: true, whtKind: true, whtAmount: true } },
+          lines: { where: { credit: { gt: 0 }, account: { isBank: true } }, select: { id: true }, take: 1 },
+        },
+      },
+    },
   });
-  const lines: Line[] = raw.map((l) => ({ code: codeOf.get(l.accountId)!, date: l.date, debit: l.debit, credit: l.credit, opening: l.entry.kind === "OPENING", payment: l.debit > 0n && l.entry.lines.length > 0, offset: l.entry.sourceRef?.startsWith(PPN_OFFSET_REF) ?? false }));
+  // A payment is decided by the bank line, not by the entry: money out whose journals touch a tax account is a remittance, whether its
+  // own BANK entry filed it there or a reviewer's RECLASS did later (a line confirmed in Review, rule 13a: Dr 2141 / Cr 1999 has no bank
+  // leg), and a RECLASS moving it off again takes it back (a credit = a negative payment). So per outgoing bank line and account the net
+  // of all its entries is one payment on the bank date, less the line's own withholding leg (Cr 2141/2145/2140 for its whtAmount, rule
+  // 5h), which is tax owed. An entry with no bank line (a manual journal, a ledger import) keeps the entry rule: a debit with a bank
+  // credit beside it; money in is never a payment.
+  const lines: Line[] = [];
+  const out = new Map<string, { code: string; date: Date; net: bigint; leg: bigint }>();
+  for (const l of raw) {
+    const code = codeOf.get(l.accountId)!;
+    const t = l.entry.bankTransaction;
+    if (t?.direction === "OUT") {
+      const k = `${t.id}:${code}`;
+      const leg = t.whtKind && t.whtAmount > 0n && withholdingAccountCode(t.whtKind, "OUT") === code ? t.whtAmount : 0n;
+      const p = out.get(k) ?? { code, date: t.date, net: 0n, leg };
+      p.net += l.debit - l.credit;
+      out.set(k, p);
+    } else {
+      const opening = l.entry.kind === "OPENING";
+      const offset = l.entry.sourceRef?.startsWith(PPN_OFFSET_REF) ?? false;
+      lines.push({ code, date: l.date, debit: l.debit, credit: l.credit, opening, offset, payment: !t && l.debit > 0n && l.entry.lines.length > 0 });
+    }
+  }
+  for (const { code, date, net, leg } of out.values()) {
+    const base = { code, date, opening: false, offset: false };
+    if (leg > 0n) lines.push({ ...base, debit: 0n, credit: leg, payment: false });
+    // What is left once the withholding leg is put back is the remittance; a line whose movements cancel out paid nothing.
+    const paid = net + leg;
+    if (paid !== 0n) lines.push({ ...base, debit: paid > 0n ? paid : 0n, credit: paid < 0n ? -paid : 0n, payment: true });
+  }
   // Balances through the month end (all time, openings included).
   const balances = await db.journalLine.groupBy({ by: ["accountId"], where: { entityId, accountId: { in: accounts.map((a) => a.id) }, date: { lte: end } }, _sum: { debit: true, credit: true } });
   const credit = (code: string) => {
@@ -169,7 +216,7 @@ export async function masaReport(db: Db, input: { clientId: string; entityId: st
       const masukan = lines.filter((l) => l.code === PPN_MASUKAN);
       const owed = new Map<number, { keluaran: bigint; masukan: bigint; carryIn: bigint; carryOut: bigint; owed: bigint }>();
       let carry = 0n;
-      for (let m: Masa = { year: prev.year, month: 1 }; keyOf(m) <= keyOf(masa); m = shift(m, 1)) {
+      for (let m: Masa = keyOf(chainStart) < keyOf({ year: prev.year, month: 1 }) ? chainStart : { year: prev.year, month: 1 }; keyOf(m) <= keyOf(masa); m = shift(m, 1)) {
         // Net of corrections: a reclass that takes PPN back off (Dr 2130, Cr 1150) lowers the masa; a remittance to 2130 is a payment, not
         // keluaran. On 1150 a purchase's own bank credit is not a payment, so masukan nets every line of the month. The compensation
         // journal is neither.
@@ -187,7 +234,7 @@ export async function masaReport(db: Db, input: { clientId: string; entityId: st
     } else {
       owedOf = (m) => sum(own.filter((l) => !l.payment && owedIn(l, m)).map((l) => l.credit - l.debit));
     }
-    const payments = own.filter((l) => l.payment).map((l) => ({ date: l.date, amount: l.debit }));
+    const payments = own.filter((l) => l.payment).map((l) => ({ date: l.date, amount: l.debit - l.credit }));
     const prevDue = dueDate(t.key, prev);
     const windowStart = dueDate(t.key, shift(prev, -1));
     const owedPrev = owedOf(prev);
@@ -199,7 +246,8 @@ export async function masaReport(db: Db, input: { clientId: string; entityId: st
     const late: Payment[] = [];
     let paidAhead = 0n;
     for (const p of after) {
-      const take = p.amount < gap ? p.amount : gap;
+      // A negative payment (a remittance taken back later) covers nothing: it only lowers what is paid ahead.
+      const take = p.amount <= 0n ? 0n : p.amount < gap ? p.amount : gap;
       if (take > 0n) late.push({ date: p.date, amount: take });
       gap -= take;
       paidAhead += p.amount - take;

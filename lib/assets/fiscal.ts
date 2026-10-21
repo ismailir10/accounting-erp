@@ -74,14 +74,15 @@ export type FiscalYear = {
 };
 
 /** Fiscal depreciation of a year through a month (1–12), and the accumulated amount and fiscal book value at that point. */
-export function fiscalDepreciation(asset: FiscalAsset, year: number, throughMonth = 12): FiscalYear {
+export function fiscalDepreciation(asset: FiscalAsset, year: number, throughMonth = 12, fromMonth = 1): FiscalYear {
   const through = year * 12 + throughMonth - 1;
   let depreciation = 0n;
   let accumulated = 0n;
   for (const [m, amount] of monthly(asset)) {
     if (m > through) continue;
     accumulated += amount;
-    if (m >= year * 12) depreciation += amount;
+    // `fromMonth`: books opened inside the year count the year's deduction from their first month, as their profit does.
+    if (m >= year * 12 + fromMonth - 1) depreciation += amount;
   }
   return { depreciation, accumulated, bookValue: asset.cost - accumulated };
 }

@@ -1,4 +1,4 @@
-import { ACCOUNT_CODES } from "@/lib/coa/template";
+import { ACCOUNT_CODES, isIntercompanyCode } from "@/lib/coa/template";
 import type { Db } from "@/lib/db";
 import type { EntityKind } from "@/lib/generated/prisma/enums";
 import { formatMoney } from "@/lib/money";
@@ -83,7 +83,7 @@ export async function sanityControls(db: Db, a: Args): Promise<Control[]> {
     const total = guesses.reduce((s, t) => s + abs(t.amount), 0n);
     // How much of the month's money that is (UC-B3: leakage into the default account shows as a share, not only a count).
     // Own transfers and intercompany moves count out and in again without being anyone's money in or out: left out of the base.
-    const moved = txs.filter((t) => t.accountCode !== ACCOUNT_CODES.CLEARING && t.accountCode !== ACCOUNT_CODES.INTERCOMPANY).reduce((s, t) => s + abs(t.amount), 0n);
+    const moved = txs.filter((t) => t.accountCode !== ACCOUNT_CODES.CLEARING && !isIntercompanyCode(t.accountCode)).reduce((s, t) => s + abs(t.amount), 0n);
     const share = moved > 0n ? `, ${percentOf(total, moved)} dari uang masuk dan keluar bulan ini` : "";
     control("guess", "Tebakan diterima tanpa diubah", "REVIEW", `${guesses.length} transaksi (${fmt(total)}${share}) disetujui persis seperti tebakan dengan keyakinan rendah`, `${a.base}/ledger?entity=${e.id}`);
   }

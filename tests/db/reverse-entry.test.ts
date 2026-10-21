@@ -37,6 +37,7 @@ describe("Balik jurnal", () => {
     await expect(reverseEntry(db, { clientId: other.client.id, entryId: original.id, date: dateOnly(2026, 9, 1) })).rejects.toThrow("Jurnal tidak ditemukan.");
     await db.period.upsert({ where: { clientId_year_month: { clientId: g.client.id, year: 2026, month: 9 } }, create: { firmId: g.firm.id, clientId: g.client.id, year: 2026, month: 9, status: "LOCKED" }, update: { status: "LOCKED" } });
     await expect(reverseEntry(db, { clientId: g.client.id, entryId: original.id, date: dateOnly(2026, 9, 1) })).rejects.toThrow("Periode September 2026 sudah ditutup");
+    await db.period.update({ where: { clientId_year_month: { clientId: g.client.id, year: 2026, month: 9 } }, data: { status: "OPEN" } });
 
     const acc = async (code: string) => (await db.account.findFirstOrThrow({ where: { clientId: g.client.id, code } })).id;
     await db.$transaction(async (tx) => postJournal(tx, { entityId: g.pt.entity.id, date: dateOnly(2026, 7, 31), kind: "OPENING", memo: "Saldo awal", lines: [{ accountId: await acc("1160"), debit: 10n }, { accountId: await acc("3100"), credit: 10n }] }));
@@ -80,10 +81,13 @@ describe("Jurnal Penyesuaian: line notes and the automatic reversal", () => {
   it("a closed next month refuses both, and nothing is posted", async () => {
     const g = await makeGroup();
     await db.period.create({ data: { firmId: g.firm.id, clientId: g.client.id, year: 2027, month: 1, status: "LOCKED" } });
-    await expect(postAdjustment(db, input(g, { reverseNextMonth: true }))).rejects.toThrow("Jurnal pembalik 1 Jan 2027 tidak bisa dicatat: Periode Januari 2027 sudah ditutup. Jurnalnya tidak disimpan.");
+    // A closed January also freezes December (accounting-rules 4), so the accrual itself is refused, with the month to reopen.
+    const refused = "Januari 2027 sudah ditutup, dan jurnal bertanggal sebelumnya mengubah saldo bulan itu. Buka kembali Januari 2027 dulu di Tutup Buku.";
+    await expect(postAdjustment(db, input(g, { reverseNextMonth: true }))).rejects.toThrow(refused);
+    await expect(postAdjustment(db, input(g))).rejects.toThrow(refused);
     expect(await db.journalEntry.count()).toBe(0);
-    // Without the reversal the accrual itself posts.
-    await postAdjustment(db, input(g));
-    expect(await db.journalEntry.count()).toBe(1);
+    await db.period.update({ where: { clientId_year_month: { clientId: g.client.id, year: 2027, month: 1 } }, data: { status: "OPEN" } });
+    await postAdjustment(db, input(g, { reverseNextMonth: true }));
+    expect(await db.journalEntry.count()).toBe(2);
   });
 });

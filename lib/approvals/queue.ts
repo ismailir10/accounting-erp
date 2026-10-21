@@ -119,7 +119,8 @@ export type SecondJournalCard = {
   /** ISO date the journal posts on. */
   date: string;
   memo: string;
-  lines: { accountCode: string; accountName: string; debit: string; credit: string; memo: string | null }[];
+  /** `tags`: the line's Departemen & Proyek codes ("OUTLET-A · PRJ-01"), or null. */
+  lines: { accountCode: string; accountName: string; debit: string; credit: string; memo: string | null; tags: string | null }[];
   total: string;
   reverseNextMonth: boolean;
   makerId: string;
@@ -262,6 +263,8 @@ async function secondCards(db: Db, input: QueueInput, ids: string[], start: Date
     db.account.findMany({ where: { clientId: input.clientId }, select: { code: true, name: true } }),
   ]);
   const names = new Map(accounts.map((a) => [a.code, a.name]));
+  const dims = new Map((await db.dimension.findMany({ where: { clientId: input.clientId }, select: { id: true, code: true } })).map((d) => [d.id, d.code]));
+  const tags = (l: { departmentId?: string; projectId?: string }) => [l.departmentId, l.projectId].flatMap((id) => (id && dims.has(id) ? [dims.get(id)!] : [])).join(" · ") || null;
   const journals: SecondCard[] = rows.map((a) => ({
     type: "journal",
     id: a.id,
@@ -272,7 +275,7 @@ async function secondCards(db: Db, input: QueueInput, ids: string[], start: Date
     currency: a.entity.functionalCurrency,
     date: toIsoDate(a.date),
     memo: a.memo,
-    lines: readStoredLines(a.lines).map((l) => ({ accountCode: l.accountCode, accountName: names.get(l.accountCode) ?? "", debit: l.debit, credit: l.credit, memo: l.memo ?? null })),
+    lines: readStoredLines(a.lines).map((l) => ({ accountCode: l.accountCode, accountName: names.get(l.accountCode) ?? "", debit: l.debit, credit: l.credit, memo: l.memo ?? null, tags: tags(l) })),
     total: a.amount.toString(),
     reverseNextMonth: a.reverseNextMonth,
     makerId: a.makerId,

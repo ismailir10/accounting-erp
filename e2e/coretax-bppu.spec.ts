@@ -73,6 +73,7 @@ test("bukti potong for Coretax: prefilled from the bill, block reasons fixed in 
   await expect(items).toHaveCount(1);
   await classify(page, items.filter({ hasText: "KONSULTAN ABC" }), { account: "6170", tax: /PPN Masukan/, withholding: /PPh 23/ });
   await expect(page.getByText("Antrean kosong")).toBeVisible();
+  await expect(page.getByTestId("review-saving")).toHaveCount(0); // accepts are optimistic: every save done before reading the masa
 
   await page.goto(`/clients/${id}/tax/masa?period=2026-08`);
   const card = page.getByTestId("coretax-bppu");

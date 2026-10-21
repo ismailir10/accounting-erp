@@ -43,7 +43,7 @@ describe("Buku admins manage organisations and access (T08)", () => {
     await expect(revokeGrant(db, admin.id, paid.id, "x")).rejects.toThrow("min. 5");
     await revokeGrant(db, admin.id, paid.id, "Salah input");
     expect(await stateAt(firm.id, "2027-01-15T00:00:00Z")).toBe("READ_ONLY");
-    await revokeGrant(db, admin.id, trial.id, "Penyalahgunaan");
+    await revokeGrant(db, admin.id, trial.id, "Penyalahgunaan", new Date("2026-10-15T00:00:00Z")); // a fixed day, not the clock
     expect(await stateAt(firm.id, "2026-10-20T00:00:00Z")).toBe("NONE");
     await expect(extendGrant(db, admin.id, trial.id, "2026-12-31")).rejects.toThrow("sudah dicabut");
 

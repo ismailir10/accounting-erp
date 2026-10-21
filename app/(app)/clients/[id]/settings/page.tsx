@@ -29,6 +29,8 @@ import { clientModules, MODULES } from "@/lib/clients/modules";
 import { can, isAdminRole } from "@/lib/auth/permissions";
 import { keyringSize } from "@/lib/inbox/keyring";
 import { PdfKeyringCard } from "@/components/app/pdf-keyring-card";
+import { DimensionsCard } from "@/components/app/dimensions-card";
+import { listDimensions } from "@/lib/dimensions";
 
 export const metadata = { title: "Pengaturan klien" };
 
@@ -60,6 +62,7 @@ export default async function SettingsPage({ params, searchParams }: { params: P
   const keyringCount = tab.key === "perusahaan" && can(member.role, "org.settings") ? await keyringSize(prisma, client.id) : null;
   // What points at each company and rekening, from the same check the removal re-runs (only an admin sees the reasons).
   const pointers = tab.key === "perusahaan" ? await clientUsage(prisma, client.id) : null;
+  const dimensions = tab.key === "perusahaan" ? await listDimensions(prisma, client.id) : [];
   const entityViews = pointers
     ? client.entities.map((e) => ({
         id: e.id, name: e.name, shortName: e.shortName, npwp: e.npwp ?? "", nitku: e.nitku ?? "", kind: e.kind,
@@ -85,6 +88,7 @@ export default async function SettingsPage({ params, searchParams }: { params: P
           <EntitiesCard clientId={client.id} entities={entityViews} canEdit={can(member.role, "client.create")} canRemove={can(member.role, "client.delete")} />
           <FrameworkCard clientId={client.id} entities={client.entities.map((e) => ({ id: e.id, name: e.name, framework: e.reportingFramework }))} />
           <FiscalYearCard clientId={client.id} endMonth={client.fiscalYearEndMonth} locked={Boolean(lockedPeriod)} />
+          <DimensionsCard clientId={client.id} rows={dimensions} canEdit={can(member.role, "books.write")} />
           <ModulesCard
             clientId={client.id}
             modules={MODULES.map(({ key, label, description }) => ({ key, label, description }))}

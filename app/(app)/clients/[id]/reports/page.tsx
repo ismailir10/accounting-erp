@@ -30,6 +30,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { buttonVariants } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import { currencyName, exponentOf } from "@/lib/fx/currency";
+import { incomeByDimension } from "@/lib/reports/by-dimension";
+import { DimensionPlCard } from "@/components/app/dimension-pl";
+import { DIMENSION_LABEL } from "@/lib/dimensions";
+import type { DimensionKind } from "@/lib/generated/prisma/enums";
 
 const TAB = "h-7 flex-none";
 
@@ -52,7 +56,7 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
   const emkm = framework === "SAK_EMKM";
   const href = (code: string) => withParams(`${base}/ledger/${code}`, { period: period.key, entity: scope.value });
   const tab = typeof sp.tab === "string" ? sp.tab : "pl";
-  const combinedNote = `Gabungan adalah pandangan manajemen, bukan konsolidasi menurut SAK (yang berlaku untuk induk–anak). Saldo antar entitas (1190) saling meniadakan bila kedua sisinya sudah tercatat; saldo 1190 yang masih tampil belum ada pasangannya di entitas lain.${
+  const combinedNote = `Gabungan adalah pandangan manajemen, bukan konsolidasi menurut SAK (yang berlaku untuk induk–anak). Saldo antar entitas (1190) saling meniadakan bila kedua sisinya sudah tercatat; saldo 1190 yang masih tampil belum ada pasangannya di entitas lain. Hanya saldo 1190 yang dieliminasi: pendapatan dan beban antar entitas (mis. jasa manajemen) serta investasi pada entitas grup tetap dijumlahkan apa adanya.${
     mixed ? " Entitas non-Rupiah dijabarkan: aset & liabilitas dengan kurs penutup, laba rugi dengan kurs rata-rata, ekuitas dengan kurs historis; selisihnya di akun 3900." : ""
   } Laporan manajemen, catatan manajemen dan paket kredit bank dibuat per perusahaan: pilih perusahaannya di atas.`;
   const note = currencyNote(currency, mixed);
@@ -135,6 +139,17 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
   // Laba Rugi: the same months of last year, and other comprehensive income (single-currency scopes).
   const prior = per.priorPl ? await withFx(() => incomeStatement(prisma, s, priorFrom, priorTo)) : null;
   const isPrior = prior instanceof FxMissingError ? null : prior;
+  // Departemen & Proyek: a Laba Rugi per kind the client has set up, for the month or (`?rentang=ytd`) the year so far.
+  const kinds = (await prisma.dimension.groupBy({ by: ["kind"], where: { clientId: client.id } })).map((k) => k.kind).sort();
+  const ytdRange = sp.rentang === "ytd";
+  const dimFrom = ytdRange ? (per.beforeBooks ? period.start : yearStart) : period.start;
+  const byDimension = (
+    await Promise.all(kinds.map(async (kind) => {
+      const pl = await withFx(() => incomeByDimension(prisma, s, dimFrom, period.end, kind));
+      return pl instanceof FxMissingError ? null : pl;
+    }))
+  ).filter((x) => x !== null);
+  const dimTab = (kind: DimensionKind) => (kind === "DEPARTEMEN" ? "dept" : "proj");
   // Last month beside this one (UC-K3): a comparative even when the books start this year.
   const prevMonth = (await entryBy(prevEnd, prevStart)) ? await withFx(() => incomeStatement(prisma, s, prevStart, prevEnd)) : null;
   // Only when last month has income or expense: a month holding just the Saldo Awal would be a column of dashes.
@@ -221,6 +236,7 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
           <TabsTrigger className={TAB} value="cf">Arus Kas</TabsTrigger>
           <TabsTrigger className={TAB} value="notes">CALK{toFill > 0 && <span className="num text-review" data-testid="calk-to-fill">· {toFill} diisi manajemen</span>}</TabsTrigger>
           {multi && <TabsTrigger className={TAB} value="ws">Kertas Kerja Gabungan</TabsTrigger>}
+          {byDimension.map((d) => <TabsTrigger key={d.kind} className={TAB} value={dimTab(d.kind)}>Per {DIMENSION_LABEL[d.kind].toLowerCase()}</TabsTrigger>)}
           {mgmt && <TabsTrigger className={TAB} value="mgmt">Catatan manajemen{mgmt.note?.stale ? <span className="text-review">· ditinjau ulang</span> : null}</TabsTrigger>}
         </TabsList>
 
@@ -296,7 +312,7 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 {emkm ? "Laporan Arus Kas (informasi tambahan)" : "Laporan Arus Kas"}
-                {cash && <StatusPill status={cash.openingCash + cash.net === cash.closingCash ? "PASS" : "FAIL"} label={cash.openingCash + cash.net === cash.closingCash ? "Sama dengan kas di Neraca" : "Beda dengan kas di Neraca"} />}
+                {cash && <StatusPill status={cash.openingCash + cash.joinedCash + cash.net + cash.fxEffect === cash.closingCash ? "PASS" : "FAIL"} label={cash.openingCash + cash.joinedCash + cash.net + cash.fxEffect === cash.closingCash ? "Sama dengan kas di Neraca" : "Beda dengan kas di Neraca"} />}
               </CardTitle>
               <CardDescription>Metode tidak langsung, dari perubahan pos neraca · {ytdLabel} · {unit}</CardDescription>
             </CardHeader>
@@ -321,6 +337,22 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
           </Card>
         </TabsContent>
 
+        {byDimension.map((d) => (
+          <TabsContent key={d.kind} value={dimTab(d.kind)}>
+            <DimensionPlCard
+              pl={d}
+              title={`Laba Rugi per ${DIMENSION_LABEL[d.kind].toLowerCase()}`}
+              description={`${ytdRange ? ytdLabel : `${monthName(period.month)} ${period.year}`} · kolom Total sama dengan Laba Rugi · Dinyatakan dalam ${currencyName(currency)}`}
+              currency={currency}
+              ranges={[
+                { href: withParams(`${base}/reports`, { period: period.key, entity: scope.value, tab: dimTab(d.kind) }), label: "Bulan ini", active: !ytdRange },
+                { href: withParams(`${base}/reports`, { period: period.key, entity: scope.value, tab: dimTab(d.kind), rentang: "ytd" }), label: "Tahun berjalan", active: ytdRange },
+              ]}
+              accountHref={(code, id) => withParams(`${base}/ledger/${code}`, { period: period.key, entity: scope.value, tag: id ?? undefined })}
+              download={withParams(`${base}/reports/export/dimensi`, { period: period.key, entity: scope.value, jenis: d.kind, rentang: ytdRange ? "ytd" : undefined })}
+            />
+          </TabsContent>
+        ))}
         {wsFx && (
           <TabsContent value="ws">
             <FxMissing error={wsFx} base={base} compact />
@@ -332,7 +364,7 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   Kertas Kerja Gabungan
-                  <StatusPill status={ws.residual === 0n ? "PASS" : "REVIEW"} label={ws.residual === 0n ? "Antar entitas cocok" : "Ada selisih antar entitas"} />
+                  <StatusPill status={ws.residual === 0n && !ws.pairs.length ? "PASS" : "REVIEW"} label={ws.residual === 0n && !ws.pairs.length ? "Antar entitas cocok" : "Ada selisih antar entitas"} />
                 </CardTitle>
                 <CardDescription>{combinedNote} Saldo debit (+) / kredit (−){ws.translated ? ", semua kolom dalam Rupiah" : wsCurrency !== "IDR" ? `, dalam ${wsCurrency}` : ""}.</CardDescription>
               </CardHeader>
@@ -362,6 +394,12 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
                     Selisih <Money value={ws.residual} currency={wsCurrency} />. Biasanya karena mutasi salah satu entitas belum diimpor.
                   </p>
                 )}
+                {/* A group of three or more: each pair must mirror (A's account for B against B's account for A). */}
+                {ws.pairs.map((p) => (
+                  <p key={`${p.a}-${p.b}`} className="px-6 pt-3 text-sm text-review" data-testid="worksheet-pair">
+                    {p.a}–{p.b}: selisih <Money value={p.difference < 0n ? -p.difference : p.difference} currency={wsCurrency} />. Saldo {p.a} dengan {p.b} dan saldo {p.b} dengan {p.a} belum saling menutup.
+                  </p>
+                ))}
               </CardContent>
             </Card>
           </TabsContent>

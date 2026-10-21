@@ -43,6 +43,9 @@ export type AssetInput = {
   sourceEntryId?: string | null;
   /** An existing depreciation schedule to register as this asset (no new schedule). */
   scheduleId?: string | null;
+  /** Departemen & Proyek of its depreciation (the schedule's) and of its disposal gain or loss. */
+  departmentId?: string | null;
+  projectId?: string | null;
   actorId?: string | null;
 };
 
@@ -177,6 +180,8 @@ export async function createAsset(db: Db, input: AssetInput) {
       entityId: entity.id,
       kind: "DEPRECIATION",
       memo: `Penyusutan ${name}`,
+      departmentId: input.departmentId,
+      projectId: input.projectId,
       debitCode: expense!.code,
       creditCode: accumulated!.code,
       amount: "",
@@ -225,6 +230,11 @@ export type RegisterRow = {
   fiscalBookValue: bigint | null;
   /** Book − fiscal this year: positive = koreksi fiskal positif. */
   difference: bigint | null;
+  /**
+   * Disposed this year: fiscal gain − book gain on the disposal = fiscal accumulated − book accumulated at disposal (the same proceeds on
+   * both sides), the reversal of the depreciation timing difference; positive = koreksi fiskal positif. Null otherwise.
+   */
+  disposalDifference: bigint | null;
   /** Installments due through the period but not posted. */
   unposted: number;
   scheduleId: string | null;
@@ -258,6 +268,16 @@ export async function assetRegister(db: Db, clientId: string, year: number, mont
   // An asset acquired before its entity's books started is part of the opening: listed (with its opening accumulation) from then.
   const openings = await db.journalEntry.groupBy({ by: ["entityId"], where: { kind: "OPENING", entityId: { in: [...new Set(assets.map((a) => a.entityId))] } }, _min: { date: true } });
   const openingOf = new Map(openings.map((o) => [o.entityId, o._min.date]));
+  // Books opened inside the (calendar) year with a balance sheet only start the month after the opening: the year's fiscal deduction counts
+  // from there, as the profit beside it does (the tax pack's months covered). An opening carrying income or expense holds the year so far.
+  const coveredFrom = new Map<string, number>();
+  for (const [entityId, opened] of openingOf) {
+    if (!opened) continue;
+    const start = new Date(+opened + 86_400_000);
+    if (start.getUTCFullYear() !== year || start.getUTCMonth() === 0) continue;
+    const pl = await db.journalLine.findFirst({ where: { entityId, entry: { kind: "OPENING" }, account: { type: { in: ["PENDAPATAN", "BEBAN"] } } }, select: { id: true } });
+    if (!pl) coveredFrom.set(entityId, start.getUTCMonth() + 1);
+  }
   const listed = assets.filter((a) => {
     const opened = openingOf.get(a.entityId);
     const from = opened && +a.acquiredOn < +opened ? opened : a.acquiredOn;
@@ -270,12 +290,13 @@ export async function assetRegister(db: Db, clientId: string, year: number, mont
     const amountOf = (e: (typeof posted)[number]) => e.lines.filter((l) => l.accountId === s!.creditAccountId).reduce((t, l) => t + l.credit - l.debit, 0n);
     const bookYtd = posted.filter((e) => +e.date >= +yearStart).reduce((t, e) => t + amountOf(e), 0n);
     const disposed = a.disposedOn !== null && +a.disposedOn <= +end;
-    const accumulated = disposed ? 0n : a.openingAccumulated + posted.reduce((t, e) => t + amountOf(e), 0n);
+    const bookAccumulated = a.openingAccumulated + posted.reduce((t, e) => t + amountOf(e), 0n);
+    const accumulated = disposed ? 0n : bookAccumulated;
     const cost = disposed ? 0n : a.cost;
     const postedK = new Set((s?.entries ?? []).map((e) => e.installment));
     const unposted = s ? installments(s).filter((i) => !i.reversal && owed(s.stoppedAt, i) && i.year * 12 + i.month <= upTo && !locked.has(i.year * 12 + i.month) && !postedK.has(i.k)).length : 0;
     const idr = a.entity.functionalCurrency === "IDR";
-    const fiscal = idr && endMonth === 12 ? fiscalDepreciation({ ...a, disposedOn: a.disposedOn }, year, month) : null;
+    const fiscal = idr && endMonth === 12 ? fiscalDepreciation({ ...a, disposedOn: a.disposedOn }, year, month, coveredFrom.get(a.entityId) ?? 1) : null;
     return {
       id: a.id,
       name: a.name,
@@ -293,6 +314,7 @@ export async function assetRegister(db: Db, clientId: string, year: number, mont
       fiscalYtd: fiscal?.depreciation ?? null,
       fiscalBookValue: fiscal ? (disposed ? 0n : fiscal.bookValue) : null,
       difference: fiscal ? bookYtd - fiscal.depreciation : null,
+      disposalDifference: fiscal && disposed ? fiscal.accumulated - bookAccumulated : null,
       unposted,
       scheduleId: a.scheduleId,
       sourceEntryId: a.sourceEntryId,

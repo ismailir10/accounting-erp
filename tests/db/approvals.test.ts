@@ -193,8 +193,8 @@ describe("approval queue", () => {
     ]);
     const [first] = q.second;
     expect(first.type === "journal" && first.lines).toEqual([
-      { accountCode: "6190", accountName: expect.any(String), debit: "150000000", credit: "0", memo: null },
-      { accountCode: "2150", accountName: expect.any(String), debit: "0", credit: "150000000", memo: null },
+      { accountCode: "6190", accountName: expect.any(String), debit: "150000000", credit: "0", memo: null, tags: null },
+      { accountCode: "2150", accountName: expect.any(String), debit: "0", credit: "150000000", memo: null, tags: null },
     ]);
     expect(q.counts.second).toBe(3);
     // The firm board's *Persetujuan* cell is the same function.
