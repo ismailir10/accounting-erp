@@ -270,14 +270,15 @@ export async function accrualProposals(db: Db, clientId: string, year: number, m
   const next = shift(year, month, 1);
   const [periods, accounts, entities] = await Promise.all([
     db.period.findMany({ where: { clientId, status: "LOCKED", OR: [{ year, month }, next] }, select: { year: true, month: true } }),
-    db.account.findMany({ where: { clientId }, select: { id: true, code: true, name: true, type: true, fsLine: true } }),
+    db.account.findMany({ where: { clientId }, select: { id: true, code: true, name: true, type: true, fsLine: true, archivedAt: true } }),
     db.entity.findMany({ where: { clientId, ...(opts.entityIds ? { id: { in: opts.entityIds } } : {}) }, select: { id: true, shortName: true, functionalCurrency: true }, orderBy: { name: "asc" } }),
   ]);
   // A locked month has nothing to approve (as Kotak leaves out locked instalments).
   if (periods.some((p) => p.year === year && p.month === month)) return [];
   const nextLocked = periods.some((p) => p.year === next.year && p.month === next.month);
   const reversalDate = dateOnly(next.year, next.month, 1);
-  const eligible = accounts.filter((a) => a.type === "BEBAN" && ACCRUAL_LINES.includes(a.fsLine) && !NEVER.includes(a.code));
+  // An archived account is no longer used (Arsip akun) and postJournal refuses it: nothing is accrued to it.
+  const eligible = accounts.filter((a) => a.type === "BEBAN" && !a.archivedAt && ACCRUAL_LINES.includes(a.fsLine) && !NEVER.includes(a.code));
   const byId = new Map(accounts.map((a) => [a.id, a]));
   const credit = accounts.find((a) => a.code === ACCRUED_EXPENSES) ?? null;
   const months = Array.from({ length: HISTORY_MONTHS }, (_, i) => shift(year, month, i - HISTORY_MONTHS));

@@ -137,8 +137,7 @@ export async function recurringDue(db: Db | Tx, clientId: string, year: number, 
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
   if (!templates.length) return [];
-  const lastLocked = await db.period.findFirst({ where: { clientId, status: "LOCKED" }, orderBy: [{ year: "desc" }, { month: "desc" }], select: { year: true, month: true } });
-  const after = lastLocked ? index(lastLocked.year, lastLocked.month) + 1 : -Infinity;
+  const after = await firstUnfrozen(db, clientId);
   const upTo = index(year, month);
   const out: RecurringDue[] = [];
   for (const t of templates) {
@@ -154,6 +153,36 @@ export async function recurringDue(db: Db | Tx, clientId: string, year: number, 
     }
   }
   return out;
+}
+
+/** The first month (as an index) a close has not frozen: the one after the client's latest locked month; −∞ when none is locked. */
+async function firstUnfrozen(db: Db | Tx, clientId: string) {
+  const lastLocked = await db.period.findFirst({ where: { clientId, status: "LOCKED" }, orderBy: [{ year: "desc" }, { month: "desc" }], select: { year: true, month: true } });
+  return lastLocked ? index(lastLocked.year, lastLocked.month) + 1 : -Infinity;
+}
+
+/**
+ * Running templates that still owe an instalment, now or later: one without an end month, or one with a month from its start through
+ * its end that is neither posted nor frozen by a close, whatever today's date (the books run behind the calendar, and `recurringDue`
+ * keeps proposing an overdue month). What holds an account its lines name (Arsip akun, removal: lib/coa/manage.ts).
+ */
+export async function recurringOwing(db: Db | Tx, clientId: string) {
+  const templates = await db.recurringJournal.findMany({
+    where: { clientId, stoppedAt: null },
+    select: { id: true, lines: true, startYear: true, startMonth: true, endYear: true, endMonth: true, entries: { select: { recurringMonth: true } } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+  if (!templates.length) return [];
+  const after = await firstUnfrozen(db, clientId);
+  return templates.filter((t) => {
+    if (!t.endYear || !t.endMonth) return true;
+    const posted = new Set(t.entries.map((e) => e.recurringMonth));
+    for (let i = Math.max(index(t.startYear, t.startMonth), after); i <= index(t.endYear, t.endMonth); i++) {
+      const m = fromIndex(i);
+      if (!posted.has(monthKey(m.year, m.month))) return true;
+    }
+    return false;
+  });
 }
 
 /** Ids of templates with an instalment due by the month (asked ones included): a close compares them before and after its controls. */

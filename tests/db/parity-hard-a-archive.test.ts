@@ -4,7 +4,10 @@ import { db, makeGroup, resetDb } from "../helpers";
 import { postAdjustment } from "@/lib/ledger/adjustment";
 import { postJournal } from "@/lib/ledger/post";
 import { postOpening } from "@/lib/opening";
-import { archiveAccount, createAccount, unarchiveAccount } from "@/lib/coa/manage";
+import { archiveAccount, createAccount, removeAccount, unarchiveAccount } from "@/lib/coa/manage";
+import { addMember } from "../members";
+import { saveApprovals } from "@/lib/settings/approvals";
+import { rejectJournal, submitAdjustment } from "@/lib/approvals/journals";
 import { openingTargetOptions } from "@/lib/coa/options";
 import { importStatement } from "@/lib/import/pipeline";
 import { reviewTransaction } from "@/lib/review";
@@ -39,7 +42,7 @@ async function waitForLockWaiters(n: number) {
 describe("arsip akun: refused while a balance still counts", () => {
   beforeEach(resetDb);
 
-  it("DEFECT: a balance-sheet account two companies hold opposite balances on is archived, because the check nets the whole group", async () => {
+  it("a balance-sheet account two companies hold opposite balances on is refused: the balance must be zero in each company, not netted over the group", async () => {
     // 1140-range "Titipan Dana Proyek" (PIUTANG_LAIN). July 2026, both months then closed:
     //   PT Uji  Dr titipan 1.000.000 / Cr 1110 1.000.000   → PT's Neraca: titipan 1.000.000 (debit)
     //   Andi    Dr 1110 1.000.000 / Cr titipan 1.000.000   → Andi's Neraca: titipan (1.000.000) (credit)
@@ -55,7 +58,7 @@ describe("arsip akun: refused while a balance still counts", () => {
     await expect(archiveAccount(db, { clientId: g.client.id, accountId: x.id })).rejects.toThrow("masih bersaldo");
   });
 
-  it("DEFECT: in a Rupiah + Dollar group, Rp 1.000.000 and US$ 10.000,00 on one account add up to 'zero' and the account is archived", async () => {
+  it("in a Rupiah + Dollar group, Rp 1.000.000 and US$ 10.000,00 on one account never add up to 'zero': refused, each company holds a balance", async () => {
     // PT Rp: Dr X Rp 1.000.000 (1.000.000 minor units). PT USD: Cr X US$ 10.000,00 (1.000.000 cents). The check sums minor units of two
     // currencies: 1.000.000 − 1.000.000 = 0. Each company holds a balance (Rp 1.000.000; US$ 10.000,00): refused.
     const firm = await createFirm(db, "KJA Valas");
@@ -92,7 +95,7 @@ describe("arsip akun: refused while a balance still counts", () => {
     expect((await account(g.client.id, rent.code)).archivedAt).toBeNull();
   });
 
-  it("DEFECT: a Jurnal berulang whose end month has passed on the calendar but whose instalments are still unposted does not hold the account", async () => {
+  it("a Jurnal berulang whose end month has passed on the calendar but whose instalments are still unposted holds the account", async () => {
     // The books run behind the calendar, as at most firms. Template from M0's rent (Dr sewa 1.000.000 / Cr 1110), instalments M0+1 and
     // M0+2 (its end), both before today's month and neither posted yet; M0 is closed. recurringDue() still proposes both instalments, yet
     // archiveAccount counts a template as running only while its end month ≥ today's month, so the archive goes through and both
@@ -109,6 +112,36 @@ describe("arsip akun: refused while a balance still counts", () => {
     await lock(g, m0.year, m0.month);
     expect((await recurringDue(db, g.client.id, end.year, end.month)).length).toBe(2);
     await expect(archiveAccount(db, { clientId: g.client.id, accountId: rent.id })).rejects.toThrow("1 jurnal berulang");
+  });
+});
+
+describe("hapus akun: refused while a stored journal names its code", () => {
+  beforeEach(resetDb);
+
+  it("a journal waiting for a second approver names the account: removal is refused (its code would go to a new account the approval then posts to); allowed once it is rejected", async () => {
+    const g = await makeGroup();
+    const owner = await addMember(g.firm.id, "OWNER", { name: "Pak Pemilik" });
+    const akuntan = await addMember(g.firm.id, "AKUNTAN", { name: "Andi Akuntan", clients: [g.client.id] });
+    await saveApprovals(db, { firmId: g.firm.id, settings: { manual: true, manualAbove: "1.000.000", aiDraft: false, aiDraftAbove: "", reopen: false } });
+    const x = await createAccount(db, { clientId: g.client.id, fsLine: "BEBAN_UMUM_ADM", name: "Beban Konsultan Proyek" });
+    const asked = await submitAdjustment(db, { clientId: g.client.id, entityId: g.pt.entity.id, date: dateOnly(2026, 8, 31), memo: "Akrual konsultan", lines: [{ accountCode: x.code, debit: "5.000.000", credit: "" }, { accountCode: "2150", debit: "", credit: "5.000.000" }], maker: { id: akuntan.id, role: akuntan.role } });
+    if (asked.posted) throw new Error("expected a waiting request");
+    expect(await db.journalLine.count({ where: { accountId: x.id } })).toBe(0);
+    await expect(removeAccount(db, { clientId: g.client.id, accountId: x.id })).rejects.toThrow(`Akun ${x.code} Beban Konsultan Proyek masih dipakai: 1 jurnal menunggu persetujuan.`);
+    await expect(archiveAccount(db, { clientId: g.client.id, accountId: x.id })).rejects.toThrow("1 jurnal menunggu persetujuan");
+    await rejectJournal(db, { clientId: g.client.id, approvalId: asked.approvalId, approver: { id: owner.id, role: owner.role }, note: "Belum ada kontraknya" });
+    await removeAccount(db, { clientId: g.client.id, accountId: x.id });
+    expect(await db.account.count({ where: { id: x.id } })).toBe(0);
+  });
+
+  it("a running Jurnal berulang names the account: removal says so beside its journal line; once stopped it is no longer counted", async () => {
+    const g = await makeGroup();
+    const x = await createAccount(db, { clientId: g.client.id, fsLine: "BEBAN_UMUM_ADM", name: "Beban Sewa Gudang Baru" });
+    const july = await postAdjustment(db, { clientId: g.client.id, entityId: g.pt.entity.id, date: dateOnly(2026, 7, 10), memo: "Sewa gudang", lines: [{ accountCode: x.code, debit: "1.000.000", credit: "" }, { accountCode: "1110", debit: "", credit: "1.000.000" }] });
+    const t = await createRecurring(db, { clientId: g.client.id, entryId: july.id });
+    await expect(removeAccount(db, { clientId: g.client.id, accountId: x.id })).rejects.toThrow(`Akun ${x.code} Beban Sewa Gudang Baru masih dipakai: 1 baris jurnal, 1 jurnal berulang.`);
+    await stopRecurring(db, { clientId: g.client.id, recurringId: t.id });
+    await expect(removeAccount(db, { clientId: g.client.id, accountId: x.id })).rejects.toThrow(`Akun ${x.code} Beban Sewa Gudang Baru masih dipakai: 1 baris jurnal.`);
   });
 });
 
