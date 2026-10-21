@@ -36,11 +36,26 @@ revenue: the margin it exists to show is wrong. The same holds for a prepaid ren
 - A migration: nullable `departmentId` / `projectId` on `Invoice` and `AdjustmentSchedule`. Additive.
 
 ## Tasks
-- [ ] T1 Schema; invoice tags (form, journal, void).
-- [ ] T2 Schedule tags (create, change, instalments, accrual reversal); fixed-asset register and disposal.
-- [ ] T3 Tests, e2e, README, accounting-rules, deck.
+- [x] T1 Schema; invoice tags (form, journal, void).
+- [x] T2 Schedule tags (create, change, instalments, accrual reversal); fixed-asset register and disposal.
+- [x] T3 Tests, e2e, README, accounting-rules, deck.
 
 ## Implementation
+- **T1** `ad98d6e` — migration `20261021150000_departemen_proyek_dokumen` (nullable tags on `Invoice` and `AdjustmentSchedule`); `checkTags`
+  in `lib/dimensions` (the client's own, the right kind, not archived unless already carried); `createInvoice` tags the revenue / expense
+  line, `voidInvoice` mirrors it; the Piutang & Utang form's pickers; `removeDimension` counts invoices and schedules.
+- **T2** `be5ba29` — `createSchedule` / `setScheduleTags` (later instalments only; a Riwayat event); `postInstallment` tags the income /
+  expense side as the schedule holds it at posting; `postJournal()` lets a schedule's instalment keep an archived tag; the asset register
+  passes its tags to the depreciation schedule; `disposeAsset` tags the gain or loss line. The schedule panel's form and *Departemen*
+  dialog; the asset form's pickers.
+- **T3** — `tests/db/dimensions-documents.test.ts` (5 cases), `e2e/departemen-proyek-dokumen.spec.ts`, README, accounting-rules 3b.
+
+### Decisions made while building
+- **A schedule takes tags only when one side is income or expense** (refused otherwise): a balance-sheet reclass has no P&L to label.
+- **The tag is read when the instalment posts**, not stored per month: a change applies from the next posting, which is what the
+  accountant sees on the panel.
+- **Land** has no depreciation schedule, so its disposal gain or loss carries no tag (it can be retagged by a Jurnal Penyesuaian).
+- **An archived tag on a disposal is refused** (it is a new ADJUSTMENT, not a schedule instalment): reactivate the department first.
 
 ## Verification
 

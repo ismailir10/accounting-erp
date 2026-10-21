@@ -98,7 +98,11 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     on its classification account only (each split part; never the bank, PPN, withholding or suspense legs); `postBankTransaction` nets by
     account **and** tags, so changing only a tag posts a RECLASS of the difference as a change of account does (rule 3). Reports filter by tag:
     the Laba Rugi per departemen / proyek is `incomeStatement` per tag plus *Tanpa …*, so its columns add up to the Laba Rugi on every row.
-    One in use (a line, a bank line, a Jurnal berulang template or a waiting request names it) is archived, never removed.
+    Documents carry them too (round ten): an `Invoice` tags its revenue / expense (or asset) line — never the receivable, payable or PPN
+    line — and voiding mirrors it; an `AdjustmentSchedule` tags each instalment's income or expense side (a change applies to later
+    instalments only; a running schedule keeps posting an archived tag it carries); a fixed asset's tags are its depreciation
+    schedule's, and its disposal gain or loss carries them. One in use (a line, a bank line, an invoice, a schedule, a Jurnal berulang
+    template or a waiting request names it) is archived, never removed.
 4. **Locked periods reject every write** — imports, reclasses, adjustments. The database refuses inserting or deleting a journal entry
    or line dated in a LOCKED month **or in any month before one** (an earlier month may stay open only while it is empty, and a write
    into it would change the locked month's Neraca; `postJournal` says so first, naming the month to reopen); only `deleteClient` passes, through `set_config('buku.client_delete', 'on', true)` in its own transaction. Closing goes in order: a month can't be locked while an earlier
