@@ -225,8 +225,11 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     suggestions, `TaxPosting`). Laba sebelum pajak (BEBAN_PAJAK excluded) + koreksi fiskal → PKP rounded down to thousands (a loss = 0; no
     carry-forward). Automatic corrections: book − fiscal depreciation of the asset register (beda waktu), and for an asset disposed this
     year fiscal − book accumulated depreciation at disposal (the fiscal gain or loss differs by exactly that); *pendapatan lain* named bunga / jasa
-    giro / deposito out as final-taxed income (beda tetap). Correction **categories** by account-name words (`lib/tax/categories.ts`:
-    entertainment, donations, penalties, natura, PPh expensed, 50 % phones and service vehicles, provisions, employee benefits) are
+    giro / deposito out as final-taxed income (beda tetap), and the gross of income a customer or tenant withheld PPh 4(2) **final** on
+    (incoming bank lines with that withholding, per income account; also out of the Pasal 31E turnover). Under PP 55 (FINAL_UMKM) the
+    0,5 % proposed is net of the year's PPh 4(2) customers already withheld (shown as *Dipotong pelanggan*). Correction **categories** by
+    account-name words (`lib/tax/categories.ts`: entertainment, donations, penalties, PPh expensed, 50 % phones and service vehicles,
+    provisions, employee benefits — not natura, deductible for the employer since UU HPP / PMK 66/2023) are
     **suggestions only**; an accepted one follows its account's year-to-date balance × its % (1–100, changeable). **Kompensasi kerugian**:
     losses typed per origin year as left at 1 January (at most five years back), used oldest first up to fiscal profit, expired ones
     skipped; last year's December fiscal loss from the books is only suggested. The **Excel kertas kerja** is built from the same pack. Normal regime 22 %, Pasal 31E (turnover = usaha revenue ≤ Rp 50 M: PKP × 4,8 M ÷ turnover at
@@ -296,7 +299,9 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     The TER check uses the census wage (`Employee.wage`, the PSAK 219 *upah*) and the employee's PTKP status, so it is an **estimate** and
     says so. A masa is judged on what was booked *for* it (credits in the month; PPN keluaran − masukan, a lebih bayar carried masa to masa
     from the company's first tax line, across year ends), paid by bank lines classified to
-    the tax account up to its due date (PPh: the 15th of the next month; PPN: the end of the next month); an older balance is shown apart,
+    the tax account — decided by the outgoing bank line, not the entry: the net of all its entries on the tax account (its BANK entry
+    and any RECLASS, e.g. a remittance confirmed in Review from 1999) is one payment on the bank date, less the line's own withholding
+    leg (tax owed); a line moved off the tax account pays nothing — up to its due date (PPh: the 15th of the next month; PPN: the end of the next month); an older balance is shown apart,
     never netted against a missed month. An opening balance on a tax account belongs to the masa before its date (the books start owing
     it), so the first remittance reads as paying it. Tutup Buku carries it as *Pajak masa disetor* per Rupiah company with tax activity
     (`masa:<entity>`): REVIEW while any tax is short, late, paid with nothing withheld or holding an unexplained balance. Buku prepares; the firm files in Coretax (ADR 0014: not a PJAP).
