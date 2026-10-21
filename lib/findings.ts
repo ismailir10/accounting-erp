@@ -50,6 +50,15 @@ export function openingQuestion(entity: string, date: Date, amount: bigint, curr
   return `Saldo awal ${entity} per ${formatDate(date)} tidak seimbang: ${side}. Dari mana selisih ini? Kas di luar bank, piutang atau utang yang belum tercatat, modal, atau saldo laba? Tulis keputusannya dan pilih akunnya.`;
 }
 
+/**
+ * The question a Saldo Awal file's rounding residue asks (rule 6a rounds each balance once; what is left can't go on 7190, an expense,
+ * inside a balance-sheet position). `amount` is signed as it sits on 3290, like `openingQuestion`.
+ */
+export function roundingQuestion(entity: string, date: Date, amount: bigint, currency: string, file: string) {
+  const abs = formatMoney(amount < 0n ? -amount : amount, currency);
+  return `Saldo awal ${entity} per ${formatDate(date)} dari ${file}: membulatkan saldo file ke satuan mata uang menyisakan ${abs}. Tulis keputusannya dan pilih akunnya (biasanya Saldo Laba).`;
+}
+
 /** The entity's balance on 3290 over all dates (debit +). */
 async function openingDifference(db: Db | Tx, entityId: string, accountId: string) {
   const s = await db.journalLine.aggregate({ where: { entityId, accountId }, _sum: { debit: true, credit: true } });

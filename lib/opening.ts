@@ -16,6 +16,9 @@ import { findingLabel, openFinding, openingQuestion } from "@/lib/findings";
  */
 export class OpeningError extends Error {}
 
+/** Why Saldo Awal refuses an income or expense line, typed or from a file (lib/ledger-import/post.ts says the same). */
+export const OPENING_PL_ADVICE = `Saldo awal berisi posisi neraca: masukkan laba (rugi) sampai tanggal ini ke ${ACCOUNT_CODES.RETAINED} Saldo Laba, atau impor buku besar klien untuk laba rugi setahun penuh.`;
+
 /**
  * One typed Saldo Awal line in major units of the entity's currency. A balance held in another currency (a dollar account, a dollar
  * receivable or loan) also gives its foreign amount (`fxAmount`, major units of `currency`): it posts as a foreign-currency line at the
@@ -144,7 +147,7 @@ export async function postOpening(db: Db, input: { clientId: string; entityId: s
     // Saldo Awal is a position at a date: a result earned before it sits in Saldo Laba. An income or expense balance here would be a flow
     // before the books start, counted in a Laba Rugi labelled from the day after (cycle 2026-10-20-paritas-inti).
     if (acc.type === "PENDAPATAN" || acc.type === "BEBAN") {
-      throw new OpeningError(`${acc.code} ${acc.name} adalah akun laba rugi. Saldo awal berisi posisi neraca: masukkan laba (rugi) sampai tanggal ini ke ${ACCOUNT_CODES.RETAINED} Saldo Laba, atau impor buku besar klien untuk laba rugi setahun penuh.`);
+      throw new OpeningError(`${acc.code} ${acc.name} adalah akun laba rugi. ${OPENING_PL_ADVICE}`);
     }
     let fx: PostLine["fx"] = null;
     if (l.currency || l.fxAmount?.trim()) {

@@ -3,15 +3,20 @@ import { fiscalEndMonth, fiscalYearStart } from "@/lib/fiscal";
 import type { Db, Tx } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
 import type { Prisma } from "@/lib/generated/prisma/client";
+import type { AccountType } from "@/lib/generated/prisma/enums";
 import { lockedAfter, postJournal, type PostLine } from "@/lib/ledger/post";
 import { ACCOUNT_CODES } from "@/lib/coa/template";
+import { templateAccounts } from "@/lib/coa/ensure";
+import { openFinding, roundingQuestion } from "@/lib/findings";
+import { OPENING_PL_ADVICE } from "@/lib/opening";
+import { NO_CODE_PREFIX } from "@/lib/ledger-import/code";
 import { dateOnly, formatDate, formatPeriod } from "@/lib/format";
 import { loadRates, lookupRate, upsertFileRate } from "@/lib/fx/rates";
 import { formatRate, formatRateId, isCurrency, parseRate } from "@/lib/fx/currency";
 import { ParseError } from "@/lib/import/types";
 import { columnLetter, detectTables, readSheets, readTable, reportKind } from "@/lib/ledger-import/read";
 import { accountKey, cap, missingMonths, periodList, planLedger, planNeraca, planTb, tbIsWorksheet, type Check, type CurrencyMode, type EntityInfo, type Plan, type PlanEntry } from "@/lib/ledger-import/check";
-import { inferType, learnScheme, suggestMappings } from "@/lib/ledger-import/mapping";
+import { inferType, learnScheme, strongType, suggestMappings } from "@/lib/ledger-import/mapping";
 import type { NeracaRow, TableCandidate } from "@/lib/ledger-import/types";
 
 /** Memo of the 1999 line an accepted unbalanced group posts (rule 15a); the 1999 correction proposals look for it. */
@@ -104,7 +109,9 @@ export async function stageImport(db: Db, input: StageInput): Promise<StageResul
 
   let plan: Plan;
   const entityInfos = new Map<string, EntityInfo>();
-  let periodStart: Date;
+  // A source account already mapped says its type for certain (`entityId|code` → the client account's type).
+  const mapped = new Map((await db.sourceAccount.findMany({ where: { clientId: input.clientId, accountId: { not: null } }, select: { entityId: true, code: true, account: { select: { type: true } } } })).map((s) => [`${s.entityId}|${s.code}`, s.account!.type]));
+  const mappedType = (ek: string, code: string) => mapped.get(`${entityInfos.get(ek)?.entityId}|${code}`);  let periodStart: Date;
   let periodEnd: Date;
   if (read.mode === "LEDGER") {
     const labels = [...new Set(read.rows.map((r) => r.entity ?? ""))];
@@ -170,6 +177,10 @@ export async function stageImport(db: Db, input: StageInput): Promise<StageResul
   // A TB is confirmed as a document of its closing date (Dokumen lists a Neraca-mode table by its date); its opening date is derived.
   const fileStart = read.mode === "NERACA" && read.tb ? periodEnd : periodStart;
   if (input.allowedPeriod && (fileStart.toISOString().slice(0, 10) < input.allowedPeriod.start || periodEnd.toISOString().slice(0, 10) > input.allowedPeriod.end)) throw new LedgerImportError("Rentang sumber harus mencakup seluruh periode file.");
+
+  // Rule 5: a Saldo Awal from a file is a balance-sheet position, as a typed one is. Said on the draft when the type is known.
+  const sectionType = read.mode === "NERACA" ? new Map(read.rows.map((r) => [r.code, r.typeHint])) : new Map<string, AccountType | null>();
+  plan.checks.push(...openingPlChecks(plan.entries, read.mode, (ek, code, name) => mappedType(ek, code) ?? sectionType.get(code) ?? strongType(name)));
 
   // A closed month can't take a journal (rule 4): said on the draft, not only when posting.
   plan.checks.push(...(await lockedMonthChecks(db, input.clientId, plan.entries)));
@@ -341,6 +352,29 @@ async function ledgerBookChecks(db: Db, plan: Plan, entities: Map<string, Entity
 }
 
 /**
+ * Rule 5 for files: an OPENING journal (a Neraca, a trial balance's opening, a GL's own opening rows) holds balance-sheet positions only,
+ * as a typed Saldo Awal does (lib/opening.ts). A one-date worksheet's balances are its period's own figures, not an opening, and are left
+ * alone. `typeOf` answers only when the type is known (a mapping, the file's section, strong name words); `postImport` checks the mapping.
+ */
+function openingPlChecks(entries: PlanEntry[], mode: "LEDGER" | "NERACA", typeOf: (entityKey: string, code: string, name: string) => AccountType | null | undefined): Check[] {
+  const out: Check[] = [];
+  for (const e of entries) {
+    if ((e.kind ?? (mode === "NERACA" ? "OPENING" : "IMPORTED")) !== "OPENING" || e.worksheet) continue;
+    const pl = e.lines.filter((l) => l.amount !== 0n && ["PENDAPATAN", "BEBAN"].includes(typeOf(e.entityKey, l.code, l.name) ?? ""));
+    if (!pl.length) continue;
+    const names = pl.slice(0, 5).map((l) => `${l.code.startsWith(NO_CODE_PREFIX) ? "" : `${l.code} `}${l.name}`).join(", ");
+    out.push({
+      severity: "BLOCK",
+      code: "OPENING_PL",
+      message: `${names}${pl.length > 5 ? ` dan ${pl.length - 5} lainnya` : ""} ${pl.length === 1 ? "adalah akun" : "adalah akun-akun"} laba rugi di saldo awal ${formatDate(e.date)}. ${OPENING_PL_ADVICE}`,
+      refs: cap(pl.map((l) => l.ref)),
+      entityKey: e.entityKey,
+    });
+  }
+  return out;
+}
+
+/**
  * The opening bridge, computed when posting (the books may have moved since staging): per balance-sheet account the books' movement up to
  * the anchor date, reversed; the income and expense in that span on 3200, since the Neraca's equity already holds that result. Then the
  * Neraca at the anchor date equals the file. Refused while 1999 or the transfer clearing hold money at that date (the bridge would hide
@@ -440,7 +474,7 @@ export async function postImport(db: Db, clientId: string, importId: string, act
   if (!imp) throw new LedgerImportError("Impor tidak ditemukan");
   if (imp.status === "POSTED") throw new LedgerImportError("Impor ini sudah dicatat.");
   const blocking = imp.checks.filter((c) => c.severity === "BLOCK" && !c.accepted);
-  if (blocking.length) throw new LedgerImportError(`${blocking.length} masalah BLOCK belum diselesaikan. Perbaiki file atau terima selisihnya.`);
+  if (blocking.length) throw new LedgerImportError(`${blocking.length} masalah BLOCK belum diselesaikan, mis. ${blocking[0].message.replace(/\.$/, "")}. Perbaiki file atau terima selisihnya.`);
   const again = await db.ledgerImport.findFirst({ where: { clientId, fileHash: imp.fileHash, status: "POSTED" } });
   if (again) throw new LedgerImportError("Sheet ini sudah diimpor.");
 
@@ -451,14 +485,16 @@ export async function postImport(db: Db, clientId: string, importId: string, act
   if (unmapped.length) throw new LedgerImportError(`${unmapped.length} akun sumber belum dipetakan. Selesaikan Pemetaan akun dulu.`);
   const sourceOf = new Map(sources.map((s) => [`${s.entityId}|${s.code}`, s]));
   const kindOf = (e: SavedPlan["entries"][number]) => e.kind ?? (imp.mode === "NERACA" ? "OPENING" : "IMPORTED");
-  // The mapping may change after staging, so what it posts to is checked here: a bank GL account is opened only by a Saldo Awal (its
-  // movement comes from statements, never from a file: counted twice otherwise).
+  // The mapping may change after staging, so what it posts to is checked here:
+  // - a bank GL account is opened only by a Saldo Awal (its movement comes from statements, never from a file: counted twice otherwise);
+  // - a Saldo Awal holds no income or expense (rule 5, as lib/opening.ts; a bridge's anchor says so in bridgeLines).
   for (const e of saved.entries) {
     for (const l of e.lines) {
       if (BigInt(l.amount) === 0n) continue;
       const src = sourceOf.get(`${saved.entities[e.entityKey]}|${l.code}`)!;
       const acc = src.account!;
       if (acc.isBank && kindOf(e) !== "OPENING") throw new LedgerImportError(`Akun sumber ${src.code} ${src.name} dipetakan ke ${acc.code} ${acc.name}, akun rekening bank: mutasinya datang dari rekening koran, jadi baris ${l.ref} akan terhitung dua kali. Rekening bank hanya dibuka dari Saldo Awal; petakan akun ini ke akun non-bank (mis. 1120).`);
+      if ((acc.type === "PENDAPATAN" || acc.type === "BEBAN") && kindOf(e) === "OPENING" && !e.worksheet && !e.bridge) throw new LedgerImportError(`Akun sumber ${src.code} ${src.name} dipetakan ke ${acc.code} ${acc.name}, akun laba rugi, di saldo awal ${formatDate(new Date(`${e.date}T00:00:00.000Z`))}. ${OPENING_PL_ADVICE}`);
     }
   }
   const accounts = await db.account.findMany({ where: { clientId, code: { in: [ACCOUNT_CODES.ROUNDING, ACCOUNT_CODES.SUSPENSE] } } });
@@ -492,6 +528,7 @@ export async function postImport(db: Db, clientId: string, importId: string, act
       if (!current) throw new LedgerImportError("Impor tidak ditemukan");
       if (current.status === "POSTED") throw new LedgerImportError("Impor ini sudah dicatat.");
       if (await tx.ledgerImport.findFirst({ where: { clientId, fileHash: imp.fileHash, status: "POSTED" }, select: { id: true } })) throw new LedgerImportError("Sheet ini sudah diimpor.");
+      const entityRows = new Map((await tx.entity.findMany({ where: { id: { in: Object.values(saved.entities) } }, select: { id: true, shortName: true, functionalCurrency: true } })).map((x) => [x.id, x]));
       let posted = 0;
       for (const e of saved.entries) {
         const entityId = saved.entities[e.entityKey];
@@ -512,7 +549,11 @@ export async function postImport(db: Db, clientId: string, importId: string, act
           });
         }
         const r = BigInt(e.rounding);
-        if (r !== 0n) lines.push({ accountId: rounding.id, debit: r > 0n ? r : 0n, credit: r < 0n ? -r : 0n, memo: e.fxRounding ? "Selisih pembulatan konversi kurs" : "Selisih pembulatan sen" });
+        // A Saldo Awal is a balance-sheet position (rule 5): its rounding residue can't sit on 7190, an expense, where it would be a flow of
+        // the year that the changes in equity leave out. It goes to 3290 with a Temuan, like any opening difference (ADR 0012).
+        const openingResidue = r !== 0n && kindOf(e) === "OPENING" && !e.worksheet;
+        const residueAccount = openingResidue ? (await templateAccounts(tx, clientId, [ACCOUNT_CODES.OPENING_DIFFERENCE])).get(ACCOUNT_CODES.OPENING_DIFFERENCE)! : rounding.id;
+        if (r !== 0n) lines.push({ accountId: residueAccount, debit: r > 0n ? r : 0n, credit: r < 0n ? -r : 0n, memo: openingResidue ? "Selisih pembulatan saldo awal, menunggu keputusan (Temuan)" : e.fxRounding ? "Selisih pembulatan konversi kurs" : "Selisih pembulatan sen" });
         const imbalance = BigInt(e.imbalance);
         if (imbalance !== 0n) lines.push({ accountId: suspense.id, debit: imbalance < 0n ? -imbalance : 0n, credit: imbalance > 0n ? imbalance : 0n, memo: SOURCE_DIFFERENCE_MEMO });
         let date = new Date(`${e.date}T00:00:00.000Z`);
@@ -522,7 +563,7 @@ export async function postImport(db: Db, clientId: string, importId: string, act
           lines.push(...bridged.lines);
         }
         if (lines.length < 2) continue;
-        await postJournal(tx, {
+        const entry = await postJournal(tx, {
           entityId,
           date,
           kind: kindOf(e),
@@ -532,6 +573,10 @@ export async function postImport(db: Db, clientId: string, importId: string, act
           actorId,
           lines,
         });
+        if (openingResidue) {
+          const ent = entityRows.get(entityId)!;
+          await openFinding(tx, { clientId, entityId, kind: "OPENING_DIFFERENCE", date, amount: r, question: roundingQuestion(ent.shortName, date, r, ent.functionalCurrency, imp.fileName), sourceEntryId: entry.id, actorId });
+        }
         posted++;
       }
       for (const r of saved.rates ?? []) {

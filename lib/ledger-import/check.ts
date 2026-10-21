@@ -54,6 +54,8 @@ export type PlanEntry = {
   rounding: bigint;
   /** The residue includes rounding from converting foreign lines (the group balances in every source currency). */
   fxRounding?: boolean;
+  /** A one-date worksheet's balances before adjustment: the period's own figures at its date, not a Saldo Awal before the books. */
+  worksheet?: boolean;
 };
 
 export type Plan = { entries: PlanEntry[]; checks: Check[]; accounts: Map<string, { entityKey: string; code: string; name: string; previousNames: string[]; balance: bigint; currency: string | null }> };
@@ -629,6 +631,7 @@ export function planTb(tb: TbRead, opts: { entityKey: string; entity: EntityInfo
       lines: lines.map((x, i) => ({ ref: cell(x.r, x.group), code: x.r.code, name: x.r.name, amount: rounded[i], fx: null, memo: null })),
       imbalance,
       rounding,
+      ...(kind === "OPENING" && tbIsWorksheet(tb.layout) ? { worksheet: true } : {}),
     };
     entries.push(e);
     if (imbalance !== 0n) {

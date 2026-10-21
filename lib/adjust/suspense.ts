@@ -31,6 +31,12 @@ export type SuspenseCorrection = {
   reverses: bigint;
   /** Proposal key: one per source line, or per remaining balance. */
   key: string;
+  /**
+   * The Saldo Awal date when the difference sits in an OPENING entry (an accepted unbalanced Neraca): the correction is then part of the
+   * opening too, an OPENING entry on that date like a Temuan's resolution (lib/findings.ts), so the changes in equity open with it instead
+   * of showing an in-year correction of Saldo Laba.
+   */
+  opening?: Date;
   refs: string[];
 };
 
@@ -72,6 +78,7 @@ function lineCorrection(l: SourceLine): SuspenseCorrection {
     reverses: own,
     key: `SUSPENSE:${l.id}`,
     refs: [l.id],
+    ...(l.entry.kind === "OPENING" ? { opening: l.entry.date } : {}),
   };
 }
 
@@ -145,6 +152,11 @@ export async function postSuspenseCorrection(db: Db, input: { firmId: string; cl
   if (input.accounts[0] !== c.lines[0].accountCode) throw new LedgerError("Baris 1999 tidak bisa diganti akunnya; pilih akun lawan saja.");
   if (!input.accounts[1]?.trim()) throw new LedgerError("Pilih akun untuk setiap baris.");
   if (input.accounts[1] === c.lines[0].accountCode) throw new LedgerError("Akun lawan tidak boleh 1999.");
+  if (c.opening) {
+    // A Saldo Awal holds balance-sheet positions only (rule 5), as when a Temuan is resolved.
+    const counter = await db.account.findFirst({ where: { clientId: input.clientId, code: input.accounts[1].trim() }, select: { type: true } });
+    if (counter?.type === "PENDAPATAN" || counter?.type === "BEBAN") throw new LedgerError("Saldo awal tidak berisi laba rugi: pilih akun neraca (aset, liabilitas atau ekuitas).");
+  }
   const p = await store(db, input.firmId, input.clientId, c);
   // Re-checked inside the posting transaction: a correction (or manual fix) racing this can't reverse a difference twice.
   const residual = input.lineId.startsWith(NET);
@@ -152,7 +164,7 @@ export async function postSuspenseCorrection(db: Db, input: { firmId: string; cl
     const net = await sourceSuspenseNet(tx, c.entity.id, periodBounds(c.year, c.month).end);
     if (residual ? net !== c.reverses : !fits(c.reverses, net)) throw new LedgerError("Selisih di 1999 sudah berubah (sudah dikoreksi); muat ulang halaman.");
   };
-  return postProposal(db, { clientId: input.clientId, proposalId: p.id, accounts: input.accounts, actorId: input.actorId, origin: c.origin, guard });
+  return postProposal(db, { clientId: input.clientId, proposalId: p.id, accounts: input.accounts, actorId: input.actorId, origin: c.origin, guard, ...(c.opening ? { entry: { kind: "OPENING" as const, date: c.opening } } : {}) });
 }
 
 /** A 1999 difference must be corrected before the close: its only correction can't be dismissed (there'd be no way to clear it). */
