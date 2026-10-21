@@ -506,6 +506,21 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     The Neraca at the anchor date then equals the file. It is refused while 1999 or 1199 hold money at that date, and for an anchor line
     mapped to income or expense. Laba Rugi before the first journal is unknown and sits in Saldo Laba; the draft says so (REVIEW
     `OPENING_BRIDGE`).
+
+    **Never counted twice, never a flow in an opening** (round seven, cycle 2026-10-21-uji-keras-pajak-impor-tutup):
+    - a GL journal whose every line (date, source account, amount) another GL import already posted is BLOCK `GL_OVERLAP` (a re-export);
+    - a GL's own *Saldo Awal* rows (no voucher, its first date) open the books as OPENING the day before when the entity has no Saldo Awal
+      and no earlier journal (INFO `GL_OPENING`); otherwise BLOCK `GL_OPENING_ROWS`, which the accountant may accept to leave them out;
+    - GL rows inside an opening bridge's span are BLOCK `BRIDGE_COVERS`, checked again when posting;
+    - a source system's year-end closing journal (on the financial-year end, only income / expense / equity, each P&L line moving toward
+      zero) is left out with REVIEW `CLOSING_ENTRY`: Buku derives the fold into Saldo Laba (rule 1);
+    - a TB whose movement crosses a financial-year end is BLOCK `TB_YEAR_END` (one movement journal would put last year's P&L in this one);
+    - an OPENING journal from a file holds no income or expense (BLOCK `OPENING_PL` at staging, refused again at posting against the
+      mapping), as a typed Saldo Awal (rule 5); a one-date worksheet is its period's own figures and exempt;
+    - an OPENING journal's rounding residue goes to 3290 with a Temuan, never 7190;
+    - a source account maps to a bank GL account only for its own entity and only while all its lines are in OPENING entries; a later
+      file posting to it is refused (the movement comes from statements). 3290, 3900 and 7190 are never a mapping target;
+    - a 1999 correction whose 1999 line sits in an OPENING entry posts as OPENING on that date.
 16. Parsers detect format from **content**, not file name, and raise `ParseError` with a Bahasa message the UI shows verbatim.
 16a. **Two-number dates are read in one order per file, never guessed per row** (QA E17, `dayMonthEvidence` in `lib/import/parsers/common.ts`):
     day/month (Indonesian) unless a value proves month/day (a second number > 12) — then the whole file is month/day and says so;

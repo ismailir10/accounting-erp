@@ -27,11 +27,11 @@ Who feels it: the accountant asked "berapa laba proyek X?", the owner of a multi
 - Riwayat records dimension changes (create, rename, archive).
 
 ## Acceptance criteria
-- [ ] Two departments and a project set up; a Jurnal Penyesuaian with a line on each; a bank line classified to 6120 with *Outlet A*.
-- [ ] Laba Rugi per departemen: Outlet A, Outlet B and *Tanpa departemen* columns add up to the Laba Rugi on every row.
-- [ ] Changing only a bank line's department in Review posts a RECLASS moving it; the per-department report follows; Laba Rugi unchanged.
-- [ ] An archived department leaves the pickers; `postJournal()` refuses it on a new line; reports still show its history.
-- [ ] Full gate green; `verify:books` ALL PASS.
+- [x] Two departments and a project set up; a Jurnal Penyesuaian with a line on each; a bank line classified to 6120 with *Outlet A*.
+- [x] Laba Rugi per departemen: Outlet A, Outlet B and *Tanpa departemen* columns add up to the Laba Rugi on every row.
+- [x] Changing only a bank line's department in Review posts a RECLASS moving it; the per-department report follows; Laba Rugi unchanged.
+- [x] An archived department leaves the pickers; `postJournal()` refuses it on a new line; reports still show its history.
+- [x] Full gate green; `verify:books` ALL PASS.
 
 ## Non-goals
 - Tags on invoices, fixed assets, schedules and ledger imports (a later round once the pilot asks).
@@ -43,11 +43,11 @@ Who feels it: the accountant asked "berapa laba proyek X?", the owner of a multi
 - `postJournal()` gains one check (the line's dimensions belong to the client and are not archived). Tightened, not relaxed.
 
 ## Tasks
-- [ ] T1 Schema + migration; `lib/dimensions` (create, rename, archive); `postJournal()` check; Pengaturan klien page.
-- [ ] T2 Jurnal Penyesuaian lines (form, stored lines, Salin, Jurnal berulang, approvals).
-- [ ] T3 Review: tag on a bank line, reclass by (account, tags).
-- [ ] T4 Laba Rugi per Departemen / Proyek (page tab, Excel); Buku Besar and Jurnal Umum tags and filter.
-- [ ] T5 Tests, e2e, README, accounting-rules, deck.
+- [x] T1 Schema + migration; `lib/dimensions` (create, rename, archive); `postJournal()` check; Pengaturan klien page.
+- [x] T2 Jurnal Penyesuaian lines (form, stored lines, Salin, Jurnal berulang, approvals).
+- [x] T3 Review: tag on a bank line, reclass by (account, tags).
+- [x] T4 Laba Rugi per Departemen / Proyek (page tab, Excel); Buku Besar and Jurnal Umum tags and filter.
+- [x] T5 Tests, e2e, README, accounting-rules, deck.
 
 ## Implementation
 - **T1** `d23e553` — `Dimension` table + `JournalLine` / `BankTransaction` tags (migration `20261021140000_departemen_proyek`, additive);
@@ -75,5 +75,16 @@ Who feels it: the accountant asked "berapa laba proyek X?", the owner of a multi
   own title and opening, a later round if asked.
 
 ## Verification
+- `npm run lint && npm run typecheck && npm test` on `f46d5a3` (this round plus round seven's import fixes): **348 files, 3208 tests
+  passed**; `tests/db/dimensions.test.ts` 9 cases (set-up and archive, journal-line tags through reversal / approval / Jurnal berulang,
+  bank-line tags with a tag-only RECLASS, the report adding up per row, Excel, the filtered ledger and Jurnal Umum).
+- `npm run build && npm run demo:reset && npm run verify:books`: **ALL PASS — 1765 checks**; `db:drift` clean.
+- `npm run test:e2e` on the production build: **136 passed (18.5m)**, including `e2e/departemen-proyek.spec.ts`; re-run on 0bb0eac after
+  the UI fix with the investor walk: 3 passed.
+- Walked at 1440 and 390 px: Pengaturan klien's card (columns aligned, actions wrap), the *Per departemen* tab (Outlet A 9.000.000,
+  Outlet B diarsipkan, Total = Laba Rugi), no sideways page scroll.
+- Acceptance: all five criteria met (the e2e walks the first four; the gate above is the fifth).
+
+Verified locally — 0bb0eac
 
 ## Ship Notes
