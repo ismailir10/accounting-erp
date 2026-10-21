@@ -4,11 +4,11 @@ import type { Direction, EntityKind } from "@/lib/generated/prisma/enums";
 import { AI_BATCH_SIZE, AI_TIMEOUT_MS, AiTruncatedError, CLASSIFICATION_PROMPT_VERSION, DEMO_AI_MODEL, aiConfig, buildPrompt, maxTokensFor, type AiItem, type AiProvider } from "@/lib/ai/provider";
 import { AiBudgetError, runBudgetedAi } from "@/lib/ai/budget";
 import type { Classification } from "@/lib/classify/types";
-import { ACCOUNT_CODES } from "@/lib/coa/template";
+import { ACCOUNT_CODES, isIntercompanyCode } from "@/lib/coa/template";
 
 /** Transfers are paired by the matcher or decided by the reviewer, never guessed (use-case feedback UC-B2): 1199 and 1190 never reach the model. */
 const NOT_FOR_AI = new Set<string>([ACCOUNT_CODES.CLEARING, ACCOUNT_CODES.INTERCOMPANY]);
-export const aiAccounts = <T extends { code: string }>(accounts: T[]) => accounts.filter((a) => !NOT_FOR_AI.has(a.code));
+export const aiAccounts = <T extends { code: string }>(accounts: T[]) => accounts.filter((a) => !NOT_FOR_AI.has(a.code) && !isIntercompanyCode(a.code));
 
 /**
  * A person's own bank lines (the owner beside the PT) are not a business: no trade receivables or payables, no sales or service income,

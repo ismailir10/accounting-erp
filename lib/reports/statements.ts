@@ -387,13 +387,22 @@ export async function cashFlow(db: Db, scope: Scope, to: Date): Promise<CashFlow
   const netProfit = moved.filter((m) => isPl(m.account)).reduce((t, m) => t - m.net, 0n);
   // Each intercompany account's side at the period end decides its section (cashLine); a balance settled to zero by the period end keeps the
   // side it opened with (a loan given and repaid is still lending).
+  // Per counterparty (its own account, lib/coa/intercompany.ts); balances between companies of the scope are read as one, so a loan inside
+  // a group shown together cancels instead of showing as lending and borrowing.
+  const inScope = new Set(scope.entityIds);
+  const counterpartyOf = new Map((await db.account.findMany({ where: { clientId: scope.clientId, isIntercompany: true }, select: { code: true, counterpartyEntityId: true } })).map((a) => [a.code, a.counterpartyEntityId]));
+  const icKey = (code: string) => {
+    const party = counterpartyOf.get(code);
+    return scope.entityIds.length > 1 && (!party || inScope.has(party)) ? "group" : code;
+  };
   const icNet = new Map<string, bigint>();
   const icOpen = new Map<string, bigint>();
-  for (const m of opening) if (m.account.isIntercompany) icOpen.set(m.account.code, (icOpen.get(m.account.code) ?? 0n) + m.net);
-  for (const m of [...opening, ...moved]) if (m.account.isIntercompany) icNet.set(m.account.code, (icNet.get(m.account.code) ?? 0n) + m.net);
+  for (const m of opening) if (m.account.isIntercompany) icOpen.set(icKey(m.account.code), (icOpen.get(icKey(m.account.code)) ?? 0n) + m.net);
+  for (const m of [...opening, ...moved]) if (m.account.isIntercompany) icNet.set(icKey(m.account.code), (icNet.get(icKey(m.account.code)) ?? 0n) + m.net);
   const lentOut = (code: string) => {
-    const end = icNet.get(code) ?? 0n;
-    return end !== 0n ? end > 0n : (icOpen.get(code) ?? 0n) > 0n;
+    const key = icKey(code);
+    const end = icNet.get(key) ?? 0n;
+    return end !== 0n ? end > 0n : (icOpen.get(key) ?? 0n) > 0n;
   };
   const lineOf = (a: Pick<Account, "code" | "fsLine" | "isIntercompany">) => cashLine(a, a.isIntercompany && lentOut(a.code));
   const groups = new Map<string, CashItem & { section: CashSection }>();

@@ -7,7 +7,7 @@ import type { TaxTag } from "@/lib/generated/prisma/enums";
 import { postBankTransaction } from "@/lib/ledger/bank";
 import { LedgerError } from "@/lib/ledger/post";
 import { isGenericKey } from "@/lib/import/normalize";
-import { ACCOUNT_CODES, isClassifiable } from "@/lib/coa/template";
+import { ACCOUNT_CODES, isClassifiable, isIntercompanyCode } from "@/lib/coa/template";
 import { defaultTaxMonth } from "@/lib/tax/masa";
 import { checkWithholding, type Withholding } from "@/lib/tax/withholding";
 
@@ -100,7 +100,7 @@ export async function reviewTransactionTx(tx: Tx, args: ReviewArgs) {
   }
   // A paired half moved off the transfer accounts is no longer half of a transfer (UC-B2): the link goes, and this line is never paired
   // again; its old partner may still find its real other half.
-  const leavesPair = t.matchedTxId !== null && args.accountCode !== ACCOUNT_CODES.CLEARING && args.accountCode !== ACCOUNT_CODES.INTERCOMPANY;
+  const leavesPair = t.matchedTxId !== null && args.accountCode !== ACCOUNT_CODES.CLEARING && !isIntercompanyCode(args.accountCode);
   if (leavesPair) await tx.bankTransaction.updateMany({ where: { id: t.matchedTxId!, matchedTxId: t.id }, data: { matchedTxId: null } });
   await tx.bankTransaction.update({
     where: { id: t.id },
@@ -256,7 +256,7 @@ export async function splitTransaction(db: Db, args: { bankTxId: string; parts: 
       const n = i + 1;
       const a = accounts.get(p.accountCode);
       if (!a) throw new LedgerError(`Bagian ${n}: pilih akun.`);
-      if (blocked.has(a.code) || !isClassifiable(a)) throw new LedgerError(`Bagian ${n}: akun ${a.code} ${a.name} tidak bisa dipakai untuk pecahan. Pilih akun pendapatan, beban, aset atau liabilitas.`);
+      if (blocked.has(a.code) || isIntercompanyCode(a.code) || !isClassifiable(a)) throw new LedgerError(`Bagian ${n}: akun ${a.code} ${a.name} tidak bisa dipakai untuk pecahan. Pilih akun pendapatan, beban, aset atau liabilitas.`);
       if (seen.has(a.code)) throw new LedgerError(`Akun ${a.code} ${a.name} dipakai di dua bagian. Gabungkan nominalnya dalam satu bagian.`);
       seen.add(a.code);
       let amount: bigint;

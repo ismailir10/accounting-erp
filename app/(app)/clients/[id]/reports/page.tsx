@@ -332,7 +332,7 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   Kertas Kerja Gabungan
-                  <StatusPill status={ws.residual === 0n ? "PASS" : "REVIEW"} label={ws.residual === 0n ? "Antar entitas cocok" : "Ada selisih antar entitas"} />
+                  <StatusPill status={ws.residual === 0n && !ws.pairs.length ? "PASS" : "REVIEW"} label={ws.residual === 0n && !ws.pairs.length ? "Antar entitas cocok" : "Ada selisih antar entitas"} />
                 </CardTitle>
                 <CardDescription>{combinedNote} Saldo debit (+) / kredit (−){ws.translated ? ", semua kolom dalam Rupiah" : wsCurrency !== "IDR" ? `, dalam ${wsCurrency}` : ""}.</CardDescription>
               </CardHeader>
@@ -362,6 +362,12 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
                     Selisih <Money value={ws.residual} currency={wsCurrency} />. Biasanya karena mutasi salah satu entitas belum diimpor.
                   </p>
                 )}
+                {/* A group of three or more: each pair must mirror (A's account for B against B's account for A). */}
+                {ws.pairs.map((p) => (
+                  <p key={`${p.a}-${p.b}`} className="px-6 pt-3 text-sm text-review" data-testid="worksheet-pair">
+                    {p.a}–{p.b}: selisih <Money value={p.difference < 0n ? -p.difference : p.difference} currency={wsCurrency} />. Saldo {p.a} dengan {p.b} dan saldo {p.b} dengan {p.a} belum saling menutup.
+                  </p>
+                ))}
               </CardContent>
             </Card>
           </TabsContent>

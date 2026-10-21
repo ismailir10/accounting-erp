@@ -35,7 +35,11 @@ async function makeGroup3() {
 }
 type G = Awaited<ReturnType<typeof makeGroup3>>;
 
-const id = async (g: G, code: string) => (await db.account.findFirstOrThrow({ where: { clientId: g.client.id, code } })).id;
+/** A company's intercompany account in this group of three (`1190NN`, lib/coa/intercompany.ts): where another records a balance with it. */
+const party = async (g: G, who: "pt" | "cv" | "owner") => (await db.account.findFirstOrThrow({ where: { clientId: g.client.id, counterpartyEntityId: g[who].entity.id } })).code;
+/** An account by code, or "@pt" / "@cv" / "@owner" for that company's intercompany account. */
+const id = async (g: G, code: string) =>
+  (await db.account.findFirstOrThrow({ where: { clientId: g.client.id, ...(code.startsWith("@") ? { counterpartyEntityId: g[code.slice(1) as "pt" | "cv" | "owner"].entity.id } : { code }) } })).id;
 /** One typed journal (kind ADJUSTMENT) through postJournal; positive = debit, negative = credit. */
 const postFor = async (g: G, entityId: string, y: number, m: number, d: number, memo: string, lines: [string, bigint][]) =>
   db.$transaction(async (tx) =>
@@ -77,14 +81,14 @@ async function groupYear(g: G) {
   await opening(g, g.pt.entity.id, d, [["1120", 500n * J], ["3100", -300n * J], ["3200", -200n * J]]);
   await opening(g, g.cv.entity.id, d, [["1120", 100n * J], ["3100", -100n * J]]);
   await opening(g, g.owner.entity.id, d, [["1120", 50n * J], ["3100", -50n * J]]);
-  await postFor(g, g.pt.entity.id, 2026, 1, 10, "Pinjaman ke CV", [["1190", 100n * J], ["1120", -100n * J]]);
-  await postFor(g, g.cv.entity.id, 2026, 1, 10, "Pinjaman dari PT", [["1120", 100n * J], ["1190", -100n * J]]);
-  await postFor(g, g.owner.entity.id, 2026, 2, 15, "Pinjaman ke PT", [["1190", 40n * J], ["1120", -40n * J]]);
-  await postFor(g, g.pt.entity.id, 2026, 2, 15, "Pinjaman dari pemilik", [["1120", 40n * J], ["1190", -40n * J]]);
-  await postFor(g, g.pt.entity.id, 2026, 3, 31, "Management fee ke CV", [["1190", 10n * J], ["4110", -10n * J]]);
-  await postFor(g, g.cv.entity.id, 2026, 3, 31, "Management fee dari PT", [["6170", 10n * J], ["1190", -10n * J]]);
-  await postFor(g, g.cv.entity.id, 2026, 4, 20, "Cicil pinjaman PT", [["1190", 30n * J], ["1120", -30n * J]]);
-  await postFor(g, g.pt.entity.id, 2026, 4, 20, "Terima cicilan CV", [["1120", 30n * J], ["1190", -30n * J]]);
+  await postFor(g, g.pt.entity.id, 2026, 1, 10, "Pinjaman ke CV", [["@cv", 100n * J], ["1120", -100n * J]]);
+  await postFor(g, g.cv.entity.id, 2026, 1, 10, "Pinjaman dari PT", [["1120", 100n * J], ["@pt", -100n * J]]);
+  await postFor(g, g.owner.entity.id, 2026, 2, 15, "Pinjaman ke PT", [["@pt", 40n * J], ["1120", -40n * J]]);
+  await postFor(g, g.pt.entity.id, 2026, 2, 15, "Pinjaman dari pemilik", [["1120", 40n * J], ["@owner", -40n * J]]);
+  await postFor(g, g.pt.entity.id, 2026, 3, 31, "Management fee ke CV", [["@cv", 10n * J], ["4110", -10n * J]]);
+  await postFor(g, g.cv.entity.id, 2026, 3, 31, "Management fee dari PT", [["6170", 10n * J], ["@pt", -10n * J]]);
+  await postFor(g, g.cv.entity.id, 2026, 4, 20, "Cicil pinjaman PT", [["@pt", 30n * J], ["1120", -30n * J]]);
+  await postFor(g, g.pt.entity.id, 2026, 4, 20, "Terima cicilan CV", [["1120", 30n * J], ["@cv", -30n * J]]);
   await postFor(g, g.pt.entity.id, 2026, 6, 5, "Penjualan tunai", [["1120", 200n * J], ["4100", -200n * J]]);
   await postFor(g, g.cv.entity.id, 2026, 6, 6, "Sewa", [["6120", 20n * J], ["1120", -20n * J]]);
 }
@@ -96,14 +100,19 @@ describe("groups, tested hard — intercompany both sides, worksheet, combined s
     const g = await makeGroup3();
     await groupYear(g);
     const asOf = dateOnly(2026, 6, 30);
-    // 1190 by hand — PT: +100 −40 +10 −30 = +40; CV: −100 −10 +30 = −80; owner: +40. Receivables 80 = payables 80.
+    // Per counterparty by hand — PT on the CV's account: +100 +10 −30 = +80; the CV on PT's: −100 −10 +30 = −80. The owner on PT's: +40;
+    // PT on the owner's: −40. Two pairs, each mirrored: eliminated 80 + 40.
     const ws = await combinedWorksheet(db, g.client.id, asOf);
     const col = (e: { entity: { id: string } }) => ws.entities.findIndex((x) => x.id === e.entity.id);
-    const rowP = ws.rows.find((r) => r.key === "1190-P")!;
-    const rowU = ws.rows.find((r) => r.key === "1190-U")!;
-    expect([rowP.values[col(g.pt)], rowP.values[col(g.cv)], rowP.values[col(g.owner)]]).toEqual([40n * J, 0n, 40n * J]);
-    expect([rowU.values[col(g.pt)], rowU.values[col(g.cv)], rowU.values[col(g.owner)]]).toEqual([0n, -80n * J, 0n]);
-    expect([ws.matched, ws.residual, rowP.combined, rowU.combined]).toEqual([80n * J, 0n, 0n, 0n]);
+    const row = async (who: "pt" | "cv" | "owner") => {
+      const code = await party(g, who);
+      return ws.rows.find((r) => r.key === code)!;
+    };
+    const values = async (who: "pt" | "cv" | "owner") => { const r = await row(who); return [r.values[col(g.pt)], r.values[col(g.cv)], r.values[col(g.owner)]]; };
+    expect(await values("cv")).toEqual([80n * J, 0n, 0n]);
+    expect(await values("pt")).toEqual([0n, -80n * J, 40n * J]);
+    expect(await values("owner")).toEqual([-40n * J, 0n, 0n]);
+    expect([ws.matched, ws.residual, ws.pairs, (await row("pt")).combined, (await row("cv")).combined, (await row("owner")).combined]).toEqual([120n * J, 0n, [], 0n, 0n, 0n]);
     // Each column is a balanced TB: Σ net = 0 per entity.
     for (const e of [g.pt, g.cv, g.owner]) expect(ws.rows.reduce((s, r) => s + r.values[col(e)], 0n)).toBe(0n);
     // Combined cash 1120: PT 500 −100 +40 +30 +200 = 670; CV 100 +100 −30 −20 = 150; owner 50 −40 = 10 → 830.
@@ -113,9 +122,10 @@ describe("groups, tested hard — intercompany both sides, worksheet, combined s
     expect(bs.totals).toEqual({ assets: 830n * J, liabilities: 0n, equity: 830n * J, difference: 0n });
     expect(bsLine(bs, "UTANG_ANTAR_ENTITAS")).toBe(0n);
     expect(bsLine(bs, "PIUTANG_LAIN")).toBe(0n);
-    // Per entity — PT: 670 + 40 = 710 = 500 + profit 210. CV: 150 = Utang antar entitas 80 + (100 − 30). Owner: 10 + 40 = 50.
+    // Per entity — PT: cash 670 + owed by the CV 80 = 750 = owed to the owner 40 + 500 + profit 210 (never netted to one 40). CV: 150 =
+    // Utang antar entitas 80 + (100 − 30). Owner: 10 + 40 = 50.
     const pt = await balanceSheet(db, scopeOf(g, g.pt), asOf);
-    expect([pt.totals.assets, pt.totals.equity, pt.totals.difference]).toEqual([710n * J, 710n * J, 0n]);
+    expect([pt.totals.assets, pt.totals.liabilities, pt.totals.equity, pt.totals.difference]).toEqual([750n * J, 40n * J, 710n * J, 0n]);
     const cv = await balanceSheet(db, scopeOf(g, g.cv), asOf);
     expect([cv.totals.assets, bsLine(cv, "UTANG_ANTAR_ENTITAS"), cv.totals.equity, cv.totals.difference]).toEqual([150n * J, 80n * J, 70n * J, 0n]);
     const own = await balanceSheet(db, scopeOf(g, g.owner), asOf);
@@ -160,14 +170,18 @@ describe("groups, tested hard — a balance that does not mirror, and the interc
     const d = dateOnly(2025, 12, 31);
     await opening(g, g.pt.entity.id, d, [["1120", 500n * J], ["3100", -500n * J]]);
     await opening(g, g.cv.entity.id, d, [["1120", 100n * J], ["3100", -100n * J]]);
-    await postFor(g, g.pt.entity.id, 2026, 1, 10, "Pinjaman ke CV", [["1190", 100n * J], ["1120", -100n * J]]);
+    await postFor(g, g.pt.entity.id, 2026, 1, 10, "Pinjaman ke CV", [["@cv", 100n * J], ["1120", -100n * J]]);
     // CV's bookkeeper typed 90 (a typo): CV's cash is then 10 short of what the bank says — the books themselves still balance.
-    await postFor(g, g.cv.entity.id, 2026, 1, 10, "Pinjaman dari PT", [["1120", 90n * J], ["1190", -90n * J]]);
+    await postFor(g, g.cv.entity.id, 2026, 1, 10, "Pinjaman dari PT", [["1120", 90n * J], ["@pt", -90n * J]]);
     const asOf = dateOnly(2026, 1, 31);
     const ws = await combinedWorksheet(db, g.client.id, asOf);
-    // P = 100, N = 90 → matched 90, residual +10; the worksheet's combined 1190-P = 10, 1190-U = 0.
-    expect([ws.matched, ws.residual]).toEqual([90n * J, 10n * J]);
-    expect([ws.rows.find((r) => r.key === "1190-P")!.combined, ws.rows.find((r) => r.key === "1190-U")!.combined]).toEqual([10n * J, 0n]);
+    // PT on the CV's account +100, the CV on PT's −90 → matched 90, the pair PT–CV 10 short; combined: the CV's account 10, PT's 0.
+    expect([ws.matched, ws.residual, ws.pairs]).toEqual([90n * J, 0n, [{ a: "CV Maju", b: "PT Uji", difference: 10n * J }]]);
+    const combinedOn = async (who: "pt" | "cv") => {
+      const code = await party(g, who);
+      return ws.rows.find((r) => r.key === code)!.combined;
+    };
+    expect([await combinedOn("cv"), await combinedOn("pt")]).toEqual([10n * J, 0n]);
     const bs = await balanceSheet(db, all(g), asOf);
     // Combined: cash 400 + 190 = 590, 1190 +10 → assets 600 = equity 600.
     expect([bsLine(bs, "KAS_SETARA_KAS"), bsLine(bs, "PIUTANG_LAIN"), bs.totals.assets, bs.totals.difference]).toEqual([590n * J, 10n * J, 600n * J, 0n]);
@@ -181,12 +195,13 @@ describe("groups, tested hard — a balance that does not mirror, and the interc
     const d = dateOnly(2025, 12, 31);
     await opening(g, g.pt.entity.id, d, [["1120", 500n * J], ["3100", -500n * J]]);
     await opening(g, g.cv.entity.id, d, [["1120", 100n * J], ["3100", -100n * J]]);
-    await postFor(g, g.pt.entity.id, 2026, 1, 10, "Pinjaman ke CV", [["1190", 100n * J], ["1120", -100n * J]]);
-    await postFor(g, g.cv.entity.id, 2026, 1, 10, "Pinjaman dari PT", [["1120", 110n * J], ["1190", -110n * J]]);
+    await postFor(g, g.pt.entity.id, 2026, 1, 10, "Pinjaman ke CV", [["@cv", 100n * J], ["1120", -100n * J]]);
+    await postFor(g, g.cv.entity.id, 2026, 1, 10, "Pinjaman dari PT", [["1120", 110n * J], ["@pt", -110n * J]]);
     const asOf = dateOnly(2026, 1, 31);
     const ws = await combinedWorksheet(db, g.client.id, asOf);
-    expect([ws.matched, ws.residual]).toEqual([100n * J, -10n * J]);
-    expect(ws.rows.find((r) => r.key === "1190-U")!.combined).toBe(-10n * J);
+    expect([ws.matched, ws.residual, ws.pairs]).toEqual([100n * J, 0n, [{ a: "CV Maju", b: "PT Uji", difference: -10n * J }]]);
+    const onPt = await party(g, "pt");
+    expect(ws.rows.find((r) => r.key === onPt)!.combined).toBe(-10n * J); // the CV's −110 against PT's +100
     const bs = await balanceSheet(db, all(g), asOf);
     // Cash 400 + 210 = 610 = Utang antar entitas 10 + equity 600.
     expect([bsLine(bs, "KAS_SETARA_KAS"), bsLine(bs, "UTANG_ANTAR_ENTITAS"), bs.totals.liabilities, bs.totals.equity, bs.totals.difference]).toEqual([610n * J, 10n * J, 10n * J, 600n * J, 0n]);
@@ -297,7 +312,7 @@ ${lines.join("\n")}
 describe("groups, tested hard — a transfer between two companies' bank accounts, through the import", () => {
   beforeEach(resetDb);
 
-  it("PT's BCA out and CV's BCA in pair as one intercompany transfer: 1190 in each book, eliminated, group cash unchanged", async () => {
+  it("PT's BCA out and CV's BCA in pair as one intercompany transfer: each half on the other company's account, eliminated, group cash unchanged", async () => {
     const g = await makeGroup3();
     const { importStatement } = await import("@/lib/import/pipeline");
     const code = async (bankAccountId: string) => (await db.bankAccount.findUniqueOrThrow({ where: { id: bankAccountId }, include: { account: true } })).account.code;
@@ -307,16 +322,17 @@ describe("groups, tested hard — a transfer between two companies' bank account
     const cvFile = bcaFile("4444444444", [`'05/01,"TRSF E-BANKING CR 0501/FTSCY/WS1 PT UJI SEJAHTERA",'0000,"25,000,000.00",CR,"35,000,000.00"`], "10,000,000.00", "35,000,000.00");
     const a = await importStatement(db, { bankAccountId: g.pt.banks[0].id, fileName: "pt.csv", data: Buffer.from(ptFile), provider: null });
     expect(a.byMethod.TRANSFER).toBe(1);
-    // Only PT's half so far: it names CV, so it goes to 1190 and the group shows an unmatched 25 (REVIEW).
-    expect((await combinedWorksheet(db, g.client.id, dateOnly(2026, 1, 31))).residual).toBe(25n * J);
+    // Only PT's half so far: it names CV, so it goes to the CV's account and the pair PT–CV shows an unmatched 25 (REVIEW).
+    expect((await combinedWorksheet(db, g.client.id, dateOnly(2026, 1, 31))).pairs).toEqual([{ a: "CV Maju", b: "PT Uji", difference: 25n * J }]);
     const b = await importStatement(db, { bankAccountId: g.cv.banks[0].id, fileName: "cv.csv", data: Buffer.from(cvFile), provider: null });
     expect(b.byMethod.TRANSFER).toBe(1);
     const asOf = dateOnly(2026, 1, 31);
     const ws = await combinedWorksheet(db, g.client.id, asOf);
     expect([ws.matched, ws.residual]).toEqual([25n * J, 0n]);
     expect(await db.bankTransaction.count({ where: { status: "NEEDS_REVIEW" } })).toBe(0);
-    expect(tbNet(await trialBalance(db, scopeOf(g, g.pt), asOf), "1190")).toBe(25n * J);
-    expect(tbNet(await trialBalance(db, scopeOf(g, g.cv), asOf), "1190")).toBe(-25n * J);
+    // Each half on the other company's account (a group of three): PT is owed by the CV, the CV owes PT.
+    expect(tbNet(await trialBalance(db, scopeOf(g, g.pt), asOf), await party(g, "cv"))).toBe(25n * J);
+    expect(tbNet(await trialBalance(db, scopeOf(g, g.cv), asOf), await party(g, "pt"))).toBe(-25n * J);
     const cf = await cashFlow(db, all(g), asOf);
     expect([cf.openingCash, cf.net, cf.closingCash, cf.totals.INVESTING, cf.totals.FINANCING]).toEqual([110n * J, 0n, 110n * J, 0n, 0n]);
     const ptCf = await cashFlow(db, scopeOf(g, g.pt), asOf);

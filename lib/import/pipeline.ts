@@ -14,6 +14,7 @@ import { matchRule, sortRules } from "@/lib/classify/rules";
 import { financingSuggestion, taxPaymentSuggestion } from "@/lib/classify/financing";
 import { simpleGuess } from "@/lib/classify/fallback";
 import { matchTransfers } from "@/lib/classify/transfer";
+import { intercompanyCodes } from "@/lib/coa/intercompany";
 import type { Classification } from "@/lib/classify/types";
 import { decidePosting, type HoldKind } from "@/lib/classify/dial";
 import { readAutomation } from "@/lib/settings/automation";
@@ -234,7 +235,8 @@ export async function importStatement(
     : [];
   // Short names ("PT AND") are too collision-prone for substring matching; use distinctive names only.
   const ownNames = client.entities.map((e) => ({ entityId: e.id, names: [e.name, e.shortName].map((n) => n.toUpperCase()).filter((n) => n.length >= 8) }));
-  const transfers = matchTransfers([...items, ...openCounterparts], ownNames);
+  const icCodes = await intercompanyCodes(db, client.id);
+  const transfers = matchTransfers([...items, ...openCounterparts], ownNames, (id) => icCodes.get(id) ?? ACCOUNT_CODES.INTERCOMPANY);
 
   const rules = sortRules(await db.rule.findMany({ where: { firmId: client.firmId, OR: [{ clientId: client.id }, { clientId: null }] } }));
   const memories = await db.memory.findMany({ where: { clientId: client.id } });

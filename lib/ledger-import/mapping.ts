@@ -4,7 +4,7 @@ import type { Db, Tx } from "@/lib/db";
 import type { AccountTerm, AccountType, MapMethod } from "@/lib/generated/prisma/enums";
 import { AI_BATCH_SIZE, ACCOUNT_MAPPING_PROMPT_VERSION, aiConfig, buildMapPrompt, maxTokensFor, type AiProvider, type MapItem } from "@/lib/ai/provider";
 import { AiBudgetError, runBudgetedAi } from "@/lib/ai/budget";
-import { ACCOUNT_CODES, COA_TEMPLATE, FS_LINES, type FsLine } from "@/lib/coa/template";
+import { ACCOUNT_CODES, COA_TEMPLATE, FS_LINES, isIntercompanyCode, type FsLine } from "@/lib/coa/template";
 import { templateAccounts } from "@/lib/coa/ensure";
 
 /**
@@ -476,7 +476,7 @@ export const NEW_ACCOUNT_FS_LINES = (Object.keys(FS_LINES) as FsLine[]).filter((
 // Template codes are skipped too: accounts added to the template later (1135, 1181, 2146 …) are created on first use and must stay free.
 const SPECIAL = new Set(["1190", "1199", "1999", "3200", "3900", "7190", "7200", ...Array.from({ length: 9 }, (_, i) => `110${i + 1}`), ...Array.from({ length: 9 }, (_, i) => `220${i + 1}`), ...COA_TEMPLATE.map((a) => a.code)]);
 /** A code a new account may not take: system codes, the bank ranges and every template code (created on first use elsewhere). */
-export const isReservedCode = (code: string) => SPECIAL.has(code);
+export const isReservedCode = (code: string) => SPECIAL.has(code) || isIntercompanyCode(code);
 const SECTION_TYPE: Record<string, AccountType> = { ASET_LANCAR: "ASET", ASET_TIDAK_LANCAR: "ASET", LIABILITAS_JANGKA_PENDEK: "LIABILITAS", LIABILITAS_JANGKA_PANJANG: "LIABILITAS", EKUITAS: "EKUITAS" };
 
 /** Next free code under an FS line's range, then under its anchor (1140 → 114001 … 114099, 1140100 … 1140999; sorts right after 1140). */

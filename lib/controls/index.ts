@@ -612,15 +612,36 @@ async function collectControls(db: Db, clientId: string, year: number, month: nu
       return controls;
     }
     const idr = (v: bigint) => formatMoney(v, ws.translated ? "IDR" : (entities[0]?.functionalCurrency ?? "IDR"));
+    const abs = (v: bigint) => (v < 0n ? -v : v);
+    // Per pair (a group of three or more): every pair must mirror; one broken pair never hides behind another that offsets it.
+    const broken = [...(ws.residual !== 0n ? [`Selisih ${idr(ws.residual)} antar entitas belum cocok`] : []), ...ws.pairs.map((p) => `${p.a}–${p.b} selisih ${idr(abs(p.difference))}`)];
     controls.push({
       key: "intercompany",
       title: "Antar entitas (1190) tereliminasi",
       scope: "Grup",
-      status: ws.residual === 0n ? "PASS" : "REVIEW",
-      detail: ws.residual === 0n ? `Tereliminasi ${idr(ws.matched)}` : `Selisih ${idr(ws.residual)} antar entitas belum cocok`,
+      status: broken.length ? "REVIEW" : "PASS",
+      detail: broken.length ? broken.join("; ") : `Tereliminasi ${idr(ws.matched)}`,
       href: `${base}/reports?entity=combined`,
       ack: acks.get("intercompany"),
     });
+    // A group of three or more records balances per counterparty: what still sits on 1190 can't tell which company it is with.
+    const perParty = await db.account.count({ where: { clientId, counterpartyEntityId: { not: null } } });
+    const generic = perParty ? ws.rows.filter((r) => r.code === ACCOUNT_CODES.INTERCOMPANY) : [];
+    const left = ws.entities.flatMap((e, k) => {
+      const v = generic.reduce((t, r) => t + r.values[k], 0n);
+      return v ? [`${e.shortName} ${idr(v)}`] : [];
+    });
+    if (left.length) {
+      controls.push({
+        key: "intercompany-party",
+        title: "Saldo 1190 tanpa pihak",
+        scope: "Grup",
+        status: "REVIEW",
+        detail: `${left.join("; ")} di 1190. Pindahkan ke akun antar entitas pihaknya (1190xx) lewat Jurnal Penyesuaian`,
+        href: `${base}/ledger/${ACCOUNT_CODES.INTERCOMPANY}`,
+        ack: acks.get("intercompany-party"),
+      });
+    }
   }
   return controls;
 }

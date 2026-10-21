@@ -429,75 +429,80 @@ model Client {
 }
 
 model Entity {
-  id                 String               @id @default(cuid())
-  firmId             String
-  clientId           String
-  client             Client               @relation(fields: [clientId], references: [id])
-  name               String
-  shortName          String
-  kind               EntityKind
-  npwp               String?
+  id                   String               @id @default(cuid())
+  firmId               String
+  clientId             String
+  client               Client               @relation(fields: [clientId], references: [id])
+  name                 String
+  shortName            String
+  kind                 EntityKind
+  npwp                 String?
   /// ISO 4217 code; journal amounts of this entity are minor units of it (ADR 0006). Registry: lib/fx/currency.ts.
-  functionalCurrency String               @default("IDR")
-  reportingFramework ReportingFramework   @default(SAK_EP)
+  functionalCurrency   String               @default("IDR")
+  reportingFramework   ReportingFramework   @default(SAK_EP)
   /// Seller NITKU (22 digits) for the Coretax faktur file; null = head office, the NPWP16 + "000000".
-  nitku              String?
-  bankAccounts       BankAccount[]
-  entries            JournalEntry[]
-  sourceAccounts     SourceAccount[]
-  schedules          AdjustmentSchedule[]
-  proposals          ProposedEntry[]
-  fixedAssets        FixedAsset[]
-  invoices           Invoice[]
-  taxYears           TaxYear[]
-  ckpnSettings       CkpnSetting[]
-  inventoryCounts    InventoryCount[]
-  leases             Lease[]
-  employees          Employee[]
-  benefitSetting     BenefitSetting?
-  benefitPostings    BenefitPosting[]
-  findings           Finding[]
-  subledgerImports   SubledgerImport[]
-  journalApprovals   JournalApproval[]
-  budgets            Budget[]
-  journalSequences   JournalSequence[]
-  recurringJournals  RecurringJournal[]
+  nitku                String?
+  bankAccounts         BankAccount[]
+  entries              JournalEntry[]
+  sourceAccounts       SourceAccount[]
+  schedules            AdjustmentSchedule[]
+  proposals            ProposedEntry[]
+  fixedAssets          FixedAsset[]
+  invoices             Invoice[]
+  taxYears             TaxYear[]
+  ckpnSettings         CkpnSetting[]
+  inventoryCounts      InventoryCount[]
+  leases               Lease[]
+  employees            Employee[]
+  benefitSetting       BenefitSetting?
+  benefitPostings      BenefitPosting[]
+  findings             Finding[]
+  subledgerImports     SubledgerImport[]
+  journalApprovals     JournalApproval[]
+  budgets              Budget[]
+  journalSequences     JournalSequence[]
+  recurringJournals    RecurringJournal[]
+  intercompanyAccounts Account[]            @relation("IntercompanyCounterparty")
 
   @@index([clientId])
 }
 
 /// Chart of accounts is per Client (shared by its entities) so combined reports line up by code.
 model Account {
-  id              String               @id @default(cuid())
-  firmId          String
-  clientId        String
-  client          Client               @relation(fields: [clientId], references: [id])
-  code            String
-  name            String
-  type            AccountType
-  normalBalance   NormalBalance
-  fsLine          String
-  isBank          Boolean              @default(false)
-  isIntercompany  Boolean              @default(false)
-  isClearing      Boolean              @default(false)
-  isSuspense      Boolean              @default(false)
-  isRetained      Boolean              @default(false)
-  taxTag          TaxTag?
+  id                   String               @id @default(cuid())
+  firmId               String
+  clientId             String
+  client               Client               @relation(fields: [clientId], references: [id])
+  code                 String
+  name                 String
+  type                 AccountType
+  normalBalance        NormalBalance
+  fsLine               String
+  isBank               Boolean              @default(false)
+  isIntercompany       Boolean              @default(false)
+  isClearing           Boolean              @default(false)
+  isSuspense           Boolean              @default(false)
+  isRetained           Boolean              @default(false)
+  taxTag               TaxTag?
   /// Arsip akun (cycle 2026-10-20-lampiran-arsip): hidden from every picker and refused by postJournal(); reports keep its history.
-  archivedAt      DateTime?
-  lines           JournalLine[]
-  bankAccounts    BankAccount[]
-  sourceAccounts  SourceAccount[]
-  scheduleDebits  AdjustmentSchedule[] @relation("ScheduleDebit")
-  scheduleCredits AdjustmentSchedule[] @relation("ScheduleCredit")
-  scheduleSources AdjustmentSchedule[] @relation("ScheduleSourceAccount")
-  fixedAssets     FixedAsset[]         @relation("AssetAccount")
-  fixedAssetsAcc  FixedAsset[]         @relation("AssetAccumulatedAccount")
-  invoiceCounter  Invoice[]            @relation("InvoiceCounter")
-  invoiceArAp     Invoice[]            @relation("InvoiceArAp")
-  taxCorrections  FiscalCorrection[]
-  taxCredits      TaxCredit[]
-  budgets         Budget[]
+  archivedAt           DateTime?
+  /// Antar entitas per pihak (cycle 2026-10-21-antar-entitas-per-pihak): the group company an intercompany account (`1190NN`) is with,
+  /// for a client of three or more companies; null for 1190 itself and every other account.
+  counterpartyEntityId String?
+  counterpartyEntity   Entity?              @relation("IntercompanyCounterparty", fields: [counterpartyEntityId], references: [id], onDelete: SetNull)
+  lines                JournalLine[]
+  bankAccounts         BankAccount[]
+  sourceAccounts       SourceAccount[]
+  scheduleDebits       AdjustmentSchedule[] @relation("ScheduleDebit")
+  scheduleCredits      AdjustmentSchedule[] @relation("ScheduleCredit")
+  scheduleSources      AdjustmentSchedule[] @relation("ScheduleSourceAccount")
+  fixedAssets          FixedAsset[]         @relation("AssetAccount")
+  fixedAssetsAcc       FixedAsset[]         @relation("AssetAccumulatedAccount")
+  invoiceCounter       Invoice[]            @relation("InvoiceCounter")
+  invoiceArAp          Invoice[]            @relation("InvoiceArAp")
+  taxCorrections       FiscalCorrection[]
+  taxCredits           TaxCredit[]
+  budgets              Budget[]
 
   @@unique([clientId, code])
 }

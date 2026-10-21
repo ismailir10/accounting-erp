@@ -1,4 +1,5 @@
 import type { Db, Tx } from "@/lib/db";
+import { intercompanyName } from "@/lib/coa/intercompany";
 import { Prisma } from "@/lib/generated/prisma/client";
 import { recordEvent } from "@/lib/audit";
 import { npwp16, readNitku } from "@/lib/tax/coretax-codes";
@@ -201,6 +202,7 @@ export async function renameEntity(db: Db, input: Actor & { entityId: string; na
   return db.$transaction(async (tx) => {
     const updated = await tx.entity.update({ where: { id: entity.id }, data: { name, shortName, npwp: npwp || null, ...(nitku === undefined ? {} : { nitku }) } });
     for (const b of entity.bankAccounts) await tx.account.update({ where: { id: b.accountId }, data: { name: glName(b.label, shortName) } });
+    await tx.account.updateMany({ where: { clientId: input.clientId, counterpartyEntityId: entity.id }, data: { name: intercompanyName(shortName) } });
     await recordEvent(tx, { clientId: input.clientId, entityId: entity.id, kind: "COMPANY_BANK", subject: `entity:${entity.id}`, summary: `Data ${before.name} diubah${before.name !== name ? ` menjadi ${name}` : ""}`, before, after, actorId: input.actorId });
     return updated;
   });
@@ -273,6 +275,10 @@ export async function removeEntity(db: Db, input: Actor & { entityId: string }) 
       await dropAcks(tx, input.clientId, [entity.id, ...banks.map((b) => b.id)]);
       await tx.bankAccount.deleteMany({ where: { id: { in: banks.map((b) => b.id) } } });
       await tx.account.deleteMany({ where: { id: { in: banks.map((b) => b.accountId) } } });
+      // Its intercompany account (a group of three or more) goes with it while no company has recorded anything on it.
+      const ic = await tx.account.findFirst({ where: { clientId: input.clientId, counterpartyEntityId: entity.id }, select: { id: true, code: true, name: true, _count: { select: { lines: true } } } });
+      if (ic?._count.lines) throw new EntityEditError(`${ic.code} ${ic.name} masih berisi saldo perusahaan lain dengan ${entity.shortName}. Selesaikan saldonya dulu.`);
+      if (ic) await tx.account.delete({ where: { id: ic.id } });
       await tx.entity.delete({ where: { id: entity.id } });
       await recordEvent(tx, {
         clientId: input.clientId,

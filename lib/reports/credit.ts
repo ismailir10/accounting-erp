@@ -2,6 +2,7 @@ import type { Db } from "@/lib/db";
 import { periodBounds } from "@/lib/format";
 import { incomeStatement, trialBalance } from "@/lib/reports/ledger";
 import { collectedProceeds } from "@/lib/reports/statements";
+import { isIntercompanyCode } from "@/lib/coa/template";
 
 /**
  * Paket Kredit Bank (I4a, ADR 0014): what a bank's analyst checks first, prepared from the books. Read-only; nothing is stored.
@@ -47,7 +48,7 @@ export async function receiptsVsRevenue(db: Db, input: { clientId: string; entit
     for (const p of parts) {
       const type = p.accountCode ? types.get(p.accountCode) : undefined;
       if (l.status === "NEEDS_REVIEW" || !p.accountCode || p.accountCode === SUSPENSE) m.unclassified += p.amount;
-      else if (TRANSFER.has(p.accountCode)) m.transfers += p.amount;
+      else if (TRANSFER.has(p.accountCode) || isIntercompanyCode(p.accountCode)) m.transfers += p.amount;
       else if (type === "LIABILITAS" || type === "EKUITAS") m.financing += p.amount;
       else m.operating += p.amount;
     }

@@ -247,7 +247,8 @@ describe("remove a company or owner", () => {
     expect(await removeEntity(db, { ...ids(g), entityId: extra.id })).toEqual({ name: "CV Salah Input", bankAccounts: 1 });
     expect(await db.entity.findUnique({ where: { id: extra.id } })).toBeNull();
     expect(await db.bankAccount.count({ where: { number: "8888888888" } })).toBe(0);
-    expect(await db.account.count({ where: { clientId: g.client.id } })).toBe(glBefore - 1);
+    // Its bank's GL account and its own intercompany account (unused) go with it.
+    expect(await db.account.count({ where: { clientId: g.client.id } })).toBe(glBefore - 2);
     expect(await db.entity.count({ where: { clientId: g.client.id } })).toBe(2);
     expect(await db.auditEvent.findFirstOrThrow({ where: { subject: `entity:${extra.id}` } })).toMatchObject({ summary: "CV Salah Input dihapus beserta 1 rekening kosong", entityId: extra.id });
   });

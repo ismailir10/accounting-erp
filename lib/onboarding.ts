@@ -1,4 +1,5 @@
 import type { Db } from "@/lib/db";
+import { ensureIntercompanyAccounts } from "@/lib/coa/intercompany";
 import { createBankAccount, createClient, createEntity, freeGlCodes, type ClientCreator, type ClientSpec } from "@/lib/setup";
 import { isCurrency } from "@/lib/fx/currency";
 import { isFramework, type Framework } from "@/lib/reports/framework";
@@ -134,7 +135,13 @@ export async function addEntity(db: Db, firmId: string, clientId: string, input:
   const shorts = (await db.entity.findMany({ where: { clientId }, select: { shortName: true } })).map((e) => e.shortName.trim().toLowerCase());
   if (shorts.includes(spec.shortName.toLowerCase())) fields["entity.shortName"] = SHORT_NAME_TAKEN;
   if (Object.keys(fields).length) throw new OnboardingError(fields);
-  return db.$transaction(async (tx) => (await createEntity(tx, firmId, clientId, spec, await freeGlCodes(tx, clientId))).entity).catch(limitReached("entity"));
+  return db
+    .$transaction(async (tx) => {
+      const { entity } = await createEntity(tx, firmId, clientId, spec, await freeGlCodes(tx, clientId));
+      await ensureIntercompanyAccounts(tx, clientId); // the third company gives every company its intercompany account
+      return entity;
+    })
+    .catch(limitReached("entity"));
 }
 
 /**
