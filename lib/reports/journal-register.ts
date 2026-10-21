@@ -65,7 +65,8 @@ function entryWhere(scope: Scope, f: RegisterFilter): Prisma.JournalEntryWhereIn
   };
 }
 
-export type RegisterLine = { code: string; name: string; memo: string | null; debit: bigint; credit: bigint };
+/** `tags`: the line's Departemen & Proyek codes ("OUTLET-A · PRJ-01"), or null. */
+export type RegisterLine = { code: string; name: string; memo: string | null; debit: bigint; credit: bigint; tags?: string | null };
 export type RegisterEntry = {
   id: string;
   /** Nomor bukti (lib/ledger/number.ts); null only for a journal written outside postJournal() in a test. */
@@ -114,7 +115,7 @@ export async function journalRegister(db: Db, scope: Scope, f: RegisterFilter, p
         entity: { select: { shortName: true } },
         postedBy: { select: { name: true } },
         reversedBy: { select: { date: true } },
-        lines: { select: { debit: true, credit: true, memo: true, account: { select: { code: true, name: true } } }, orderBy: { id: "asc" } },
+        lines: { select: { debit: true, credit: true, memo: true, account: { select: { code: true, name: true } }, department: { select: { code: true } }, project: { select: { code: true } } }, orderBy: { id: "asc" } },
         ...ENTRY_SOURCE_SELECT,
       },
     }),
@@ -136,7 +137,7 @@ export async function journalRegister(db: Db, scope: Scope, f: RegisterFilter, p
     attachments: files.get(e.id) ?? [],
     lines: [...e.lines]
       .sort((a, b) => Number(b.debit > 0n) - Number(a.debit > 0n))
-      .map((l) => ({ code: l.account.code, name: l.account.name, memo: l.memo, debit: l.debit, credit: l.credit })),
+      .map((l) => ({ code: l.account.code, name: l.account.name, memo: l.memo, debit: l.debit, credit: l.credit, tags: [l.department?.code, l.project?.code].filter(Boolean).join(" · ") || null })),
   }));
   return { count, debit: totals._sum.debit ?? 0n, credit: totals._sum.credit ?? 0n, entries, pageSize: PAGE_SIZE, pages: Math.max(1, Math.ceil(count / PAGE_SIZE)) };
 }

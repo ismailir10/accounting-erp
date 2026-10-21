@@ -24,7 +24,7 @@ async function logDownload(db: Db, clientId: string, summary: string, write: (ac
  */
 export async function recordExport(
   db: Db,
-  e: { clientId: string; entityId?: string | null; scope: string; year: number; month: number; file: "Laporan keuangan (Excel)" | "Laporan keuangan (PDF)" | "Kertas kerja PPh Badan" | "Paket kredit bank" | "Laporan manajemen" | "Kertas kerja pajak masa"; final: boolean },
+  e: { clientId: string; entityId?: string | null; scope: string; year: number; month: number; file: "Laporan keuangan (Excel)" | "Laporan keuangan (PDF)" | "Kertas kerja PPh Badan" | "Paket kredit bank" | "Laporan manajemen" | "Kertas kerja pajak masa" | "Laba Rugi per Departemen (Excel)" | "Laba Rugi per Proyek (Excel)"; final: boolean },
 ) {
   const summary = `${e.file} · ${e.scope} · ${formatPeriod(e.year, e.month)} · ${e.final ? "final" : "draf"}`;
   await logDownload(db, e.clientId, summary, (actorId) =>

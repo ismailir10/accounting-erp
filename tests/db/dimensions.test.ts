@@ -15,6 +15,11 @@ import { postRecurring } from "@/lib/adjust/recurring-post";
 import { approvalQueue } from "@/lib/approvals/queue";
 import { importStatement } from "@/lib/import/pipeline";
 import { reviewTransaction, setBankTagsTx, splitTransaction } from "@/lib/review";
+import { dimensionWorkbook, incomeByDimension } from "@/lib/reports/by-dimension";
+import { incomeStatement } from "@/lib/reports/ledger";
+import { journalRegister } from "@/lib/reports/journal-register";
+import { accountLedger } from "@/lib/reports/account-ledger";
+import ExcelJS from "exceljs";
 
 /** Departemen & Proyek (cycle 2026-10-21-departemen-proyek): a client's labels on a journal line; never a balance. */
 describe("departemen & proyek", () => {
@@ -215,6 +220,72 @@ describe("departemen & proyek", () => {
       const n = await nets(t.id);
       expect(n[`6120|${a.id}|-`]).toBe("6000000");
       expect(n[`6190|${a.id}|-`]).toBe("4000000");
+    });
+  });
+
+  describe("Laba Rugi per departemen", () => {
+    it("columns add up to the Laba Rugi on every row; a tag-only RECLASS moves a column, never the total; Excel, ledger and register agree", async () => {
+      const g = await makeGroup();
+      const A = await createDimension(db, { clientId: g.client.id, kind: "DEPARTEMEN", code: "OUTLET-A", name: "Outlet A" });
+      const B = await createDimension(db, { clientId: g.client.id, kind: "DEPARTEMEN", code: "OUTLET-B", name: "Outlet B" });
+      const P = await createDimension(db, { clientId: g.client.id, kind: "PROYEK", code: "PRJ-01", name: "Proyek satu" });
+      const adj = (memo: string, lines: { accountCode: string; debit: string; credit: string; departmentId?: string; projectId?: string }[]) =>
+        postAdjustment(db, { clientId: g.client.id, entityId: g.pt.entity.id, date: dateOnly(2026, 8, 20), memo, lines });
+      await adj("Penjualan outlet", [
+        { accountCode: "1130", debit: "30.000.000", credit: "" },
+        { accountCode: "4100", debit: "", credit: "18.000.000", departmentId: A.id, projectId: P.id },
+        { accountCode: "4100", debit: "", credit: "12.000.000", departmentId: B.id },
+      ]);
+      await adj("Gaji outlet", [{ accountCode: "6190", debit: "5.000.000", credit: "", departmentId: A.id }, { accountCode: "6190", debit: "3.000.000", credit: "" }, { accountCode: "2150", debit: "", credit: "8.000.000" }]);
+      // A bank line: rent of Outlet B.
+      const csv = ["Tanggal;Keterangan;Debet;Kredit;Saldo", "01/08/2026;SALDO AWAL;;;50.000.000,00", "03/08/2026;BAYAR SEWA OUTLET B;4.000.000,00;0,00;46.000.000,00", ""].join("\n");
+      await importStatement(db, { bankAccountId: g.pt.banks[0].id, fileName: "agustus.csv", data: Buffer.from(csv), provider: null });
+      const t = await db.bankTransaction.findFirstOrThrow({ where: { description: { contains: "SEWA OUTLET" } } });
+      await reviewTransaction(db, { bankTxId: t.id, accountCode: "6120", taxTag: null, tags: { departmentId: B.id, projectId: null } });
+
+      const scope = { clientId: g.client.id, entityIds: [g.pt.entity.id] };
+      const [from, to] = [dateOnly(2026, 8, 1), dateOnly(2026, 8, 31)];
+      const check = async () => {
+        const pl = await incomeByDimension(db, scope, from, to, "DEPARTEMEN");
+        const is = await incomeStatement(db, scope, from, to);
+        expect(pl.total.totals).toEqual(is.totals);
+        for (const r of pl.rows) if (r.type !== "heading") expect(r.amounts.reduce((x, y) => x + y, 0n)).toBe(r.total);
+        return pl;
+      };
+      const pl = await check();
+      expect(pl.columns.map((c) => c.label)).toEqual(["Outlet A", "Outlet B", "Tanpa departemen"]);
+      const row = (code: string) => pl.rows.find((r) => r.type === "account" && r.code === code) as { amounts: bigint[]; total: bigint };
+      expect(row("4100").amounts).toEqual([18_000_000n, 12_000_000n, 0n]);
+      expect(row("6190").amounts).toEqual([5_000_000n, 0n, 3_000_000n]);
+      expect(row("6120").amounts).toEqual([0n, 4_000_000n, 0n]);
+      const net = pl.rows.find((r) => r.type === "subtotal" && r.label === "Laba bersih") as { amounts: bigint[]; total: bigint };
+      expect(net.amounts).toEqual([13_000_000n, 8_000_000n, -3_000_000n]);
+
+      // Only the tag changes: Outlet B's rent moves to Outlet A; the Laba Rugi is unchanged.
+      const before = await incomeStatement(db, scope, from, to);
+      await db.$transaction((tx) => setBankTagsTx(tx, { bankTxId: t.id, departmentId: A.id, projectId: null }));
+      const moved = await check();
+      expect((moved.rows.find((r) => r.type === "account" && r.code === "6120") as { amounts: bigint[] }).amounts).toEqual([4_000_000n, 0n, 0n]);
+      expect((await incomeStatement(db, scope, from, to)).totals).toEqual(before.totals);
+
+      // Per proyek: PRJ-01 and Tanpa proyek.
+      const byProject = await incomeByDimension(db, scope, from, to, "PROYEK");
+      expect(byProject.columns.map((c) => c.code)).toEqual(["PRJ-01", ""]);
+
+      // Excel: the same numbers, Total last.
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load((await dimensionWorkbook(moved, { firm: "KJA Uji", title: "PT Uji" }, from, to)) as never);
+      const ws = wb.worksheets[0];
+      const sales = ws.getRows(1, ws.rowCount)!.find((r) => String(r.getCell(1).value).includes("4100"))!;
+      expect([2, 3, 4, 5].map((c) => sales.getCell(c).value)).toEqual([18_000_000, 12_000_000, 0, 30_000_000]);
+
+      // The drill target: Buku Besar 6120 filtered by Outlet A shows the line twice (posted to B, moved to A) netting to the rent.
+      const acc6120 = await db.account.findFirstOrThrow({ where: { clientId: g.client.id, code: "6120" } });
+      const led = await accountLedger(db, { accountId: acc6120.id, entityIds: [g.pt.entity.id], start: from, end: to, normalBalance: "DEBIT", dimensionId: A.id });
+      expect(led.rows.map((r) => r.tags)).toEqual(["OUTLET-A"]);
+      expect(led.rows.at(-1)!.balance).toBe("4000000");
+      const reg = await journalRegister(db, scope, { start: from, end: to, kinds: null, search: null }, "all");
+      expect(reg.entries.find((e) => e.memo === "Penjualan outlet")!.lines.map((l) => l.tags)).toEqual([null, "OUTLET-A · PRJ-01", "OUTLET-B"]);
     });
   });
 });

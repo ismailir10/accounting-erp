@@ -143,6 +143,7 @@ export default async function JournalsPage({ params, searchParams }: { params: P
                               <span className="num text-muted-foreground">{l.code}</span> {l.name}
                             </Link>
                             {l.memo && l.memo !== e.memo && <span className="block truncate text-xs text-muted-foreground">{l.memo}</span>}
+                            {l.tags && <span className="num block truncate text-xs text-muted-foreground" data-testid="register-line-tags">{l.tags}</span>}
                           </td>
                           <td className="w-24 py-0.5 text-right align-top sm:w-36">{l.debit > 0n && <Money value={l.debit} currency={currency} />}</td>
                           <td className="w-24 py-0.5 text-right align-top sm:w-36">{l.credit > 0n && <Money value={l.credit} currency={currency} />}</td>

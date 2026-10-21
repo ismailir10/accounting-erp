@@ -13,10 +13,14 @@ import { entityRates, FxMissingError, isMixed, scopeEntities, translate, transla
  */
 export type Scope = { clientId: string; entityIds: string[] };
 
-export async function sumByAccount(db: Db, scope: Scope, range: { from?: Date; to: Date }, byEntity = false) {
+/** Departemen & Proyek (lib/dimensions): only the lines carrying one department or project, or (`id` null) none of that kind. */
+export type DimensionFilter = { kind: "DEPARTEMEN" | "PROYEK"; id: string | null };
+export const dimensionWhere = (d?: DimensionFilter) => (!d ? {} : d.kind === "DEPARTEMEN" ? { departmentId: d.id } : { projectId: d.id });
+
+export async function sumByAccount(db: Db, scope: Scope, range: { from?: Date; to: Date; dimension?: DimensionFilter }, byEntity = false) {
   const rows = await db.journalLine.groupBy({
     by: byEntity ? ["accountId", "entityId"] : ["accountId"],
-    where: { entityId: { in: scope.entityIds }, date: { gte: range.from, lte: range.to } },
+    where: { entityId: { in: scope.entityIds }, date: { gte: range.from, lte: range.to }, ...dimensionWhere(range.dimension) },
     _sum: { debit: true, credit: true },
   });
   return rows.map((r) => ({
@@ -172,18 +176,21 @@ function unmappedItem(rows: { account: Account; amount: bigint }[], line: Pseudo
 
 const sum = (items: FsItem[]) => items.reduce((s, i) => s + i.amount, 0n);
 
-/** Laba Rugi for [from, to]. Income positive, expenses positive; net = income − expenses. */
-export async function incomeStatement(db: Db, scope: Scope, from: Date, to: Date): Promise<IncomeStatement> {
+/**
+ * Laba Rugi for [from, to]. Income positive, expenses positive; net = income − expenses. With `dimension`, the part of it one department or
+ * project carries (lib/reports/by-dimension.ts): the columns of one kind, *Tanpa* included, add up to the whole.
+ */
+export async function incomeStatement(db: Db, scope: Scope, from: Date, to: Date, dimension?: DimensionFilter): Promise<IncomeStatement> {
   const accounts = await db.account.findMany({ where: { clientId: scope.clientId, type: { in: ["PENDAPATAN", "BEBAN"] } } });
   const entities = await scopeEntities(db, scope.entityIds);
   const netById = new Map<string, bigint>();
   if (!isMixed(entities)) {
-    for (const r of await sumByAccount(db, scope, { from, to })) netById.set(r.accountId, r.debit - r.credit);
+    for (const r of await sumByAccount(db, scope, { from, to, dimension })) netById.set(r.accountId, r.debit - r.credit);
   } else {
     // Income & expense of non-IDR entities at the average rate of the period ending `to`.
     const rates = await ratesByEntity(db, scope.clientId, entities, to);
     const cur = new Map(entities.map((e) => [e.id, e.functionalCurrency]));
-    for (const r of await sumByAccount(db, scope, { from, to }, true)) {
+    for (const r of await sumByAccount(db, scope, { from, to, dimension }, true)) {
       const v = translate(r.debit - r.credit, cur.get(r.entityId!)!, rates.get(r.entityId!)!.average);
       netById.set(r.accountId, (netById.get(r.accountId) ?? 0n) + v);
     }

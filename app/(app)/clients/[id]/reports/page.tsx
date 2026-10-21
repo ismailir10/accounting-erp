@@ -30,6 +30,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { buttonVariants } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import { currencyName, exponentOf } from "@/lib/fx/currency";
+import { incomeByDimension } from "@/lib/reports/by-dimension";
+import { DimensionPlCard } from "@/components/app/dimension-pl";
+import { DIMENSION_LABEL } from "@/lib/dimensions";
+import type { DimensionKind } from "@/lib/generated/prisma/enums";
 
 const TAB = "h-7 flex-none";
 
@@ -135,6 +139,17 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
   // Laba Rugi: the same months of last year, and other comprehensive income (single-currency scopes).
   const prior = per.priorPl ? await withFx(() => incomeStatement(prisma, s, priorFrom, priorTo)) : null;
   const isPrior = prior instanceof FxMissingError ? null : prior;
+  // Departemen & Proyek: a Laba Rugi per kind the client has set up, for the month or (`?rentang=ytd`) the year so far.
+  const kinds = (await prisma.dimension.groupBy({ by: ["kind"], where: { clientId: client.id } })).map((k) => k.kind).sort();
+  const ytdRange = sp.rentang === "ytd";
+  const dimFrom = ytdRange ? (per.beforeBooks ? period.start : yearStart) : period.start;
+  const byDimension = (
+    await Promise.all(kinds.map(async (kind) => {
+      const pl = await withFx(() => incomeByDimension(prisma, s, dimFrom, period.end, kind));
+      return pl instanceof FxMissingError ? null : pl;
+    }))
+  ).filter((x) => x !== null);
+  const dimTab = (kind: DimensionKind) => (kind === "DEPARTEMEN" ? "dept" : "proj");
   // Last month beside this one (UC-K3): a comparative even when the books start this year.
   const prevMonth = (await entryBy(prevEnd, prevStart)) ? await withFx(() => incomeStatement(prisma, s, prevStart, prevEnd)) : null;
   // Only when last month has income or expense: a month holding just the Saldo Awal would be a column of dashes.
@@ -221,6 +236,7 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
           <TabsTrigger className={TAB} value="cf">Arus Kas</TabsTrigger>
           <TabsTrigger className={TAB} value="notes">CALK{toFill > 0 && <span className="num text-review" data-testid="calk-to-fill">· {toFill} diisi manajemen</span>}</TabsTrigger>
           {multi && <TabsTrigger className={TAB} value="ws">Kertas Kerja Gabungan</TabsTrigger>}
+          {byDimension.map((d) => <TabsTrigger key={d.kind} className={TAB} value={dimTab(d.kind)}>Per {DIMENSION_LABEL[d.kind].toLowerCase()}</TabsTrigger>)}
           {mgmt && <TabsTrigger className={TAB} value="mgmt">Catatan manajemen{mgmt.note?.stale ? <span className="text-review">· ditinjau ulang</span> : null}</TabsTrigger>}
         </TabsList>
 
@@ -321,6 +337,22 @@ export default async function ReportsPage({ params, searchParams }: { params: Pr
           </Card>
         </TabsContent>
 
+        {byDimension.map((d) => (
+          <TabsContent key={d.kind} value={dimTab(d.kind)}>
+            <DimensionPlCard
+              pl={d}
+              title={`${names.income} per ${DIMENSION_LABEL[d.kind].toLowerCase()}`}
+              description={`${ytdRange ? ytdLabel : `${monthName(period.month)} ${period.year}`} · kolom Total sama dengan ${names.income} · Dinyatakan dalam ${currencyName(currency)}`}
+              currency={currency}
+              ranges={[
+                { href: withParams(`${base}/reports`, { period: period.key, entity: scope.value, tab: dimTab(d.kind) }), label: "Bulan ini", active: !ytdRange },
+                { href: withParams(`${base}/reports`, { period: period.key, entity: scope.value, tab: dimTab(d.kind), rentang: "ytd" }), label: "Tahun berjalan", active: ytdRange },
+              ]}
+              accountHref={(code, id) => withParams(`${base}/ledger/${code}`, { period: period.key, entity: scope.value, tag: id ?? undefined })}
+              download={withParams(`${base}/reports/export/dimensi`, { period: period.key, entity: scope.value, jenis: d.kind, rentang: ytdRange ? "ytd" : undefined })}
+            />
+          </TabsContent>
+        ))}
         {wsFx && (
           <TabsContent value="ws">
             <FxMissing error={wsFx} base={base} compact />
