@@ -37,6 +37,21 @@ the per-department Laba Rugi is what a contractor's bank reads. A defect in any 
 - [ ] T3 accounting-rules / README where a rule became clearer; cycle doc.
 
 ## Implementation
+**Probe C — Departemen & Proyek: 6 defects** (`f0b4a6c` tests, `611352e` fixes; `tests/db/parity-hard-c-{bank,report,lifecycle}.test.ts`, 24 cases)
+1. A tag change on a line still in Review posted its suggested PPN (1.100.000 from 1999 to 1150) → a Review line moves nothing.
+2. A tag change on a Review line in a closed month wrote the row's tags and a Riwayat event → refused before anything is written.
+3. A mixed-currency group's per-department columns missed the Total by 1 Rupiah (each column rounded alone) → the residue goes to
+   *Tanpa*; subtotals are summed from the rows.
+4. Removing a department while a request naming it was being stored left the request naming nothing → removal locks the row and
+   re-checks; storing a request or a Jurnal berulang template share-locks the tags it names (`lockTags`).
+5. Removing a department while a journal carrying it committed showed a raw foreign-key error → "sudah dipakai".
+6. Two members adding the same code at once got a raw unique-key error → "Kode … sudah dipakai".
+
+### Decisions taken while building
+- **Final PPh 4(2) withheld on a receipt (8200) carries the line's tags**: it is the expense of that income; a tax receivable or payable
+  (PPh 23 prepaid, PPh 21 owed) stays the company's.
+- **A tag stored while active keeps posting after it is archived** (a waiting request, a Jurnal berulang template, a schedule): otherwise
+  a month could never close behind a request that can't post. Archiving only stops new choices.
 
 ## Verification
 
