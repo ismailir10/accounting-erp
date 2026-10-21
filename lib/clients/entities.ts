@@ -250,6 +250,11 @@ export async function removeBankAccount(db: Db, input: Actor & { bankAccountId: 
     .$transaction(async (tx) => {
       const reason = blockedReason("bank", (await clientUsage(tx, input.clientId)).banks.get(ba.id) ?? []);
       if (reason) throw new EntityEditError(reason);
+      // A journal waiting for approval or a running Jurnal berulang naming its GL account by code holds no line yet: removed, it would post
+      // to nothing (or to a later account given the same code).
+      const code = (await tx.account.findUniqueOrThrow({ where: { id: ba.accountId }, select: { code: true } })).code;
+      const stored = blockedReason("bank", await codeUsage(tx, input.clientId, code));
+      if (stored) throw new EntityEditError(stored);
       await dropAcks(tx, input.clientId, [ba.id]);
       await tx.bankAccount.delete({ where: { id: ba.id } });
       await tx.account.delete({ where: { id: ba.accountId } });
@@ -260,12 +265,12 @@ export async function removeBankAccount(db: Db, input: Actor & { bankAccountId: 
 }
 
 /**
- * What still names a company's intercompany account (`1190NN`) by its code — a journal waiting for a second approver, a running Jurnal
+ * What still names an account by its code (a company's intercompany `1190NN`, a rekening's GL account) — a journal waiting for a second approver, a running Jurnal
  * berulang template, a bank row or split filed to it (or suggested), a client rule or remembered choice. None of these is a journal line,
  * so the account looks empty; removed with the company, each would post or file to nothing — or, before codes were never reused, to the
  * next company's account.
  */
-async function intercompanyCodeUsage(tx: Tx, clientId: string, code: string): Promise<Usage> {
+async function codeUsage(tx: Tx, clientId: string, code: string): Promise<Usage> {
   const rows = await tx.$queryRaw<{ k: string; n: number }[]>`
     SELECT 'jurnal menunggu persetujuan' AS k, count(*)::int AS n FROM "JournalApproval" a
       WHERE a."clientId" = ${clientId} AND a.status = 'PENDING'
@@ -309,7 +314,7 @@ export async function removeEntity(db: Db, input: Actor & { entityId: string }) 
       if (ic?._count.lines) throw new EntityEditError(`${ic.code} ${ic.name} masih berisi saldo perusahaan lain dengan ${entity.shortName}. Selesaikan saldonya dulu.`);
       if (ic) {
         // Its code is still named elsewhere (lines, but no journal line yet): refused with what names it, as for anything recorded.
-        const named = await intercompanyCodeUsage(tx, input.clientId, ic.code);
+        const named = await codeUsage(tx, input.clientId, ic.code);
         if (named.length) throw new EntityEditError(`${ic.code} ${ic.name} masih dipakai: ${list(named)}. Putuskan, hentikan atau ubah dulu, baru hapus ${entity.shortName}.`);
         await tx.account.delete({ where: { id: ic.id } });
       }

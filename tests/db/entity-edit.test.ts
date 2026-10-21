@@ -191,6 +191,18 @@ describe("remove a bank account", () => {
     expect(await db.auditEvent.count()).toBe(0);
   });
 
+  it("refuses one whose GL account a running Jurnal berulang names (it holds no line yet; removed, it would post to the next 1102)", async () => {
+    const g = await makeGroup();
+    const t = await db.recurringJournal.create({
+      data: { firmId: g.firm.id, clientId: g.client.id, entityId: g.pt.entity.id, memo: "Transfer bulanan", day: 1, startYear: 2026, startMonth: 8, lines: [{ accountCode: "1102", debit: "1000000", credit: "0" }, { accountCode: "1110", debit: "0", credit: "1000000" }] },
+    });
+    await expect(removeBankAccount(db, { ...ids(g), bankAccountId: g.pt.banks[1].id })).rejects.toThrow(/1 jurnal berulang berjalan/);
+    expect(await db.bankAccount.count()).toBe(3);
+    await db.recurringJournal.update({ where: { id: t.id }, data: { stoppedAt: new Date() } });
+    await removeBankAccount(db, { ...ids(g), bankAccountId: g.pt.banks[1].id });
+    expect(await db.bankAccount.count()).toBe(2);
+  });
+
   it("refuses one whose GL account only has a Saldo Awal line (no statement yet)", async () => {
     const g = await makeGroup();
     await postOpening(db, { clientId: g.client.id, entityId: g.pt.entity.id, date: dateOnly(2026, 7, 31), lines: [{ accountCode: "1102", debit: "5000000", credit: "0" }, { accountCode: "3100", debit: "0", credit: "5000000" }] });
