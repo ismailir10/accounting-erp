@@ -23,7 +23,7 @@ the per-department Laba Rugi is what a contractor's bank reads. A defect in any 
 ## Acceptance criteria
 - [x] Each probe area has hand-computed cases through the real writers, kept in `tests/db/`.
 - [x] Every defect found has a fix and a regression test; the list is in *Implementation*.
-- [ ] Full gate green; `verify:books` ALL PASS.
+- [x] Full gate green; `verify:books` ALL PASS.
 
 ## Non-goals
 - New features (round ten builds Departemen & Proyek part two alongside).
@@ -90,5 +90,14 @@ Plus (suspicions, real): with a group's rates missing, the intercompany controls
   a month could never close behind a request that can't post. Archiving only stops new choices.
 
 ## Verification
+- The probes' 82 cases (A 33, B 25, C 24) and every related test file passed on the merged head; `tests/db/entity-edit` gained the
+  rekening case.
+- Full gate on `6cb9050` (rounds nine and ten together): **358 files, 3303 of 3304 tests passed**. The one failure,
+  `ai-background` "a time box that ends with work left…", is a 20 ms wall-clock budget test outside this diff; it failed while a build and
+  the e2e suite shared the machine and passed 5 of 5 on its own and in every earlier full run.
+- `npm run build && npm run demo:reset && npm run verify:books`: **ALL PASS — 1765 checks**; `db:drift` clean.
+- `npm run test:e2e` on the production build of 0a3d64e: **137 passed (18.0m)**.
+
+Verified locally — 0a3d64e
 
 ## Ship Notes

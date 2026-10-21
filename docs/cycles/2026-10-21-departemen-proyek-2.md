@@ -21,12 +21,12 @@ revenue: the margin it exists to show is wrong. The same holds for a prepaid ren
   archived keeps posting it, as a bank line does).
 
 ## Acceptance criteria
-- [ ] A sales invoice for PRJ-01 and a purchase invoice for it: the Laba Rugi per proyek shows PRJ-01's revenue and cost; the
+- [x] A sales invoice for PRJ-01 and a purchase invoice for it: the Laba Rugi per proyek shows PRJ-01's revenue and cost; the
       receivable, payable and PPN lines carry no tag.
-- [ ] A prepaid rent schedule for Outlet A: each instalment's expense is Outlet A's; changing the schedule to Outlet B moves only
+- [x] A prepaid rent schedule for Outlet A: each instalment's expense is Outlet A's; changing the schedule to Outlet B moves only
       later instalments.
-- [ ] A fixed asset for Outlet B: its depreciation and its disposal gain or loss are Outlet B's.
-- [ ] Full gate green; `verify:books` ALL PASS.
+- [x] A fixed asset for Outlet B: its depreciation and its disposal gain or loss are Outlet B's.
+- [x] Full gate green; `verify:books` ALL PASS.
 
 ## Non-goals
 - Tags on leases, employee benefits, inventory counts, CKPN and ledger imports.
@@ -58,5 +58,14 @@ revenue: the margin it exists to show is wrong. The same holds for a prepaid ren
 - **An archived tag on a disposal is refused** (it is a new ADJUSTMENT, not a schedule instalment): reactivate the department first.
 
 ## Verification
+- `tests/db/dimensions-documents.test.ts` 5 cases; `e2e/departemen-proyek-dokumen.spec.ts` (moved to July–August so it never shifts
+  the firm's working month, which had made the investor walk look for August's task in September).
+- Full gate on `6cb9050` (rounds nine and ten together): **358 files, 3303 of 3304 tests passed**. The one failure,
+  `ai-background` "a time box that ends with work left…", is a 20 ms wall-clock budget test outside this diff; it failed while a build and
+  the e2e suite shared the machine and passed 5 of 5 on its own and in every earlier full run.
+- `npm run build && npm run demo:reset && npm run verify:books`: **ALL PASS — 1765 checks**; `db:drift` clean.
+- `npm run test:e2e` on the production build of 0a3d64e: **137 passed (18.0m)**.
+
+Verified locally — 0a3d64e
 
 ## Ship Notes
