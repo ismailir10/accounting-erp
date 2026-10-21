@@ -367,14 +367,23 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
    strong name words, then the file's own code scheme, then weak words (`inferType`).
 10. Same-entity transfer → 1199 (must net to 0). Cross-entity → 1190, posted in *each* entity's books,
     eliminated in the combined worksheet (receivable vs payable, matched = min). Residual ≠ 0 → REVIEW.
+    **Antar entitas per pihak** (`lib/coa/intercompany.ts`, cycle 2026-10-21-antar-entitas-per-pihak): a client of **three or more**
+    companies has an intercompany account per company — `1190NN` *Piutang/Utang Antar Entitas — <nama singkat>*, `isIntercompany`,
+    `Account.counterpartyEntityId` — created when the third company is added (and for each later one), renamed with it, removed with it
+    while unused. Company A records a balance with B on **B's account**; `postJournal()` refuses a company's own account. The transfer
+    matcher posts each half to the other company's account (`isIntercompanyCode` covers 1190 and 1190NN wherever 1190 was special: AI,
+    splits, Review unpairing, the sanity base, the credit pack, reserved codes). A company's own Neraca and cash flow keep each
+    counterparty apart (no set-off between parties); a scope of several companies reads the balances between them as one (they
+    eliminate), a balance with a company outside the scope stays apart. The worksheet eliminates **per pair** (A on B's account against B
+    on A's) and the control names every pair that does not mirror; a balance left on 1190 in such a client is REVIEW
+    `intercompany-party` (the way out: a Jurnal Penyesuaian to the party's account). Two companies keep the one 1190.
 11. PT + owner individual combined is a **management "Gabungan"**, not SAK consolidation. Keep the label + tooltip.
     Gabungan / Beranda are in IDR: non-IDR entities are translated — assets & liabilities at the closing rate, income & expense at
     the period's average rate (the first AVERAGE on or after the period end within the same **financial** year; demanded when the
     financial year so far holds income or expense), equity at the historical rate; the residue is the equity line **3900 Selisih
     penjabaran**. A missing rate shows the entity as *belum dijabarkan* — never a number computed with a guessed rate. Only 1190
     balances are eliminated: intra-group income and expense and investments in group companies stay summed, and the Gabungan note and
-    CALK say so. One 1190 per client nets every related party (a receivable from the CV against a payable to the owner): known gap,
-    next cycle.
+    CALK say so.
 
 ## Import & classification (`lib/import/pipeline.ts`)
 12. Parse → continuity check (opening + Σ = every printed balance → closing) → dedupe by row hash → classify → post, all-or-nothing in one transaction.
