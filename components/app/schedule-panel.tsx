@@ -13,7 +13,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Money } from "@/components/app/money";
 import { originOf, sourceFor, type FormOrigin } from "@/lib/adjust/form";
-import { createScheduleAction, stopScheduleAction } from "@/app/actions";
+import { createScheduleAction, setScheduleTagsAction, stopScheduleAction } from "@/app/actions";
+import { SimpleSelect } from "@/components/app/simple-select";
+import type { JournalDimensions } from "@/components/app/journal-form";
 import { formatMoney, parseMoney } from "@/lib/money";
 import type { CandidateView, ScheduleView } from "@/lib/adjust/view";
 import type { AccountType } from "@/lib/generated/prisma/enums";
@@ -24,16 +26,30 @@ const KINDS: { kind: Kind; label: string; debit: string; credit: string; months:
   { kind: "AMORTIZATION", label: "Amortisasi", debit: "", credit: "1170", months: 12, memo: "Amortisasi " },
   { kind: "ACCRUAL", label: "Akrual", debit: "", credit: "2150", months: 1, memo: "Akrual " },
 ];
-type Form = { kind: Kind; entityId: string; memo: string; debitCode: string; creditCode: string; amount: string; months: string; start: string; origin: FormOrigin };
+type Form = { kind: Kind; entityId: string; memo: string; debitCode: string; creditCode: string; amount: string; months: string; start: string; origin: FormOrigin; departmentId?: string; projectId?: string };
 
 const STATUS_LABEL = { BERJALAN: "Berjalan", SELESAI: "Selesai", DIHENTIKAN: "Dihentikan" } as const;
 
 /** Candidates from the ledger, the client's schedules, and the form that creates one (nothing posts from here). */
-export function SchedulePanel(props: { clientId: string; entities: { id: string; name: string; currency: string }[]; accounts: { code: string; name: string; type: AccountType; fsLine: string }[]; candidates: CandidateView[]; schedules: ScheduleView[]; nextMonth: string }) {
+export function SchedulePanel(props: { clientId: string; entities: { id: string; name: string; currency: string }[]; accounts: { code: string; name: string; type: AccountType; fsLine: string }[]; candidates: CandidateView[]; schedules: ScheduleView[]; nextMonth: string; /** The client's active Departemen & Proyek. */ dimensions?: JournalDimensions }) {
   const router = useRouter();
   const [form, setForm] = useState<Form | null>(null);
   const [busy, setBusy] = useState(false);
   const [stopping, setStopping] = useState<ScheduleView | null>(null);
+  const [tagging, setTagging] = useState<{ s: ScheduleView; departmentId: string; projectId: string } | null>(null);
+  const departments = props.dimensions?.departments ?? [];
+  const projects = props.dimensions?.projects ?? [];
+  const tagOptions = (list: { id: string; code: string; name: string }[], none: string) => [{ value: "", label: none }, ...list.map((d) => ({ value: d.id, label: `${d.code} · ${d.name}` }))];
+  const saveTags = async () => {
+    if (!tagging) return;
+    setBusy(true);
+    const r = await setScheduleTagsAction({ clientId: props.clientId, scheduleId: tagging.s.id, departmentId: tagging.departmentId || null, projectId: tagging.projectId || null });
+    setBusy(false);
+    if (!r.ok) return void toast.error(r.error);
+    toast.success("Departemen & proyek jadwal disimpan", { description: "Berlaku untuk angsuran berikutnya" });
+    setTagging(null);
+    router.refresh();
+  };
   const blank = (): Form => ({ kind: "DEPRECIATION", entityId: props.entities[0]?.id ?? "", memo: KINDS[0].memo, debitCode: KINDS[0].debit, creditCode: KINDS[0].credit, amount: "", months: String(KINDS[0].months), start: props.nextMonth, origin: null });
   const fromCandidate = (c: CandidateView): Form => ({ kind: c.kind, entityId: c.entityId, memo: c.memo, debitCode: c.debitCode ?? "", creditCode: c.creditCode, amount: c.amount, months: String(c.months), start: c.start, origin: originOf(c) });
   const set = (patch: Partial<Form>) => setForm((f) => (f ? { ...f, ...patch } : f));
@@ -53,7 +69,7 @@ export function SchedulePanel(props: { clientId: string; entities: { id: string;
     if (!form) return;
     const [y, m] = form.start.split("-").map(Number);
     setBusy(true);
-    const r = await createScheduleAction({ clientId: props.clientId, entityId: form.entityId, kind: form.kind, memo: form.memo, debitCode: form.debitCode, creditCode: form.creditCode, amount: form.amount, months, startYear: y, startMonth: m, ...sourceFor(form.origin, form, props.accounts) });
+    const r = await createScheduleAction({ clientId: props.clientId, entityId: form.entityId, kind: form.kind, memo: form.memo, debitCode: form.debitCode, creditCode: form.creditCode, amount: form.amount, months, startYear: y, startMonth: m, departmentId: form.departmentId || null, projectId: form.projectId || null, ...sourceFor(form.origin, form, props.accounts) });
     setBusy(false);
     if (!r.ok) return void toast.error(r.error);
     toast.success("Jadwal dibuat");
@@ -123,13 +139,16 @@ export function SchedulePanel(props: { clientId: string; entities: { id: string;
                     <TableRow key={s.id} className="border-t">
                       <TableCell className="p-2 pl-3 whitespace-normal">
                         <div className="font-medium">{s.memo}</div>
-                        <div className="text-xs text-muted-foreground">{s.kindLabel} · {s.entity} · {s.span} · {STATUS_LABEL[s.status]}{s.source ? ` · dari ${s.source}` : ""}</div>
+                        <div className="text-xs text-muted-foreground">{s.kindLabel} · {s.entity} · {s.span} · {STATUS_LABEL[s.status]}{s.source ? ` · dari ${s.source}` : ""}{s.tags ? <span className="num" data-testid="schedule-tags"> · {s.tags}</span> : null}</div>
                       </TableCell>
                       <TableCell className="hidden p-2 text-xs text-muted-foreground md:table-cell">{s.debit}<br />{s.credit}</TableCell>
                       <TableCell className="hidden p-2 text-right sm:table-cell"><Money value={BigInt(s.perMonth)} currency={s.currency} /></TableCell>
                       <TableCell className="num p-2 text-right">{s.postedCount}/{s.months}</TableCell>
                       <TableCell className="hidden p-2 text-right sm:table-cell"><Money value={BigInt(s.remaining)} currency={s.currency} /></TableCell>
                       <TableCell className="p-2 pr-3 text-right">
+                        {s.status === "BERJALAN" && (departments.length > 0 || projects.length > 0) && (
+                          <Button variant="ghost" size="sm" aria-label={`Departemen & proyek ${s.memo}`} onClick={() => setTagging({ s, departmentId: s.departmentId ?? "", projectId: s.projectId ?? "" })}>Departemen</Button>
+                        )}
                         {s.status === "BERJALAN" && <Button variant="ghost" size="sm" onClick={() => setStopping(s)}>Hentikan</Button>}
                       </TableCell>
                     </TableRow>
@@ -185,6 +204,18 @@ export function SchedulePanel(props: { clientId: string; entities: { id: string;
                   <Input aria-label="Bulan mulai" type="month" value={form.start} onChange={(e) => set({ start: e.target.value })} />
                 </Field>
               </div>
+              {departments.length > 0 && (
+                <Field>
+                  <FieldLabel>Departemen</FieldLabel>
+                  <SimpleSelect label="Departemen" value={form.departmentId ?? ""} onChange={(v) => set({ departmentId: v })} options={tagOptions(departments, "Tanpa departemen")} />
+                </Field>
+              )}
+              {projects.length > 0 && (
+                <Field>
+                  <FieldLabel>Proyek</FieldLabel>
+                  <SimpleSelect label="Proyek" value={form.projectId ?? ""} onChange={(v) => set({ projectId: v })} options={tagOptions(projects, "Tanpa proyek")} />
+                </Field>
+              )}
               <p className="text-sm text-muted-foreground sm:col-span-2">
                 {amountError ? <span className="text-destructive">{amountError}</span> : perMonth ? (form.kind === "ACCRUAL" ? `Akrual ${perMonth}, dibalik tanggal 1 bulan berikutnya.` : `± ${perMonth} per bulan selama ${months} bulan; sisa pembulatan di angsuran terakhir.`) : "Isi total dan jumlah bulan."}
               </p>
@@ -193,6 +224,35 @@ export function SchedulePanel(props: { clientId: string; entities: { id: string;
           <DialogFooter>
             <Button variant="outline" onClick={() => setForm(null)}>Batal</Button>
             <Button disabled={busy || !form?.debitCode || !form?.creditCode || !perMonth || !form?.start} onClick={submit}>{busy ? "Menyimpan…" : "Simpan jadwal"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={tagging !== null} onOpenChange={(o) => !o && setTagging(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Departemen & proyek jadwal</DialogTitle>
+            <DialogDescription>Berlaku untuk angsuran berikutnya; angsuran yang sudah dicatat tidak berubah. Hanya sisi pendapatan atau beban yang diberi label.</DialogDescription>
+          </DialogHeader>
+          {tagging && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {departments.length > 0 && (
+                <Field>
+                  <FieldLabel>Departemen</FieldLabel>
+                  <SimpleSelect label="Departemen jadwal" value={tagging.departmentId} onChange={(v) => setTagging({ ...tagging, departmentId: v })} options={tagOptions(departments, "Tanpa departemen")} />
+                </Field>
+              )}
+              {projects.length > 0 && (
+                <Field>
+                  <FieldLabel>Proyek</FieldLabel>
+                  <SimpleSelect label="Proyek jadwal" value={tagging.projectId} onChange={(v) => setTagging({ ...tagging, projectId: v })} options={tagOptions(projects, "Tanpa proyek")} />
+                </Field>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTagging(null)}>Batal</Button>
+            <Button disabled={busy} onClick={saveTags}>{busy ? "Menyimpan…" : "Simpan"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

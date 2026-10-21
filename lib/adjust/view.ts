@@ -18,6 +18,8 @@ export type CandidateView = { key: string; kind: ScheduleKind; kindLabel: string
 export type ScheduleView = {
   id: string; kind: ScheduleKind; kindLabel: string; memo: string; entity: string; currency: string; debit: string; credit: string;
   amount: string; perMonth: string; months: number; postedCount: number; remaining: string; span: string; status: "BERJALAN" | "SELESAI" | "DIHENTIKAN"; source: string | null;
+  /** Departemen & Proyek: ids for the change dialog, codes for the row ("OUTLET-A · PRJ-01"). */
+  departmentId: string | null; projectId: string | null; tags: string | null;
 };
 
 const ym = (y: number, m: number) => `${y}-${String(m).padStart(2, "0")}`;
@@ -99,6 +101,9 @@ export async function scheduleViews(db: Db, clientId: string): Promise<ScheduleV
       remaining: s.remaining.toString(),
       span: s.months === 1 ? formatMonthShort(s.startYear, s.startMonth) : `${formatMonthShort(s.startYear, s.startMonth)} – ${formatMonthShort(s.ends.year, s.ends.month)}`,
       status: s.stoppedAt ? "DIHENTIKAN" : s.postedCount >= s.months ? "SELESAI" : "BERJALAN",
+      departmentId: s.departmentId,
+      projectId: s.projectId,
+      tags: [s.department?.code, s.project?.code].filter(Boolean).join(" · ") || null,
       source: s.sourceEntry ? `${(s.sourceEntry.bankTransaction?.description ?? s.sourceEntry.memo).replace(/^Reklasifikasi:\s*/i, "").slice(0, 60)} · ${formatDate(s.sourceEntry.date)}` : null,
     };
   });

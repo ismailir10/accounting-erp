@@ -1,4 +1,6 @@
 import type { Db, Tx } from "@/lib/db";
+import { recordEvent } from "@/lib/audit";
+import { checkTags } from "@/lib/dimensions";
 import type { AdjustmentSchedule } from "@/lib/generated/prisma/client";
 import type { ScheduleKind } from "@/lib/generated/prisma/enums";
 import { LedgerError, postJournal } from "@/lib/ledger/post";
@@ -43,6 +45,8 @@ export function installments(s: Pick<AdjustmentSchedule, "amount" | "months" | "
 export const installmentMemo = (s: Pick<AdjustmentSchedule, "memo" | "months">, i: Pick<Installment, "k" | "reversal">) =>
   i.reversal ? `Pembalikan: ${s.memo}` : `${s.memo} (${i.k}/${s.months})`;
 
+const isPl = (a: { type: string }) => a.type === "PENDAPATAN" || a.type === "BEBAN";
+
 export type ScheduleInput = {
   clientId: string;
   entityId: string;
@@ -59,6 +63,9 @@ export type ScheduleInput = {
   sourceEntryId?: string | null;
   /** The account of the source entry's line the schedule comes from (a ledger candidate's line); needs sourceEntryId. */
   sourceAccountCode?: string | null;
+  /** Departemen & Proyek (lib/dimensions): on each instalment's income / expense side only. */
+  departmentId?: string | null;
+  projectId?: string | null;
   actorId?: string | null;
 };
 
@@ -87,6 +94,8 @@ export async function createSchedule(db: Db, input: ScheduleInput, inTx?: (tx: T
   if (!debit || !credit) throw new LedgerError("Pilih akun debit dan kredit dari bagan akun klien.");
   if (debit.id === credit.id) throw new LedgerError("Akun debit dan kredit harus berbeda.");
   if ([debit, credit].some((a) => a.isBank || a.isSuspense || a.isClearing)) throw new LedgerError("Jadwal penyesuaian tidak memakai akun bank, kliring atau 1999.");
+  const tags = await checkTags(db, input.clientId, input);
+  if ((tags.departmentId || tags.projectId) && !isPl(debit) && !isPl(credit)) throw new LedgerError("Departemen dan proyek hanya untuk jadwal dengan akun pendapatan atau beban.");
   const amount = input.amountMinor ?? parseMoney(input.amount, entity.functionalCurrency);
   if (amount <= 0n) throw new LedgerError("Nominal harus lebih dari nol.");
   // An accrual is one month, reversed on the 1st of the next (assumption 3 of the cycle).
@@ -150,6 +159,7 @@ export async function createSchedule(db: Db, input: ScheduleInput, inTx?: (tx: T
         reverse: accrual,
         sourceEntryId: input.sourceEntryId ?? null,
         sourceAccountId,
+        ...tags,
         createdById: input.actorId ?? null,
       },
     });
@@ -200,7 +210,7 @@ const isUniqueViolation = (e: unknown) => typeof e === "object" && e !== null &&
 
 /** The accountant's click: one ADJUSTMENT entry for one installment. */
 export async function postInstallment(db: Db, input: { clientId: string; scheduleId: string; k: number; actorId?: string | null }) {
-  const s = await db.adjustmentSchedule.findFirst({ where: { id: input.scheduleId, clientId: input.clientId } });
+  const s = await db.adjustmentSchedule.findFirst({ where: { id: input.scheduleId, clientId: input.clientId }, include: { debitAccount: { select: { type: true } }, creditAccount: { select: { type: true } } } });
   if (!s) throw new LedgerError("Jadwal tidak ditemukan.");
   const i = installments(s).find((x) => x.k === input.k);
   if (!i) throw new LedgerError("Angsuran tidak ada di jadwal ini.");
@@ -213,6 +223,12 @@ export async function postInstallment(db: Db, input: { clientId: string; schedul
       // seen here) or waits until this installment is recorded. The reversal of a posted accrual is still owed after a stop.
       const [row] = await tx.$queryRaw<{ stoppedAt: Date | null }[]>`SELECT "stoppedAt" FROM "AdjustmentSchedule" WHERE id = ${s.id} FOR UPDATE`;
       if (!owed(row?.stoppedAt ?? null, i)) throw new LedgerError("Jadwal ini sudah dihentikan.");
+      // Departemen & Proyek as the schedule holds them now (a change applies from the next instalment), on its income / expense side.
+      const [now] = await tx.adjustmentSchedule.findMany({ where: { id: s.id }, select: { departmentId: true, projectId: true } });
+      const tagOf = (accountId: string) => {
+        const type = accountId === s.debitAccountId ? s.debitAccount.type : s.creditAccount.type;
+        return type === "PENDAPATAN" || type === "BEBAN" ? { departmentId: now.departmentId, projectId: now.projectId } : {};
+      };
       return postJournal(tx, {
         entityId: s.entityId,
         date: i.date,
@@ -222,8 +238,8 @@ export async function postInstallment(db: Db, input: { clientId: string; schedul
         installment: i.k,
         actorId: input.actorId,
         lines: [
-          { accountId: i.debitAccountId, debit: i.amount },
-          { accountId: i.creditAccountId, credit: i.amount },
+          { accountId: i.debitAccountId, debit: i.amount, ...tagOf(i.debitAccountId) },
+          { accountId: i.creditAccountId, credit: i.amount, ...tagOf(i.creditAccountId) },
         ],
       });
     });
@@ -231,6 +247,27 @@ export async function postInstallment(db: Db, input: { clientId: string; schedul
     if (isUniqueViolation(e)) throw new LedgerError(`${installmentMemo(s, i)} sudah dicatat.`);
     throw e;
   }
+}
+
+/**
+ * Departemen & Proyek of a running schedule: later instalments follow; posted ones stay as they are (rule 3). An archived tag the schedule
+ * already carries may stay.
+ */
+export async function setScheduleTags(db: Db, input: { clientId: string; scheduleId: string; departmentId?: string | null; projectId?: string | null; actorId?: string | null }) {
+  const s = await db.adjustmentSchedule.findFirst({ where: { id: input.scheduleId, clientId: input.clientId }, include: { debitAccount: true, creditAccount: true, department: true, project: true } });
+  if (!s) throw new LedgerError("Jadwal tidak ditemukan.");
+  if (s.stoppedAt) throw new LedgerError("Jadwal ini sudah dihentikan.");
+  const tags = await checkTags(db, input.clientId, input, { departmentId: s.departmentId, projectId: s.projectId });
+  if (tags.departmentId === s.departmentId && tags.projectId === s.projectId) return s;
+  if ((tags.departmentId || tags.projectId) && !isPl(s.debitAccount) && !isPl(s.creditAccount)) throw new LedgerError("Departemen dan proyek hanya untuk jadwal dengan akun pendapatan atau beban.");
+  const names = new Map((await db.dimension.findMany({ where: { id: { in: [tags.departmentId, tags.projectId].filter((x): x is string => !!x) } } })).map((d) => [d.id, d.code]));
+  const show = (x: { departmentId: string | null; projectId: string | null }, codes: Map<string, string>) => [x.departmentId, x.projectId].flatMap((id) => (id ? [codes.get(id) ?? "?"] : [])).join(" · ") || "tanpa tag";
+  const before = new Map([s.department, s.project].flatMap((d) => (d ? [[d.id, d.code] as [string, string]] : [])));
+  return db.$transaction(async (tx) => {
+    const updated = await tx.adjustmentSchedule.update({ where: { id: s.id }, data: tags });
+    await recordEvent(tx, { clientId: input.clientId, entityId: s.entityId, kind: "DIMENSION", subject: `schedule:${s.id}`, summary: `Jadwal ${s.memo}: ${show(s, before)} → ${show(tags, names)} untuk angsuran berikutnya`, before: { departmentId: s.departmentId, projectId: s.projectId }, after: tags, actorId: input.actorId });
+    return updated;
+  });
 }
 
 /** Post every due installment of the period (one entry each). Stops at the first error; earlier ones stay posted. */
@@ -255,7 +292,7 @@ export async function stopSchedule(db: Db, input: { clientId: string; scheduleId
 export async function listSchedules(db: Db, clientId: string) {
   const schedules = await db.adjustmentSchedule.findMany({
     where: { clientId },
-    include: { entity: { select: { id: true, shortName: true, functionalCurrency: true } }, debitAccount: { select: { code: true, name: true } }, creditAccount: { select: { code: true, name: true } }, sourceEntry: { select: { memo: true, date: true, bankTransaction: { select: { description: true } } } }, entries: { select: { installment: true, lines: { select: { debit: true } } } } },
+    include: { entity: { select: { id: true, shortName: true, functionalCurrency: true } }, debitAccount: { select: { code: true, name: true } }, creditAccount: { select: { code: true, name: true } }, department: { select: { code: true } }, project: { select: { code: true } }, sourceEntry: { select: { memo: true, date: true, bankTransaction: { select: { description: true } } } }, entries: { select: { installment: true, lines: { select: { debit: true } } } } },
     orderBy: [{ stoppedAt: { sort: "asc", nulls: "first" } }, { createdAt: "desc" }, { id: "asc" }],
   });
   return schedules.map((s) => {

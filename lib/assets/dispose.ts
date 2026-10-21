@@ -88,8 +88,10 @@ export async function disposeAsset(db: Db, input: DisposalInput) {
     if (accumulated > 0n) lines.push({ accountId: asset.accumulatedAccountId!, debit: accumulated });
     if (proceeds > 0n) lines.push({ accountId: proceedsAccount.id, debit: proceeds });
     lines.push({ accountId: asset.assetAccountId, credit: asset.cost });
-    if (result > 0n) lines.push({ accountId: gainLossId!, credit: result });
-    if (result < 0n) lines.push({ accountId: gainLossId!, debit: -result });
+    // The gain or loss is the asset's department's and project's, as its depreciation was (its schedule's tags).
+    const tags = { departmentId: s?.departmentId ?? null, projectId: s?.projectId ?? null };
+    if (result > 0n) lines.push({ accountId: gainLossId!, credit: result, ...tags });
+    if (result < 0n) lines.push({ accountId: gainLossId!, debit: -result, ...tags });
     const outcome = result > 0n ? `laba ${formatMoney(result, cur)}` : result < 0n ? `rugi ${formatMoney(-result, cur)}` : "tanpa laba/rugi";
     const entry = await postJournal(tx, { entityId: asset.entityId, date, kind: "ADJUSTMENT", memo: `Pelepasan aset: ${asset.name} (${outcome})`, lines, actorId: input.actorId });
     const done = await tx.fixedAsset.updateMany({ where: { id: asset.id, disposalEntryId: null }, data: { disposedOn: date, proceeds, disposalEntryId: entry.id } });

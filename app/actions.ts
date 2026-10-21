@@ -22,7 +22,7 @@ import { cancelReopen, confirmReopen, rejectReopen, requestReopen } from "@/lib/
 import { LedgerError } from "@/lib/ledger/post";
 import { approveJournal, rejectJournal, submitAccrual, submitAdjustment, submitProposal, submitReversal, withdrawJournal, type Outcome } from "@/lib/approvals/journals";
 import { ApprovalError } from "@/lib/approvals/second";
-import { createSchedule, dueProposals, postAllDue, postInstallment, stopSchedule, type ScheduleInput } from "@/lib/adjust/schedules";
+import { createSchedule, dueProposals, postAllDue, postInstallment, setScheduleTags, stopSchedule, type ScheduleInput } from "@/lib/adjust/schedules";
 import { createRecurring, stopRecurring } from "@/lib/adjust/recurring";
 import { postAllRecurring, postRecurring } from "@/lib/adjust/recurring-post";
 import { createAsset, type AssetInput } from "@/lib/assets/register";
@@ -1168,6 +1168,18 @@ export async function stopRecurringAction(clientId: string, recurringId: string)
   try {
     const { client, member } = await writer(clientId);
     await stopRecurring(prisma, { clientId: client.id, recurringId, actorId: member.id });
+    revalidatePath(`/clients/${client.id}`, "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Departemen & Proyek of a running schedule: later instalments follow (lib/adjust/schedules.ts `setScheduleTags`). Everyday books work. */
+export async function setScheduleTagsAction(input: { clientId: string; scheduleId: string; departmentId: string | null; projectId: string | null }): Promise<Result> {
+  try {
+    const client = await writeClient(input.clientId);
+    await setScheduleTags(prisma, { ...input, clientId: client.id, actorId: (await getCurrentMember()).id });
     revalidatePath(`/clients/${client.id}`, "layout");
     return { ok: true };
   } catch (e) {

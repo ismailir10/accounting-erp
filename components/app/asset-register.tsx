@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { JournalDimensions } from "@/components/app/journal-form";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -41,6 +42,8 @@ type Form = {
   fromOpening: boolean;
   openingAccumulated: string;
   remainingMonths: string;
+  departmentId?: string;
+  projectId?: string;
 };
 
 const GROUPS = Object.entries(TAX_GROUPS).map(([value, g]) => ({ value, label: g.label }));
@@ -61,6 +64,8 @@ export function AssetRegister(props: {
   schedules: ScheduleLinkView[];
   accounts: Accounts;
   defaultDate: string;
+  /** The client's active Departemen & Proyek: its depreciation and disposal gain or loss carry them. */
+  dimensions?: JournalDimensions;
 }) {
   const router = useRouter();
   const [form, setForm] = useState<Form | null>(null);
@@ -119,6 +124,8 @@ export function AssetRegister(props: {
       startMonth: sm,
       sourceEntryId: form.mode.kind === "candidate" ? form.mode.c.entryId : null,
       scheduleId: form.mode.kind === "schedule" ? form.mode.s.id : null,
+      departmentId: form.departmentId || null,
+      projectId: form.projectId || null,
     });
     setBusy(false);
     if (!r.ok) return void toast.error(r.error);
@@ -351,6 +358,18 @@ export function AssetRegister(props: {
                     <Input id="asset-life" type="number" min={1} max={600} className="num" value={form.life} onChange={(e) => set({ life: e.target.value })} />
                     <FieldDescription>Estimasi entitas (PSAK 216); saran dari kelompok fiskal.</FieldDescription>
                   </Field>
+                  {form.mode.kind !== "schedule" && props.dimensions?.departments.length ? (
+                    <Field>
+                      <FieldLabel>Departemen</FieldLabel>
+                      <SimpleSelect label="Departemen" value={form.departmentId ?? ""} onChange={(v) => set({ departmentId: v })} options={[{ value: "", label: "Tanpa departemen" }, ...props.dimensions.departments.map((d) => ({ value: d.id, label: `${d.code} · ${d.name}` }))]} />
+                    </Field>
+                  ) : null}
+                  {form.mode.kind !== "schedule" && props.dimensions?.projects.length ? (
+                    <Field>
+                      <FieldLabel>Proyek</FieldLabel>
+                      <SimpleSelect label="Proyek" value={form.projectId ?? ""} onChange={(v) => set({ projectId: v })} options={[{ value: "", label: "Tanpa proyek" }, ...props.dimensions.projects.map((d) => ({ value: d.id, label: `${d.code} · ${d.name}` }))]} />
+                    </Field>
+                  ) : null}
                   {form.mode.kind !== "schedule" && (
                     <Field>
                       <FieldLabel htmlFor="asset-start">Mulai disusutkan</FieldLabel>

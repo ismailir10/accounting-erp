@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { dimensionOptions } from "@/lib/dimensions";
 import { loadClientPage } from "@/lib/client-page";
 import type { SearchParams } from "@/lib/scope";
 import { formatPeriod, toIsoDate } from "@/lib/format";
@@ -43,6 +44,7 @@ export default async function AssetsPage({ params, searchParams }: { params: Pro
         <NextStep>Tambahkan aset tetap klien: dari pembelian di buku besar, dari jadwal penyusutan, atau aset di Saldo Awal.</NextStep>
       )}
       <AssetRegister
+        dimensions={await dimensionOptions(prisma, client.id)}
         clientId={client.id}
         year={period.year}
         periodKey={period.key}

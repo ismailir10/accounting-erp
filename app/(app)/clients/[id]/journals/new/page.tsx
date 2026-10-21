@@ -173,7 +173,7 @@ export default async function NewJournalPage({ params, searchParams }: { params:
         </Card>
       </div>
       <RecurringList clientId={client.id} items={recurring} canWrite={canWrite} />
-      <SchedulePanel clientId={client.id} entities={entities} accounts={accounts.filter((a) => !a.isBank && !a.isClearing).map((a) => ({ code: a.code, name: a.name, type: a.type, fsLine: a.fsLine }))} candidates={candidates} schedules={schedules} nextMonth={next} />
+      <SchedulePanel clientId={client.id} entities={entities} accounts={accounts.filter((a) => !a.isBank && !a.isClearing).map((a) => ({ code: a.code, name: a.name, type: a.type, fsLine: a.fsLine }))} candidates={candidates} schedules={schedules} nextMonth={next} dimensions={dimensions} />
     </div>
   );
 }

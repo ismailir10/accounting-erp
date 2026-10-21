@@ -43,6 +43,9 @@ export type AssetInput = {
   sourceEntryId?: string | null;
   /** An existing depreciation schedule to register as this asset (no new schedule). */
   scheduleId?: string | null;
+  /** Departemen & Proyek of its depreciation (the schedule's) and of its disposal gain or loss. */
+  departmentId?: string | null;
+  projectId?: string | null;
   actorId?: string | null;
 };
 
@@ -177,6 +180,8 @@ export async function createAsset(db: Db, input: AssetInput) {
       entityId: entity.id,
       kind: "DEPRECIATION",
       memo: `Penyusutan ${name}`,
+      departmentId: input.departmentId,
+      projectId: input.projectId,
       debitCode: expense!.code,
       creditCode: accumulated!.code,
       amount: "",
