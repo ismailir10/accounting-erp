@@ -91,6 +91,14 @@ Lineage: these come from the one-time chickin/belifi reconciliation work (bank m
     owns, a foreign-currency or revaluation entry, and every non-adjustment are refused with where to change them instead.
     Above the firm's *Jurnal manual* threshold (by the original's Σdebit) the reversal waits for a second approver (rule 2a); while one
     reversal request of an entry waits, no other reversal of it is taken (a partial unique index keeps one PENDING per entry).
+3b. **Departemen & Proyek are labels, never balances** (`lib/dimensions`, cycle 2026-10-21-departemen-proyek). A client's `Dimension` rows
+    (kind DEPARTEMEN | PROYEK, code, name, archived); a `JournalLine` carries at most one of each (`departmentId`, `projectId`). `postJournal()`
+    refuses another client's, the wrong kind, or an archived one — except on a reversal (it mirrors the original's tags, so a per-department
+    column nets out) and on a bank line's re-posting (the line already carries it). A bank line keeps its tags on `BankTransaction` and they go
+    on its classification account only (each split part; never the bank, PPN, withholding or suspense legs); `postBankTransaction` nets by
+    account **and** tags, so changing only a tag posts a RECLASS of the difference as a change of account does (rule 3). Reports filter by tag:
+    the Laba Rugi per departemen / proyek is `incomeStatement` per tag plus *Tanpa …*, so its columns add up to the Laba Rugi on every row.
+    One in use (a line, a bank line, a Jurnal berulang template or a waiting request names it) is archived, never removed.
 4. **Locked periods reject every write** — imports, reclasses, adjustments. The database refuses inserting or deleting a journal entry
    or line dated in a LOCKED month **or in any month before one** (an earlier month may stay open only while it is empty, and a write
    into it would change the locked month's Neraca; `postJournal` says so first, naming the month to reopen); only `deleteClient` passes, through `set_config('buku.client_delete', 'on', true)` in its own transaction. Closing goes in order: a month can't be locked while an earlier

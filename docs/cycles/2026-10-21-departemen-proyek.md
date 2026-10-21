@@ -50,6 +50,29 @@ Who feels it: the accountant asked "berapa laba proyek X?", the owner of a multi
 - [ ] T5 Tests, e2e, README, accounting-rules, deck.
 
 ## Implementation
+- **T1** `d23e553` — `Dimension` table + `JournalLine` / `BankTransaction` tags (migration `20261021140000_departemen_proyek`, additive);
+  `lib/dimensions` (create, rename, archive, remove only when nothing carries it — lines, bank lines, Jurnal berulang templates, waiting
+  requests); `postJournal()` refuses another client's, the wrong kind, or an archived tag; *Pengaturan klien → Departemen & proyek*;
+  client delete removes them after the lines; Riwayat kind `DIMENSION`.
+- **T2** `bffd674` — Jurnal Penyesuaian per-line pickers (only when the client has any); the tags travel through `prepareAdjustment`,
+  stored request lines (`StoredLine.departmentId` / `projectId`), Kotak persetujuan's line view, Jurnal berulang, *Salin* (active ones),
+  *Balik otomatis* and *Balik jurnal* (`mirrorLines`).
+- **T3** `4c944ad` — a bank line's tags on `BankTransaction`; `postBankTransaction` nets by (account, department, project) and puts the
+  tags on the classification account only (each split part); `setBankTagsTx` (Buku Besar drawer) and Review's decision set them; the ledger
+  shows each line's tags and filters by one (`?tag=`).
+- **T4** `fb36365` — `lib/reports/by-dimension.ts`: Laba Rugi per departemen / per proyek as `incomeStatement` per tag + *Tanpa* + Total,
+  month or year so far, Excel at `/clients/[id]/reports/export/dimensi`; Jurnal Umum shows tags.
+- **T5** — tests (`tests/db/dimensions.test.ts`, 9 cases), e2e `e2e/departemen-proyek.spec.ts`, README, accounting-rules 3b.
+
+### Decisions made while building
+- **An archived tag stays valid where it is already carried**: a reversal mirrors it (otherwise a per-department column could never
+  net out) and a bank line's re-posting keeps it (otherwise archiving Outlet B would block a later change of account on its old lines).
+  Choosing it anew — a new journal line, a bank line retagged to it — is refused.
+- **Tags never go on the bank, PPN, withholding or suspense legs**: the per-department view is of income and expense; the bank and tax
+  balances are the company's. A line still in Review keeps its tags until it is classified.
+- **The per-department Excel is plain numbers, no formulas**: every column is its own Laba Rugi; the page and the file read the same rows.
+- **Buku Besar download is hidden while a tag filter is on**: the Excel Buku Besar is the whole account; a filtered file would need its
+  own title and opening, a later round if asked.
 
 ## Verification
 
